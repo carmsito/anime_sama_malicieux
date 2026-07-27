@@ -339,9 +339,9 @@ def process_chapter_epub(
     images_dir.mkdir(exist_ok=True)
     all_pages: list[Path] = []
 
-    # Detect if pages are already split (height ≈ page_height) or merged
+    # Découpage uniquement si la première image dépasse 4000px (pages fusionnées)
     first_height = _image_height(source_files[0])
-    needs_split = first_height > page_height
+    needs_split = first_height > 4000
 
     if needs_split:
         print_flush(f"[Chapitre {chapter_number}] Images fusionnees detectees ({first_height}px) — decoupage en cours...")
@@ -375,6 +375,10 @@ def process_chapter_epub(
         max_width=None,
     )
     print_flush(f"[Chapitre {chapter_number}] EPUB : {epub_path}")
+
+    # Toujours supprimer les fichiers sources (pages fusionnées téléchargées)
+    for source in source_files:
+        source.unlink(missing_ok=True)
 
     if not keep_images:
         shutil.rmtree(images_dir, ignore_errors=True)
