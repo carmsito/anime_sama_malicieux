@@ -32,6 +32,11 @@ if ! python -c "import fastapi" 2>/dev/null; then
   pip install -q -r "$APP_DIR/requirements.txt"
 fi
 
+# Build frontend so port 8000 stays in sync
+echo "🏗️  Build du frontend (pour port 8000)..."
+cd "$FRONT_DIR"
+npm run build 2>&1 | tail -3
+
 # API server
 echo "🔧 Lancement de l'API (http://127.0.0.1:8000)..."
 cd "$APP_DIR"

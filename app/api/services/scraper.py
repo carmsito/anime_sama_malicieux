@@ -17,7 +17,7 @@ from ..config import EXTRACTION_DIR, COVERS_DIR, PROJECT_ROOT
 # ── Load anime-sama.py functions ─────────────────────────────────────────────
 
 _spec = importlib.util.spec_from_file_location(
-    "anime_sama", PROJECT_ROOT / "anime-sama.py"
+    "anime_sama", PROJECT_ROOT / "scripts" / "anime-sama.py"
 )
 _mod = importlib.util.module_from_spec(_spec)
 sys.modules["anime_sama"] = _mod
@@ -41,12 +41,78 @@ def warm_base_url() -> None:
     """Call once at startup to avoid slow first request."""
     resolve_base_url()
 fetch_scan_categories = _mod.fetch_scan_categories
-fetch_scan_title = _mod.fetch_scan_title
-fetch_chapter_map = _mod.fetch_chapter_map
-request_bytes = _mod.request_bytes
-request_text = _mod.request_text
+_fetch_scan_title = _mod.fetch_scan_title
+_fetch_chapter_map = _mod.fetch_chapter_map
+_request_bytes = _mod.request_bytes
+_request_text = _mod.request_text
 build_image_url = _mod.build_image_url
 sanitize_name = _mod.sanitize_name
+
+
+# ── Retry wrapper for rate limiting ──────────────────────────────────────────
+import time
+
+def request_text(url, data=None, verify_ssl=True, retries=3):
+    """Wrapper around request_text with retry logic for 503/timeouts."""
+    for attempt in range(retries):
+        try:
+            return _request_text(url, data=data, verify_ssl=verify_ssl)
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Retry on timeout, 503, or connection errors
+            if any(x in error_msg for x in ['503', 'timeout', 'connection', 'unavailable']):
+                if attempt < retries - 1:
+                    wait = (2 ** attempt) + 1  # Exponential backoff: 2, 3, 5 seconds
+                    time.sleep(wait)
+                    continue
+            raise
+    return None, None
+
+
+def request_bytes(url, verify_ssl=True, retries=3):
+    """Wrapper around request_bytes with retry logic for 503/timeouts."""
+    for attempt in range(retries):
+        try:
+            return _request_bytes(url, verify_ssl=verify_ssl)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if any(x in error_msg for x in ['503', 'timeout', 'connection', 'unavailable']):
+                if attempt < retries - 1:
+                    wait = (2 ** attempt) + 1
+                    time.sleep(wait)
+                    continue
+            raise
+    return None
+
+
+def fetch_scan_title(category_url: str, verify_ssl: bool = True) -> str:
+    """Get scan title from page — preserves trailing spaces (e.g. 'Kingdom ')."""
+    import html as html_mod
+    page, _ = _request_text(category_url, verify_ssl=verify_ssl)
+    match = re.search(r'id=["\']titreOeuvre["\'][^>]*>(.*?)</h3>', page, re.IGNORECASE | re.DOTALL)
+    if match:
+        # Strip HTML tags but ONLY strip newlines/tabs, not spaces (preserves "Kingdom ")
+        title = re.sub(r'<[^>]+>', '', match.group(1))
+        title = html_mod.unescape(title).strip('\n\r\t')
+        if title:
+            return title
+    return _fetch_scan_title(category_url, verify_ssl)
+
+
+def fetch_chapter_map(base_url, verify_ssl, scan_title, retries=3):
+    """Wrapper around fetch_chapter_map with retry logic for 503/timeouts."""
+    for attempt in range(retries):
+        try:
+            return _fetch_chapter_map(base_url, verify_ssl, scan_title)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if any(x in error_msg for x in ['503', 'timeout', 'connection', 'unavailable']):
+                if attempt < retries - 1:
+                    wait = (2 ** attempt) + 1
+                    time.sleep(wait)
+                    continue
+            raise
+    return {}
 
 # ── Load split + epub functions ───────────────────────────────────────────────
 
@@ -324,7 +390,24 @@ def download_chapters(
             except Exception:
                 pass
 
-        (base_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+        # Fetch full work info (synopsis, genres, etc.) if not already cached
+        meta_path = base_dir / "meta.json"
+        existing_info = {}
+        if meta_path.exists():
+            try:
+                existing_info = json.loads(meta_path.read_text())
+            except Exception:
+                pass
+        has_info = any(k in existing_info for k in ("synopsis", "genres", "year", "status", "creator"))
+        if not has_info:
+            try:
+                info = fetch_work_info(work_url, verify_ssl)
+                if info:
+                    meta.update(info)
+            except Exception:
+                pass
+
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
         chapters_to_do = [c for c in range(start_chapter, end_chapter + 1) if c in chapter_map]
         jobs_svc.update_job(job_id, total=len(chapters_to_do))

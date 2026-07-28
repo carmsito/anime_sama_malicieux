@@ -8,11 +8,21 @@ import { SearchCtx } from '../App'
 
 const infoCache = {}
 
-function MangaCard({ manga, onClick }) {
+function MangaCard({ manga, onClick, isNew }) {
   const [imgOk, setImgOk] = useState(!!manga.cover_url)
   const [info, setInfo] = useState(infoCache[manga.id] || null)
   const infoLoadingRef = useRef(false)
   const timerRef = useRef()
+  const cardRef = useRef()
+
+  useEffect(() => {
+    if (isNew && cardRef.current) {
+      gsap.fromTo(cardRef.current,
+        { opacity: 0, scale: 0.85, y: 20 },
+        { opacity: 1, scale: 1, y: 0, duration: 0.5, ease: 'back.out(1.4)' }
+      )
+    }
+  }, [isNew])
 
   const onEnter = () => {
     // Lazy load info on hover (480ms delay)
@@ -41,12 +51,13 @@ function MangaCard({ manga, onClick }) {
   const synopsis = info?.synopsis
 
   return (
-    <div className="manga-card" onClick={onClick} onMouseEnter={onEnter} onMouseLeave={onLeave}>
+    <div ref={cardRef} className="manga-card" onClick={onClick} onMouseEnter={onEnter} onMouseLeave={onLeave}>
       <div className="manga-card-img">
         {imgOk
           ? <img src={manga.cover_url} alt={manga.name} onError={() => setImgOk(false)} />
           : <div className="manga-card-ph">📖</div>
         }
+        {isNew && <div className="card-new-badge">Nouveau</div>}
         {/* Overlay on hover with genres + synopsis */}
         <div className="manga-card-overlay-info">
           {genres.length > 0 && (
@@ -205,17 +216,120 @@ function HeroCarousel({ mangas }) {
 export default function Home() {
   const [mangas, setMangas] = useState([])
   const [loading, setLoading] = useState(true)
+  const [newIds, setNewIds] = useState(new Set())
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [selectedGenres, setSelectedGenres] = useState(new Set())
+  const [allGenres, setAllGenres] = useState([])
   const navigate = useNavigate()
   const gridRef = useRef()
+  const filterRef = useRef()
   const { query } = useContext(SearchCtx)
+  const knownIdsRef = useRef(null)
+  const pollRef = useRef()
+  const prevJobStatusesRef = useRef({})
 
   useEffect(() => {
-    api.listMangas().then(setMangas).catch(console.error).finally(() => setLoading(false))
+    api.listMangas().then((list) => {
+      setMangas(list)
+      knownIdsRef.current = new Set(list.map((m) => m.id))
+    }).catch(console.error).finally(() => setLoading(false))
   }, [])
 
-  const filtered = query
-    ? mangas.filter((m) => m.name.toLowerCase().includes(query.toLowerCase()))
-    : mangas
+  // Polling: detect new mangas while a job is running
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const jobs = await api.listJobs()
+        const prev = prevJobStatusesRef.current
+
+        // Detect jobs that just transitioned to done (catches fast extractions < 3s)
+        const anyJustDone = jobs.some(
+          (j) => j.status === 'done' && prev[j.id] !== 'done'
+        )
+        const anyRunning = jobs.some((j) => j.status === 'running' || j.status === 'pending')
+
+        // Update tracked statuses
+        jobs.forEach((j) => { prev[j.id] = j.status })
+
+        if (!anyRunning && !anyJustDone) return
+
+        const list = await api.listMangas()
+        const known = knownIdsRef.current
+        if (!known) return
+
+        const added = list.filter((m) => !known.has(m.id))
+        if (added.length > 0) {
+          added.forEach((m) => known.add(m.id))
+          setNewIds((prev) => {
+            const next = new Set(prev)
+            added.forEach((m) => next.add(m.id))
+            return next
+          })
+          setMangas(list)
+          // Remove "new" highlight after animation
+          setTimeout(() => {
+            setNewIds((prev) => {
+              const next = new Set(prev)
+              added.forEach((m) => next.delete(m.id))
+              return next
+            })
+          }, 3000)
+        }
+      } catch (_) {}
+    }
+
+    pollRef.current = setInterval(poll, 3000)
+    return () => clearInterval(pollRef.current)
+  }, [])
+
+  // Collect all known genres from cache
+  useEffect(() => {
+    const genres = new Set()
+    Object.values(infoCache).forEach((info) => {
+      info?.genres?.forEach((g) => genres.add(g))
+    })
+    setAllGenres([...genres].sort())
+  }, [filterOpen])
+
+  // Fetch info for all mangas when filter opens (to populate genre list)
+  useEffect(() => {
+    if (!filterOpen) return
+    mangas.forEach((m) => {
+      if (!infoCache[m.id]) {
+        api.getMangaInfo(m.id).then((i) => {
+          infoCache[m.id] = i
+          const genres = new Set()
+          Object.values(infoCache).forEach((info) => info?.genres?.forEach((g) => genres.add(g)))
+          setAllGenres([...genres].sort())
+        }).catch(() => {})
+      }
+    })
+  }, [filterOpen, mangas])
+
+  // Animate filter panel
+  useEffect(() => {
+    if (!filterRef.current) return
+    if (filterOpen) {
+      gsap.fromTo(filterRef.current, { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: .22, ease: 'power2.out' })
+    }
+  }, [filterOpen])
+
+  const toggleGenre = (g) => {
+    setSelectedGenres((prev) => {
+      const next = new Set(prev)
+      next.has(g) ? next.delete(g) : next.add(g)
+      return next
+    })
+  }
+
+  const filtered = mangas.filter((m) => {
+    if (query && !m.name.toLowerCase().includes(query.toLowerCase())) return false
+    if (selectedGenres.size > 0) {
+      const genres = infoCache[m.id]?.genres || []
+      if (!genres.some((g) => selectedGenres.has(g))) return false
+    }
+    return true
+  })
 
   useEffect(() => {
     if (!filtered.length || !gridRef.current) return
@@ -252,7 +366,36 @@ export default function Home() {
               {query ? `Résultats pour « ${query} »` : 'Ma bibliothèque'}
             </div>
             <div className="section-count">{filtered.length}{!query && ` / ${mangas.length}`}</div>
+            {selectedGenres.size > 0 && (
+              <button onClick={() => setSelectedGenres(new Set())} style={{
+                background: 'none', border: 'none', color: 'var(--accent)',
+                fontSize: '.75rem', cursor: 'pointer', padding: '0 .4rem',
+              }}>✕ Réinitialiser</button>
+            )}
+            <button
+              onClick={() => setFilterOpen((o) => !o)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '.3rem', color: filterOpen || selectedGenres.size > 0 ? 'var(--accent)' : 'rgba(255,255,255,.5)', display: 'flex', alignItems: 'center' }}
+              title="Filtrer par genre"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+              </svg>
+            </button>
           </div>
+
+          {filterOpen && (
+            <div ref={filterRef} className="filter-panel">
+              {allGenres.length === 0 ? (
+                <span style={{ color: 'rgba(255,255,255,.4)', fontSize: '.8rem' }}>Chargement des genres…</span>
+              ) : allGenres.map((g) => (
+                <button
+                  key={g}
+                  className={`filter-tag ${selectedGenres.has(g) ? 'active' : ''}`}
+                  onClick={() => toggleGenre(g)}
+                >{g}</button>
+              ))}
+            </div>
+          )}
           {!filtered.length ? (
             <div className="empty" style={{ padding: '2rem 0' }}>
               <p>Aucun manga ne correspond à « {query} »</p>
@@ -260,7 +403,7 @@ export default function Home() {
           ) : (
             <div className="manga-grid" ref={gridRef}>
               {filtered.map((m) => (
-                <MangaCard key={m.id} manga={m} onClick={() => navigate(`/manga/${m.id}`)} />
+                <MangaCard key={m.id} manga={m} isNew={newIds.has(m.id)} onClick={() => navigate(`/manga/${m.id}`)} />
               ))}
             </div>
           )}
