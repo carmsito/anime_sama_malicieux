@@ -17,6 +17,7 @@ import re
 import subprocess
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -44,29 +45,19 @@ def split_fixed(img_path: str, output_dir, page_height: int = 1878) -> list:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    w, h = get_dimensions(str(img_path))
-    n_full = h // page_height
-    remainder = h % page_height
+    # Un seul appel magick : l'image source est décodée une fois pour tous les crops.
+    subprocess.run(
+        ['magick', str(img_path), '-crop', f'0x{page_height}', '+repage',
+         str(output_dir / 'tmp_%04d.jpg')],
+        check=True, capture_output=True
+    )
 
+    tmp_files = sorted(output_dir.glob('tmp_????.jpg'))
     pages = []
-    for i in range(n_full):
-        y = i * page_height
-        out = output_dir / f"{i + 1:02d}.jpg"
-        subprocess.run(
-            ['magick', str(img_path), '-crop', f'{w}x{page_height}+0+{y}', '+repage', str(out)],
-            check=True, capture_output=True
-        )
-        pages.append(out)
-
-    if remainder > 0:
-        y = n_full * page_height
-        out = output_dir / f"{n_full + 1:02d}.jpg"
-        subprocess.run(
-            ['magick', str(img_path), '-crop', f'{w}x{remainder}+0+{y}', '+repage', str(out)],
-            check=True, capture_output=True
-        )
-        pages.append(out)
-
+    for i, tmp in enumerate(tmp_files, 1):
+        dst = output_dir / f'{i:02d}.jpg'
+        tmp.rename(dst)
+        pages.append(dst)
     return pages
 
 
@@ -86,9 +77,8 @@ def get_row_brightness(img_path, h):
     return rows
 
 
-def get_margin_brightness(img_path, h, margin_px=60):
+def get_margin_brightness(img_path, h, w, margin_px=60):
     """Brightness grayscale moyenne par ligne dans la marge droite."""
-    w, _ = get_dimensions(img_path)
     proc = subprocess.run(
         ['magick', img_path,
          '-colorspace', 'Gray',
@@ -180,7 +170,13 @@ def find_secondary_break(section_start, section_end, margin_rows,
 def compute_cuts(img_path, max_ratio=1.8, min_page=300):
     """Retourne (w, h, liste_de_coupures) en détectant les séparateurs."""
     w, h = get_dimensions(img_path)
-    rows = get_row_brightness(img_path, h)
+
+    # Les deux analyses de luminosité sont indépendantes : on les lance en parallèle.
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        fut_rows = ex.submit(get_row_brightness, img_path, h)
+        fut_margin = ex.submit(get_margin_brightness, img_path, h, w)
+        rows = fut_rows.result()
+        margin_rows = fut_margin.result()
 
     white_zones = find_zones(rows, threshold=240, cmp='gt', min_run=25, merge_gap=15)
     dark_zones  = find_zones(rows, threshold=90,  cmp='lt', min_run=25, merge_gap=15)
@@ -210,7 +206,6 @@ def compute_cuts(img_path, max_ratio=1.8, min_page=300):
     if len(cuts) >= 2 and (cuts[-1] - cuts[-2]) < min_page:
         cuts = cuts[:-1]
 
-    margin_rows = get_margin_brightness(img_path, h)
     extra_cuts = []
     for y_start, y_end in zip(cuts[:-1], cuts[1:]):
         if (y_end - y_start) / w > max_ratio:
@@ -227,15 +222,24 @@ def split_image(img_path, output_dir, min_page=300, dry_run=False):
     w, h, cuts = compute_cuts(img_path, min_page=min_page)
 
     pages = []
+    crop_args = []
     for i, (y_start, y_end) in enumerate(zip(cuts[:-1], cuts[1:]), 1):
         page_h = y_end - y_start
         out_path = os.path.join(output_dir, f"{i:02d}.jpg")
+        pages.append(Path(out_path))
         if not dry_run:
+            crop_args.append((img_path, w, page_h, y_start, out_path))
+
+    if crop_args:
+        def _crop(args):
+            img, cw, ph, ys, out = args
             subprocess.run(
-                ['magick', img_path, '-crop', f'{w}x{page_h}+0+{y_start}', '+repage', out_path],
+                ['magick', img, '-crop', f'{cw}x{ph}+0+{ys}', '+repage', out],
                 check=True, capture_output=True
             )
-        pages.append(Path(out_path))
+        with ThreadPoolExecutor() as ex:
+            list(ex.map(_crop, crop_args))
+
     return pages
 
 

@@ -1,3 +1,14 @@
 extraction/
 __pycache__/
+app/api/__pycache__/
+app/front/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
 *.epub
+app/venv/
+app/.venv/
+app/front/node_modules/
+app/front/dist/
+app/api/data/covers/
+app/api/data/jobs.json
