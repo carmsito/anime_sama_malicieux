@@ -1,18 +1,43 @@
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 from ..services import scraper
-from ..models.schemas import SearchResult, ScanCategory, ChapterMap
+from ..services import mangadex_svc, sushiscan_svc
+from ..models.schemas import (
+    SearchResult,
+    ScanCategory,
+    ChapterMap,
+    MangaDexLang,
+    MangaDexChapters,
+    SushiscanChapters,
+)
 
 router = APIRouter(prefix="/search", tags=["search"])
 
 
-@router.get("", response_model=list[SearchResult], summary="Rechercher un manga sur Anime-Sama")
-def search(q: str = Query(..., min_length=1)):
-    try:
-        results = scraper.search_with_images(q)
-        return [SearchResult(**r) for r in results]
-    except Exception as e:
-        raise HTTPException(503, f"Anime-Sama inaccessible : {e}")
+# ── Multi-source search ───────────────────────────────────────────────────────
 
+@router.get("", response_model=list[SearchResult], summary="Rechercher un manga (multi-source)")
+def search(q: str = Query(..., min_length=1), source: str = Query("anime-sama")):
+    if source == "mangadex":
+        try:
+            return mangadex_svc.search(q)
+        except Exception as e:
+            raise HTTPException(503, f"MangaDex inaccessible : {e}")
+    elif source == "sushiscan":
+        try:
+            return sushiscan_svc.search(q)
+        except Exception as e:
+            raise HTTPException(503, f"Sushiscan inaccessible : {e}")
+    else:
+        # Anime-Sama (default / backward-compat)
+        try:
+            results = scraper.search_with_images(q)
+            return [SearchResult(**r) for r in results]
+        except Exception as e:
+            raise HTTPException(503, f"Anime-Sama inaccessible : {e}")
+
+
+# ── Anime-Sama endpoints (unchanged, kept for backward compat) ────────────────
 
 @router.get("/categories", response_model=list[ScanCategory], summary="Catégories scan")
 def get_categories(url: str = Query(...)):
@@ -38,3 +63,58 @@ def get_chapters(url: str = Query(...)):
         )
     except Exception as e:
         raise HTTPException(503, f"Erreur : {e}")
+
+
+# ── MangaDex endpoints ────────────────────────────────────────────────────────
+
+@router.get("/mangadex/languages", response_model=list[MangaDexLang], summary="Langues disponibles MangaDex")
+def get_mangadex_languages(manga_id: str = Query(...)):
+    try:
+        langs = mangadex_svc.get_languages(manga_id)
+        return [MangaDexLang(**l) for l in langs]
+    except Exception as e:
+        raise HTTPException(503, f"MangaDex inaccessible : {e}")
+
+
+@router.get("/mangadex/chapters", response_model=MangaDexChapters, summary="Plage de chapitres MangaDex")
+def get_mangadex_chapters(manga_id: str = Query(...), lang: str = Query(...)):
+    try:
+        result = mangadex_svc.get_chapter_range(manga_id, lang)
+    except Exception as e:
+        raise HTTPException(503, f"MangaDex inaccessible : {e}")
+    if not result:
+        raise HTTPException(404, "Aucun chapitre disponible")
+    return MangaDexChapters(**result)
+
+
+# ── Sushiscan endpoints ───────────────────────────────────────────────────────
+
+@router.get("/sushiscan/chapters", response_model=SushiscanChapters, summary="Plage de chapitres Sushiscan")
+def get_sushiscan_chapters(url: str = Query(...)):
+    try:
+        result = sushiscan_svc.get_chapters(url)
+    except Exception as e:
+        raise HTTPException(503, f"Sushiscan inaccessible : {e}")
+    if not result:
+        raise HTTPException(404, "Aucun chapitre disponible")
+    return SushiscanChapters(**result)
+
+
+@router.post("/sushiscan/close", summary="Fermer l'instance Sushiscan/Chromium")
+def close_sushiscan():
+    try:
+        sushiscan_svc.close_driver()
+        return {"status": "closed"}
+    except Exception as e:
+        raise HTTPException(500, f"Impossible de fermer Sushiscan : {e}")
+
+
+@router.get("/sushiscan/image", summary="Proxy image Sushiscan")
+def proxy_sushiscan_image(url: str = Query(...)):
+    try:
+        data, media_type = sushiscan_svc.fetch_image(url)
+    except Exception as e:
+        raise HTTPException(502, f"Image Sushiscan inaccessible : {e}")
+    if not data:
+        raise HTTPException(404, "Image introuvable")
+    return Response(content=data, media_type=media_type, headers={"Cache-Control": "public, max-age=86400"})

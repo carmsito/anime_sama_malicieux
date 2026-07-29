@@ -1,7 +1,7 @@
 import React, { useContext, useState, useRef, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { gsap } from 'gsap'
-import { AuthCtx, SearchCtx } from '../App'
+import { AuthCtx, SearchCtx } from '../contexts'
 import SearchModal from './SearchModal'
 
 const APP_NAME = 'MANGALIB'

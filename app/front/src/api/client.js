@@ -32,16 +32,29 @@ export const api = {
   // Library
   listMangas: () => req('/mangas'),
   getManga: (id) => req(`/mangas/${id}`),
+  getMangaVariants: (id) => req(`/mangas/${id}/variants`),
   epubUrl: (mangaId, chapterNum) => `${BASE}/mangas/${mangaId}/chapters/${chapterNum}/epub`,
 
-  // Search
+  // Search — Anime-Sama (backward compat)
   search: (q) => req(`/search?q=${encodeURIComponent(q)}`),
   getCategories: (url) => req(`/search/categories?url=${encodeURIComponent(url)}`),
   getChapters: (url) => req(`/search/chapters?url=${encodeURIComponent(url)}`),
 
+  // Search — multi-source
+  searchSource: (q, source) => req(`/search?q=${encodeURIComponent(q)}&source=${encodeURIComponent(source)}`),
+
+  // MangaDex specific
+  getMangaDexLanguages: (mangaId) => req(`/search/mangadex/languages?manga_id=${encodeURIComponent(mangaId)}`),
+  getMangaDexChapters: (mangaId, lang) =>
+    req(`/search/mangadex/chapters?manga_id=${encodeURIComponent(mangaId)}&lang=${encodeURIComponent(lang)}`),
+
+  // Sushiscan specific
+  getSushiscanChapters: (url) => req(`/search/sushiscan/chapters?url=${encodeURIComponent(url)}`),
+  closeSushiscan: () => req('/search/sushiscan/close', { method: 'POST' }),
+
   // Manga info (scraped metadata)
   getMangaInfo: (id) => req(`/mangas/${id}/info`),
-  refreshMangaInfo: (id) => req(`/mangas/${id}/info?force=true`),
+  refreshMangaInfo: (id) => req(`/mangas/${id}/info-refresh`, { method: 'POST' }),
 
   // Download chapters
   downloadChapters: async (mangaId, chapNums) => {

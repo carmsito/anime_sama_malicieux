@@ -1,7 +1,7 @@
 import React, { useState, useContext } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
-import { AuthCtx } from '../App'
+import { AuthCtx } from '../contexts'
 
 export default function Login() {
   const { login } = useContext(AuthCtx)

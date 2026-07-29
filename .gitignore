@@ -12,3 +12,4 @@ app/front/node_modules/
 app/front/dist/
 app/api/data/covers/
 app/api/data/jobs.json
+.claude/worktrees/

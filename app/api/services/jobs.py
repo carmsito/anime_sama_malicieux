@@ -37,19 +37,26 @@ _load_from_disk()
 def create_job(
     manga_name: str,
     category: str,
-    start_chapter: int,
-    end_chapter: int,
+    start_chapter: float,
+    end_chapter: float,
+    source: str = "anime-sama",
 ) -> dict:
     job_id = str(uuid.uuid4())
+    # Compute total only when it makes sense (for MangaDex we don't know yet)
+    if end_chapter >= start_chapter and end_chapter > 0:
+        total = max(1, int(end_chapter - start_chapter + 1))
+    else:
+        total = 0
     job = {
         "id": job_id,
         "status": "pending",
         "manga_name": manga_name,
         "category": category,
+        "source": source,
         "start_chapter": start_chapter,
         "end_chapter": end_chapter,
         "progress": 0,
-        "total": end_chapter - start_chapter + 1,
+        "total": total,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "completed_at": None,
         "error": None,

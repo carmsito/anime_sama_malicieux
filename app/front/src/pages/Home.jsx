@@ -2,11 +2,23 @@ import React, { useState, useEffect, useRef, useCallback, useContext } from 'rea
 import { useNavigate } from 'react-router-dom'
 import { gsap } from 'gsap'
 import { api } from '../api/client'
-import { SearchCtx } from '../App'
+import { SearchCtx } from '../contexts'
 
 // ── Manga Card ─────────────────────────────────────────────────────────────
 
 const infoCache = {}
+
+function pluralizeUnit(unit, count) {
+  if (count === 1) return unit
+  if (unit === 'Chapitre') return 'Chapitres'
+  if (unit === 'Volume') return 'Volumes'
+  if (unit === 'Tome') return 'Tomes'
+  return `${unit}s`
+}
+
+function getMangaUnit(manga) {
+  return manga?.kind || 'Chapitre'
+}
 
 function MangaCard({ manga, onClick, isNew }) {
   const [imgOk, setImgOk] = useState(!!manga.cover_url)
@@ -49,6 +61,8 @@ function MangaCard({ manga, onClick, isNew }) {
 
   const genres = info?.genres?.slice(0, 3) || []
   const synopsis = info?.synopsis
+  const unit = getMangaUnit(manga)
+  const unitShort = unit === 'Chapitre' ? 'chap.' : unit.toLowerCase()
 
   return (
     <div ref={cardRef} className="manga-card" onClick={onClick} onMouseEnter={onEnter} onMouseLeave={onLeave}>
@@ -70,7 +84,7 @@ function MangaCard({ manga, onClick, isNew }) {
       </div>
       <div className="manga-card-info">
         <div className="manga-card-name">{manga.name}</div>
-        <div className="manga-card-cat">{manga.chapter_count} chap. · {manga.category}</div>
+        <div className="manga-card-cat">{manga.chapter_count} {unitShort} · {manga.category}</div>
       </div>
     </div>
   )
@@ -148,6 +162,8 @@ function HeroCarousel({ mangas }) {
   const bgVal = m.cover_url ? { backgroundImage: `url(${m.cover_url})` } : { background: 'linear-gradient(135deg,#1a0812,#0a0a18)' }
   const genres = heroInfo?.genres?.slice(0, 4) || []
   const synopsis = heroInfo?.synopsis
+  const unit = getMangaUnit(m)
+  const unitLabel = pluralizeUnit(unit, m.chapter_count).toLowerCase()
 
   return (
     <div className="hero" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
@@ -168,7 +184,7 @@ function HeroCarousel({ mangas }) {
 
       <div ref={contentRef} className="hero-body">
         <div className="hero-logo-text">{m.name}</div>
-        <div className="hero-sub">{m.category} · {m.chapter_count} chap.</div>
+        <div className="hero-sub">{m.category} · {m.chapter_count} {unitLabel}</div>
 
         {genres.length > 0 && (
           <div style={{ display: 'flex', gap: '.4rem', flexWrap: 'wrap', marginBottom: '.8rem' }}>

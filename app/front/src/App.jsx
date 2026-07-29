@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from 'react'
+import React, { useContext, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import Login from './pages/Login'
 import Home from './pages/Home'
@@ -6,10 +6,8 @@ import MangaDetail from './pages/MangaDetail'
 import EpubReader from './pages/EpubReader'
 import Navbar from './components/Navbar'
 import JobStatus from './components/JobStatus'
-
-export const AuthCtx = createContext(null)
-export const JobsCtx = createContext(null)
-export const SearchCtx = createContext({ query: '', set: () => {} })
+import PageErrorBoundary from './components/PageErrorBoundary'
+import { AuthCtx, JobsCtx, SearchCtx } from './contexts'
 
 function useAuth() {
   const [user, setUser] = useState(() => {
@@ -44,19 +42,17 @@ export default function App() {
         <SearchCtx.Provider value={{ query: searchQuery, set: setSearchQuery }}>
           <Routes>
             <Route path="/login" element={<Login />} />
-            {/* Reader — standalone, no navbar */}
             <Route path="/manga/:mangaId/read/:chapterNum" element={<Guard><EpubReader /></Guard>} />
-            {/* Everything else */}
             <Route path="/*" element={
               <Guard>
-                <>
+                <PageErrorBoundary>
                   <Navbar />
                   <Routes>
                     <Route path="/" element={<Home />} />
                     <Route path="/manga/:mangaId" element={<MangaDetail />} />
                   </Routes>
                   <JobStatus />
-                </>
+                </PageErrorBoundary>
               </Guard>
             } />
           </Routes>
