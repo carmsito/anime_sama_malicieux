@@ -564,7 +564,7 @@ button { cursor: pointer; font: inherit; border: none; background: none; }
   background: rgba(0,0,0,.72); color: #fff; font-size: .68rem; font-weight: 700;
   padding: .12rem .42rem; border-radius: 20px; letter-spacing: .3px;
 }
-.chapter-card-pct.done { background: rgba(46,160,67,.9); }
+.chapter-card-pct.done { background: rgba(20,20,20,.9); color: rgba(255,255,255,.75); border: 1px solid rgba(255,255,255,.15); }
 .chapter-card-progress {
   position: absolute; bottom: 0; left: 0; right: 0; height: 4px;
   background: rgba(255,255,255,.15);
