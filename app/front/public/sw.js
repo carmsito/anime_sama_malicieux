@@ -3,7 +3,7 @@
 // avec repli sur le cache de l'app-shell hors-ligne. On ne met JAMAIS en cache
 // l'API ni les images de manga (contenu dynamique / lourd).
 
-const CACHE = 'mangalib-shell-v1';
+const CACHE = 'mangalib-shell-v2';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {
