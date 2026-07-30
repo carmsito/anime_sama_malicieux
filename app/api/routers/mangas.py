@@ -72,9 +72,32 @@ def get_manga_variants(manga_id: str):
     return {"name": m["name"], "variants": sorted(variants, key=lambda v: v["category"])}
 
 
+def _resolve_epub(manga_id: str, chapter_number: float):
+    """
+    Chemin de l'EPUB : local d'abord, sinon récupéré depuis le backend de stockage
+    (Telegram) et mis en cache. Utilisé par TOUTES les routes de lecture pour que
+    le mode Telegram (local supprimé) fonctionne aussi dans le lecteur.
+    """
+    path = library.get_epub_path(manga_id, chapter_number)
+    if path:
+        return path
+    try:
+        from ..services import storage
+        m = library.get_manga(manga_id)
+        kind = None
+        for ch in (m or {}).get("chapters", []) or []:
+            if float(ch.get("number", -1)) == float(chapter_number):
+                kind = ch.get("kind")
+                break
+        kind = kind or (m or {}).get("meta", {}).get("kind") or "Chapitre"
+        return storage.fetch_epub(manga_id, chapter_number, kind)
+    except Exception:
+        return None
+
+
 @router.get("/{manga_id}/chapters/{chapter_number}/epub", summary="Télécharger l'EPUB")
 def get_epub(manga_id: str, chapter_number: float):
-    path = library.get_epub_path(manga_id, chapter_number)
+    path = _resolve_epub(manga_id, chapter_number)
     if not path:
         raise HTTPException(404, "Chapitre introuvable")
     return FileResponse(str(path), media_type="application/epub+zip",
@@ -83,7 +106,7 @@ def get_epub(manga_id: str, chapter_number: float):
 
 @router.get("/{manga_id}/chapters/{chapter_number}/images", summary="Liste des images d'un chapitre")
 def list_chapter_images(manga_id: str, chapter_number: float):
-    path = library.get_epub_path(manga_id, chapter_number)
+    path = _resolve_epub(manga_id, chapter_number)
     if not path:
         raise HTTPException(404, "Chapitre introuvable")
     count = epub_reader.get_image_count(path)
@@ -95,7 +118,7 @@ def list_chapter_images(manga_id: str, chapter_number: float):
 
 @router.get("/{manga_id}/chapters/{chapter_number}/images/{idx}", summary="Image d'un chapitre")
 def get_chapter_image(manga_id: str, chapter_number: float, idx: int):
-    path = library.get_epub_path(manga_id, chapter_number)
+    path = _resolve_epub(manga_id, chapter_number)
     if not path:
         raise HTTPException(404)
     data, media_type = epub_reader.get_image_data(path, idx)
@@ -107,7 +130,7 @@ def get_chapter_image(manga_id: str, chapter_number: float, idx: int):
 
 @router.get("/{manga_id}/chapters/{chapter_number}/cover", summary="Cover du chapitre (1ère image)")
 def get_chapter_cover(manga_id: str, chapter_number: float):
-    path = library.get_epub_path(manga_id, chapter_number)
+    path = _resolve_epub(manga_id, chapter_number)
     if not path:
         raise HTTPException(404)
     data, media_type = epub_reader.get_image_data(path, 0)

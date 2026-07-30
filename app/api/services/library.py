@@ -51,7 +51,7 @@ def _parse_epub_stem(stem: str) -> Optional[dict]:
     return {"number": num, "title": stem, "has_epub": True, "kind": kind}
 
 
-def _list_chapters(cat_dir: Path) -> list[dict]:
+def _list_chapters(cat_dir: Path, manga_id: str | None = None) -> list[dict]:
     """
     List EPUB chapters in cat_dir.
     Falls back to cat_dir.parent when no EPUBs in cat_dir (old flat sushiscan structure
@@ -75,6 +75,25 @@ def _list_chapters(cat_dir: Path) -> list[dict]:
                 chapters.append(ch)
                 seen_nums.add(ch["number"])
 
+    # Merge : chapitres offloadés sur Telegram (absents du disque) mais indexés en DB.
+    if manga_id:
+        try:
+            from . import db
+            for rec in db.list_files(manga_id):
+                num = float(rec["chapter_number"])
+                if num in seen_nums:
+                    continue
+                kind = rec.get("kind") or "Chapitre"
+                chapters.append({
+                    "number": num,
+                    "title": f"{kind} {num}",
+                    "has_epub": True,
+                    "kind": kind,
+                })
+                seen_nums.add(num)
+        except Exception:
+            pass
+
     return sorted(chapters, key=lambda c: c["number"])
 
 
@@ -88,9 +107,9 @@ def list_mangas() -> list[dict]:
         for cat_dir in sorted(manga_dir.iterdir()):
             if not cat_dir.is_dir():
                 continue
-            chapters = _list_chapters(cat_dir)
-            meta = _read_meta(cat_dir)
             manga_id = _make_manga_id(manga_dir.name, cat_dir.name)
+            chapters = _list_chapters(cat_dir, manga_id)
+            meta = _read_meta(cat_dir)
             mangas.append({
                 "id": manga_id,
                 "name": manga_dir.name,
@@ -106,7 +125,7 @@ def get_manga(manga_id: str) -> Optional[dict]:
     for manga in list_mangas():
         if manga["id"] == manga_id:
             cat_dir = EXTRACTION_DIR / manga["name"] / manga["category"]
-            manga["chapters"] = _list_chapters(cat_dir)
+            manga["chapters"] = _list_chapters(cat_dir, manga["id"])
             return manga
     return None
 

@@ -433,6 +433,14 @@ def download_chapters(
 
             if make_epub:
                 _process_chapter(chapter_dir, manga_name, chapter, page_height, keep_images)
+                # Offload storage (no-op en local ; Telegram si activé)
+                try:
+                    epub_path = base_dir / f"Chapitre {chapter}.epub"
+                    if epub_path.exists():
+                        from . import storage
+                        storage.store_epub(manga_id, float(chapter), "Chapitre", epub_path)
+                except Exception as se:
+                    print(f"[storage] offload Anime-Sama {chapter}: {se}", flush=True)
 
             jobs_svc.update_job(job_id, progress=progress)
 

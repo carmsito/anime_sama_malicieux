@@ -117,36 +117,33 @@ def _in_docker() -> bool:
     return os.path.exists("/.dockerenv") or os.environ.get("container") == "docker"
 
 
-def get_driver() -> ChromiumPage:
-    global _driver
-    # Vérifie que le driver n'est pas mort
-    if _driver is not None:
-        try:
-            _ = _driver.current_tab  # Ping rapide
-            return _driver
-        except Exception:
-            print_flush("  [Chrome] Relancement du driver fermé...")
-            _driver = None
-
-    in_docker = _in_docker()
-
-    # Démarre Xvfb si pas de DISPLAY ou si en Docker
-    need_xvfb = in_docker or not os.environ.get("DISPLAY")
-    if need_xvfb or True:   # toujours Xvfb = fenêtre cachée
-        display = _start_xvfb()
-        if display:
-            os.environ["DISPLAY"] = display
-            print_flush("Mode silencieux (Xvfb)")
-        else:
-            print_flush("Xvfb indisponible — installe xorg-server-xvfb pour cacher la fenêtre")
-            if in_docker:
-                print_flush("  Dans le Dockerfile: RUN apt-get install -y xvfb")
-            else:
-                print_flush("  sudo pacman -S xorg-server-xvfb")
+def _ensure_display() -> None:
+    """Démarre Xvfb une seule fois (partagé par toutes les instances Chrome)."""
+    if os.environ.get("DISPLAY") and _xvfb_display is None:
+        # Un DISPLAY existe déjà (session graphique) — rien à faire
+        return
+    if _xvfb_display is not None:
+        return  # Xvfb déjà lancé par nous
+    display = _start_xvfb()
+    if display:
+        os.environ["DISPLAY"] = display
+        print_flush("Mode silencieux (Xvfb)")
     else:
-        display = None
+        print_flush("Xvfb indisponible — installe xorg-server-xvfb pour cacher la fenêtre")
+        if _in_docker():
+            print_flush("  Dans le Dockerfile: RUN apt-get install -y xvfb")
+        else:
+            print_flush("  sudo pacman -S xorg-server-xvfb")
 
-    print_flush("Lancement du navigateur (bypass Cloudflare)...")
+
+def create_driver() -> ChromiumPage:
+    """
+    Construit une NOUVELLE instance Chrome (sans singleton).
+    Utilisé par le BrowserPool côté API pour paralléliser search/download.
+    Chaque instance a son propre user-data-dir + port auto (multi-instances).
+    """
+    _ensure_display()
+    print_flush("Lancement d'un navigateur (bypass Cloudflare)...")
     opts = ChromiumOptions()
     opts.set_browser_path(CHROME_BIN)
     opts.set_argument("--no-sandbox")
@@ -154,15 +151,34 @@ def get_driver() -> ChromiumPage:
     opts.set_argument("--disable-gpu")
     opts.set_argument("--disable-software-rasterizer")
     opts.set_argument("--window-size=1920,1080")
-    # Toujours hide window off-screen (Xvfb fera mieux si disponible)
     opts.set_argument("--window-position=-2400,-2400")
+    # auto_port() → port de debug + user-data-dir isolés : indispensable pour
+    # faire tourner plusieurs Chrome en parallèle sans collision.
+    try:
+        opts.auto_port(True)
+    except Exception:
+        pass
 
-    _driver = ChromiumPage(addr_or_opts=opts)
-
-    _driver.get(BASE_URL)
-    _driver.wait.doc_loaded()
+    driver = ChromiumPage(addr_or_opts=opts)
+    driver.get(BASE_URL)
+    driver.wait.doc_loaded()
     time.sleep(PAGE_WAIT)
-    _try_solve_cf(_driver)
+    _try_solve_cf(driver)
+    return driver
+
+
+def get_driver() -> ChromiumPage:
+    """Singleton (usage CLI / rétro-compat). Le pool utilise create_driver()."""
+    global _driver
+    if _driver is not None:
+        try:
+            if _driver.states.is_alive:  # DrissionPage 4.x
+                return _driver
+        except Exception:
+            pass
+        print_flush("  [Chrome] Relancement du driver fermé...")
+        _driver = None
+    _driver = create_driver()
     return _driver
 
 
@@ -192,8 +208,8 @@ def close_driver() -> None:
     _stop_xvfb()
 
 
-def fetch_html(url: str, wait: float = PAGE_WAIT) -> str:
-    driver = get_driver()
+def fetch_html(url: str, wait: float = PAGE_WAIT, driver=None) -> str:
+    driver = driver or get_driver()
     driver.get(url)
     driver.wait.doc_loaded()
     time.sleep(wait)
@@ -202,9 +218,9 @@ def fetch_html(url: str, wait: float = PAGE_WAIT) -> str:
 
 # ── Recherche ──────────────────────────────────────────────────────────────────
 
-def search_manga(query: str) -> list[SearchResult]:
+def search_manga(query: str, driver=None) -> list[SearchResult]:
     url = f"{BASE_URL}/?s={quote(query, safe='')}&post_type=wp-manga"
-    html = fetch_html(url, wait=3.0)
+    html = fetch_html(url, wait=3.0, driver=driver)
     soup = BeautifulSoup(html, "html.parser")
 
     results: list[SearchResult] = []
@@ -238,8 +254,8 @@ def search_manga(query: str) -> list[SearchResult]:
 
 # ── Chapitres ──────────────────────────────────────────────────────────────────
 
-def fetch_chapters(manga_url: str) -> list[Chapter]:
-    html = fetch_html(manga_url, wait=5.0)
+def fetch_chapters(manga_url: str, driver=None) -> list[Chapter]:
+    html = fetch_html(manga_url, wait=5.0, driver=driver)
     soup = BeautifulSoup(html, "html.parser")
 
     chapters: list[Chapter] = []
@@ -472,7 +488,7 @@ def _inject_batch(
     return saved
 
 
-def _download_one_chapter(chapter_url: str, chapter_dir: Path, batch_size: int = DEFAULT_BATCH_SIZE) -> tuple[list[str], int]:
+def _download_one_chapter(chapter_url: str, chapter_dir: Path, batch_size: int = DEFAULT_BATCH_SIZE, driver=None) -> tuple[list[str], int]:
     """
     Télécharge toutes les images d'un chapitre en deux phases :
     Phase 1 : listen actif AVANT la navigation → capture les images chargées
@@ -480,7 +496,7 @@ def _download_one_chapter(chapter_url: str, chapter_dir: Path, batch_size: int =
     Phase 2 : injection JS une par une pour les images restantes.
     Retourne (liste_urls, nb_téléchargées).
     """
-    driver = get_driver()
+    driver = driver or get_driver()
 
     # Phase 1 — listen ouvert avant navigate, capte les auto-loads du reader
     driver.listen.start(targets="")

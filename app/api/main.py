@@ -8,12 +8,15 @@ from pathlib import Path
 
 from .routers import auth, mangas, search, extract, jobs
 from .services.scraper import warm_base_url
+from .services import job_queue, db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     loop = asyncio.get_event_loop()
+    db.init()          # crée les tables (mapping Telegram, kv)
     loop.run_in_executor(None, warm_base_url)  # non-blocking warm-up
+    job_queue.start()  # démarre le pool de workers
     yield
 
 
@@ -24,10 +27,15 @@ app = FastAPI(
     version="1.0.0",
 )
 
+import os as _os
+
+# Auth par Bearer token (pas de cookies) → credentials inutiles ; wildcard valide.
+# En prod tu peux restreindre via CORS_ORIGINS="https://ton-domaine".
+_origins = [o.strip() for o in _os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

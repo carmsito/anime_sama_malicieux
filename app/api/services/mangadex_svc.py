@@ -320,6 +320,19 @@ def download(
 
             if make_epub:
                 _process_chapter_epub(chapter_dir, manga_name, ch_num, page_height, keep_images)
+                # Offload storage (no-op en local ; Telegram si activé). Numéros numériques uniquement.
+                try:
+                    num_f = float(ch_num)
+                    epub_path = base_dir / f"Chapitre {ch_num}.epub"
+                    if epub_path.exists():
+                        from . import storage
+                        from .library import _make_manga_id
+                        mid = _make_manga_id(_sanitize(manga_name), lang)
+                        storage.store_epub(mid, num_f, "Chapitre", epub_path)
+                except ValueError:
+                    pass  # ch_num non numérique (ex: "Extra") → reste en local
+                except Exception as se:
+                    print(f"[storage] offload MangaDex {ch_num}: {se}", flush=True)
 
             jobs_svc.update_job(job_id, progress=progress)
 

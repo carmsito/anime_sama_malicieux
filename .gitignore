@@ -12,4 +12,11 @@ app/front/node_modules/
 app/front/dist/
 app/api/data/covers/
 app/api/data/jobs.json
+app/api/data/*.db
+app/api/data/*.db-wal
+app/api/data/*.db-shm
+app/api/data/*.session
+app/api/data/epub_cache/
+.env
+deploy/.env
 .claude/worktrees/

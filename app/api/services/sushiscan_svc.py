@@ -1,46 +1,53 @@
 """
-Service wrapper for Sushiscan scraper (scripts/sushiscan.py).
-Uses a threading.Lock to serialize all Chrome operations since
-sushiscan.py maintains a single Chrome/DrissionPage instance.
+Service Sushiscan — s'appuie sur scripts/sushiscan.py.
+
+Concurrence : plus de lock global tenu pendant tout un job. On utilise un
+BrowserPool prioritaire (voir browser_pool.py) :
+  • search / get_chapters / get_meta / image  → priorité HAUTE (interactif)
+  • download                                   → priorité BASSE, bail RELÂCHÉ
+                                                  entre chaque chapitre
+Résultat : une recherche d'un user n'est jamais bloquée par le download d'un autre.
 """
 from __future__ import annotations
 
 import importlib.util
 import json
 import os
+import re as _re
 import sys
-import threading
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-# Set CHROME_BIN env var before importing the module so it picks up the right path.
+# CHROME_BIN avant l'import du module pour qu'il prenne le bon binaire.
 os.environ.setdefault("CHROME_BIN", "/opt/google/chrome/chrome")
 
-from ..config import EXTRACTION_DIR, COVERS_DIR, PROJECT_ROOT
-
-import re as _re
-
-# Single lock to serialize all Chrome operations (search, fetch_chapters, download)
-_chrome_lock = threading.Lock()
+from ..config import (
+    EXTRACTION_DIR, COVERS_DIR, PROJECT_ROOT,
+    SUSHISCAN_POOL_SIZE, SUSHISCAN_IDLE_TIMEOUT,
+)
+from .browser_pool import BrowserPool, PRIO_SEARCH, PRIO_DOWNLOAD
 
 
 def _make_manga_id(manga_name: str, category: str = "sushiscan") -> str:
-    """Same algorithm as library._make_manga_id."""
+    """Même algo que library._make_manga_id."""
     def slug(s: str) -> str:
         return _re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
     return f"{slug(manga_name)}_{slug(category)}"
 
-# Lazy-loaded module — populated on first use so import errors don't crash the API
+
+# ── Chargement paresseux du module scraper ────────────────────────────────────
+
 _mod = None
 split_fixed = None
 create_epub = None
-_AVAILABLE = None  # None = not checked yet, True/False after first attempt
+_AVAILABLE = None
+_pool: BrowserPool | None = None
 
 
 def _load_module() -> bool:
-    """Load sushiscan.py and helpers on first use. Returns True if successful."""
-    global _mod, split_fixed, create_epub, _AVAILABLE
+    """Charge scripts/sushiscan.py + helpers au premier usage."""
+    global _mod, split_fixed, create_epub, _AVAILABLE, _pool
     if _AVAILABLE is not None:
         return _AVAILABLE
     try:
@@ -59,6 +66,12 @@ def _load_module() -> bool:
         split_fixed = sf
         create_epub = ce
 
+        # Pool de navigateurs (create_driver = factory multi-instances)
+        _pool = BrowserPool(
+            SUSHISCAN_POOL_SIZE, mod.create_driver, name="sushiscan",
+            idle_timeout=SUSHISCAN_IDLE_TIMEOUT,
+        )
+
         _AVAILABLE = True
     except Exception as e:
         _AVAILABLE = False
@@ -66,385 +79,18 @@ def _load_module() -> bool:
     return _AVAILABLE
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
-
-def search(query: str) -> list[dict]:
-    """
-    Search manga on Sushiscan. Acquires Chrome lock for the duration.
-    Returns [{title, subtitle, work_url (catalogue URL), image_url, source}].
-    """
+def _require() -> None:
     if not _load_module():
         raise RuntimeError("Sushiscan indisponible (DrissionPage non installé)")
-    with _chrome_lock:
-        try:
-            results = _mod.search_manga(query)
-        except Exception as e:
-            raise RuntimeError(f"Erreur Sushiscan lors de la recherche : {e}") from e
-
-    return [
-        {
-            "title": r.title,
-            "subtitle": "",
-            "work_url": r.url,
-            "image_url": (
-                f"/api/search/sushiscan/image?url={getattr(r, 'image_url', '')}"
-                if getattr(r, "image_url", None)
-                else None
-            ),
-            "source": "sushiscan",
-        }
-        for r in results
-    ]
 
 
-def get_chapters(manga_url: str) -> dict | None:
-    """
-    Fetch chapter list for a manga URL (acquires Chrome lock).
-    Returns {manga_url, first_chapter, last_chapter, total, kind} or None.
-    """
-    if not _load_module():
-        raise RuntimeError("Sushiscan indisponible (DrissionPage non installé)")
-    with _chrome_lock:
-        try:
-            chapters = _mod.fetch_chapters(manga_url)
-        except Exception as e:
-            raise RuntimeError(f"Erreur Sushiscan lors de la récupération des chapitres : {e}") from e
-
-    if not chapters:
-        return None
-
-    # Sépare chapitres et volumes (Sushiscan peut avoir les deux mélangés)
-    by_kind: dict[str, list] = {}
-    for c in chapters:
-        by_kind.setdefault(c.kind, []).append(c)
-
-    kinds_info = {}
-    for k, lst in by_kind.items():
-        lst_sorted = sorted(lst, key=lambda c: c.number)
-        kinds_info[k] = {
-            "first": lst_sorted[0].number,
-            "last": lst_sorted[-1].number,
-            "total": len(lst_sorted),
-        }
-
-    # Rétro-compat : si un seul type, renvoie aussi les anciens champs
-    first_kind = next(iter(kinds_info))
-    return {
-        "manga_url": manga_url,
-        "kinds": kinds_info,
-        # legacy fields for single-kind mangas
-        "kind": first_kind,
-        "first_chapter": kinds_info[first_kind]["first"],
-        "last_chapter": kinds_info[first_kind]["last"],
-        "total": sum(v["total"] for v in kinds_info.values()),
-    }
-
-
-def get_meta(manga_url: str, manga_id: str | None = None) -> dict:
-    """
-    Scrape manga metadata + optionally cache cover (if manga_id given).
-    Returns {synopsis, genres, cover_url, year, creator}.
-    """
-    if not _load_module():
-        return {}
-
-    meta: dict = {}
-    soup = None
-    html = ""
-
-    with _chrome_lock:
-        try:
-            from bs4 import BeautifulSoup
-            import re as _re2
-            html = _mod.fetch_html(manga_url, wait=3.0)
-            soup = BeautifulSoup(html, "html.parser")
-
-            # Cover — og:image is most reliable
-            cover_url = None
-            og = soup.find("meta", property="og:image")
-            if og and og.get("content"):
-                cover_url = og["content"]
-            else:
-                for sel in [".summary_image img", "[class*=thumbnail] img", ".wp-post-image"]:
-                    img = soup.select_one(sel)
-                    if img:
-                        src = img.get("data-src") or img.get("src") or ""
-                        if src and not src.startswith("data:"):
-                            cover_url = src
-                            break
-
-            if cover_url:
-                meta["cover_url"] = cover_url
-                # Télécharge la cover via CDP listen (bypass CF — même contexte que la page)
-                if manga_id:
-                    cover_path = COVERS_DIR / f"{manga_id}.jpg"
-                    if not cover_path.exists():
-                        try:
-                            driver = _mod.get_driver()
-                            driver.listen.start(targets=cover_url)
-                            driver.run_js(
-                                "(function(src){"
-                                "var i=document.createElement('img');"
-                                "i.src=src;"
-                                "i.style.cssText='position:fixed;width:1px;height:1px;opacity:0;left:-9999px';"
-                                "document.body.appendChild(i);"
-                                "})(arguments[0]);",
-                                cover_url,
-                            )
-                            pkt = driver.listen.wait(count=1, timeout=15)
-                            driver.listen.stop()
-                            if pkt and pkt is not False:
-                                body = pkt.response.body
-                                data = body if isinstance(body, bytes) else (body.encode("latin-1") if body else b"")
-                                if len(data) > 1000 and data[:1] != b"<":
-                                    cover_path.write_bytes(data)
-                                    print(f"[cover] {manga_id}.jpg → {len(data)} bytes", flush=True)
-                                else:
-                                    print(f"[cover] invalid data ({len(data)}b, starts {data[:4]})", flush=True)
-                            else:
-                                print(f"[cover] timeout for {manga_id}", flush=True)
-                        except Exception as e:
-                            print(f"[cover] error: {e}", flush=True)
-        except Exception as e:
-            print(f"[get_meta] error: {e}", flush=True)
-            return meta
-
-    if not soup:
-        return meta
-
-    import re as _re3
-
-    # Synopsis
-    p = soup.select_one(".entry-content p")
-    if p:
-        text = p.get_text(strip=True)
-        if len(text) > 20:
-            meta["synopsis"] = text
-
-    # Genres
-    genre_tags = soup.select(".genres-content a, [class*=genre] a")
-    genres = [a.get_text(strip=True) for a in genre_tags if a.get_text(strip=True)]
-    if genres:
-        meta["genres"] = genres
-
-    # Year
-    m = _re3.search(r'\b(19[5-9]\d|20[0-2]\d)\b', html)
-    if m:
-        meta["year"] = m.group(0)
-
-    # Creator / author
-    for sel in [".author-content a", "[class*=author] a"]:
-        el = soup.select_one(sel)
-        if el:
-            meta["creator"] = el.get_text(strip=True)
-            break
-
-    return meta
-
-
-def download(
-    job_id: str,
-    manga_name: str,
-    manga_url: str,
-    start: float,
-    end: float,
-    kind_filter: str | None = None,
-    make_epub: bool = True,
-    keep_images: bool = False,
-    page_height: int = 1878,
-    batch_size: int = 5,
-) -> None:
-    """
-    Background download function for Sushiscan chapters.
-    Holds the Chrome lock for the entire duration.
-    """
-    from . import jobs as jobs_svc
-
-    if not _load_module():
-        jobs_svc.update_job(job_id, status="error", error="Sushiscan indisponible (DrissionPage non installé)")
-        return
-
-    jobs_svc.update_job(job_id, status="running")
-
-    # Hold the lock for the entire download — Chrome is used throughout
-    with _chrome_lock:
-        try:
-            chapters = _mod.fetch_chapters(manga_url)
-            if not chapters:
-                jobs_svc.update_job(job_id, status="error", error="Aucun chapitre trouvé")
-                return
-
-            targets = [
-                c for c in chapters
-                if start <= c.number <= end and (not kind_filter or c.kind == kind_filter)
-            ]
-            if not targets:
-                jobs_svc.update_job(job_id, status="error", error="Aucun chapitre dans cette plage")
-                return
-
-            jobs_svc.update_job(job_id, total=len(targets))
-
-            kind = kind_filter or (targets[0].kind if targets else "Chapitre")
-            safe_name = _mod.sanitize_name(manga_name)
-            # Category subdir = "sushiscan" so library finds it as manga/sushiscan/Volume N.epub
-            base_dir = EXTRACTION_DIR / safe_name / "sushiscan"
-            base_dir.mkdir(parents=True, exist_ok=True)
-
-            # manga_id must match library._make_manga_id(manga_name, "sushiscan")
-            manga_id = _make_manga_id(safe_name, "sushiscan")
-
-            # Fetch and save metadata
-            meta: dict = {
-                "manga_name": manga_name,
-                "manga_url": manga_url,
-                "source": "sushiscan",
-                "kind": kind,
-            }
-            try:
-                from bs4 import BeautifulSoup
-                import re
-                html = _mod.fetch_html(manga_url, wait=3.0)
-                soup = BeautifulSoup(html, "html.parser")
-
-                # Cover
-                og = soup.find("meta", property="og:image")
-                if og and og.get("content"):
-                    meta["cover_url"] = og["content"]
-                else:
-                    for sel in [".summary_image img", "[class*=thumbnail] img"]:
-                        img = soup.select_one(sel)
-                        if img:
-                            src = img.get("data-src") or img.get("src") or ""
-                            if src and not src.startswith("data:"):
-                                meta["cover_url"] = src
-                                break
-
-                # Cache cover using same ID as library._make_manga_id
-                if "cover_url" in meta:
-                    _cache_cover(manga_id, meta["cover_url"])
-
-                # Synopsis
-                p = soup.select_one(".entry-content p")
-                if p:
-                    text = p.get_text(strip=True)
-                    if len(text) > 20:
-                        meta["synopsis"] = text
-
-                # Genres
-                genre_tags = soup.select(".genres-content a, [class*=genre] a")
-                genres = [a.get_text(strip=True) for a in genre_tags if a.get_text(strip=True)]
-                if genres:
-                    meta["genres"] = genres
-
-                # Year
-                m = re.search(r'\b(19[5-9]\d|20[0-2]\d)\b', html)
-                if m:
-                    meta["year"] = m.group(0)
-
-                # Creator
-                for sel in [".author-content a", "[class*=author] a"]:
-                    el = soup.select_one(sel)
-                    if el:
-                        meta["creator"] = el.get_text(strip=True)
-                        break
-            except Exception:
-                pass
-
-            (base_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
-
-            for progress, chapter in enumerate(targets, 1):
-                label = f"{chapter.kind} {chapter.number}"
-                chapter_dir = base_dir / label
-                chapter_dir.mkdir(parents=True, exist_ok=True)
-
-                try:
-                    _mod._download_one_chapter(chapter.url, chapter_dir, batch_size)
-                except Exception as e:
-                    jobs_svc.update_job(job_id, progress=progress)
-                    continue
-
-                if make_epub:
-                    try:
-                        _mod._process_epub(
-                            chapter_dir,
-                            manga_name,
-                            chapter.number,
-                            chapter.kind,
-                            page_height,
-                            keep_images,
-                            create_epub,
-                            split_fixed,
-                        )
-                    except Exception as epub_err:
-                        print(f"[epub ERROR] {chapter.kind} {chapter.number}: {epub_err}", flush=True)
-
-                jobs_svc.update_job(job_id, progress=progress)
-
-            jobs_svc.update_job(job_id, status="done")
-
-        except Exception as exc:
-            jobs_svc.update_job(job_id, status="error", error=str(exc))
-        finally:
-            close_driver()
-
-
-def _cache_cover(slug: str, url: str) -> None:
-    """Download cover via Chrome driver (Sushiscan CDN blocks plain HTTP)."""
-    cover_path = COVERS_DIR / f"{slug}.jpg"
-    if cover_path.exists():
-        return
-    if not _load_module():
-        return
-    try:
-        # Use the Chrome driver to download (bypasses CF cookie requirement)
-        driver = _mod.get_driver()
-        # listen for the image request
-        driver.listen.start(targets=url)
-        # Inject as sub-resource from the current page context
-        driver.run_js(f"""
-            (function() {{
-                const img = document.createElement('img');
-                img.src = arguments[0];
-                img.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;left:-9999px';
-                document.body.appendChild(img);
-            }})();
-        """, url)
-        import time
-        pkt = driver.listen.wait(count=1, timeout=15)
-        driver.listen.stop()
-        if pkt:
-            body = pkt.response.body
-            data = body if isinstance(body, bytes) else body.encode("latin-1")
-            if data and data[:1] not in (b"<", b"{"):
-                cover_path.write_bytes(data)
-                print(f"[cover] {slug}.jpg → {len(data)} bytes", flush=True)
-    except Exception as e:
-        print(f"[cover] failed for {slug}: {e}", flush=True)
-
-
-def close_driver() -> None:
-    """Ferme le driver Chromium si ouvert."""
-    global _mod
-    if _mod is None:
-        return
-    try:
-        driver = _mod._driver
-        if driver:
-            driver.close()
-            _mod._driver = None
-    except Exception:
-        pass
-
+# ── Helpers bas niveau ────────────────────────────────────────────────────────
 
 def _guess_image_media_type(url: str) -> str:
     suffix = Path(urlparse(url).path).suffix.lower()
     return {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".webp": "image/webp",
-        ".avif": "image/avif",
-        ".gif": "image/gif",
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+        ".webp": "image/webp", ".avif": "image/avif", ".gif": "image/gif",
     }.get(suffix, "image/jpeg")
 
 
@@ -466,49 +112,275 @@ def _is_image_bytes(data: bytes) -> bool:
     return False
 
 
-def _fetch_image_via_driver(url: str) -> tuple[bytes | None, str]:
-    if not _load_module():
-        return None, "application/octet-stream"
-    with _chrome_lock:
+def _grab_via_listen(driver, url: str, timeout: float = 15) -> bytes | None:
+    """
+    Télécharge une ressource protégée CF en l'injectant comme sous-ressource
+    dans le contexte de la page (mêmes cookies) et en captant la réponse CDP.
+    `driver` doit être un navigateur déjà baillé (aucun lease pris ici).
+    """
+    try:
+        driver.listen.start(targets=url)
+        driver.run_js(
+            "(function(src){"
+            "var i=document.createElement('img');"
+            "i.src=src;"
+            "i.style.cssText='position:fixed;width:1px;height:1px;opacity:0;left:-9999px;top:-9999px';"
+            "document.body.appendChild(i);"
+            "})(arguments[0]);",
+            url,
+        )
+        pkt = driver.listen.wait(count=1, timeout=timeout)
+        driver.listen.stop()
+        if not pkt or pkt is False:
+            return None
+        body = pkt.response.body
+        data = body if isinstance(body, bytes) else (body.encode("latin-1") if body else b"")
+        return data if _is_image_bytes(data) else None
+    except Exception:
         try:
-            driver = _mod.get_driver()
-            driver.listen.start(targets=url)
-            driver.run_js(
-                "(function(src){"
-                "var i=document.createElement('img');"
-                "i.src=src;"
-                "i.style.cssText='position:fixed;width:1px;height:1px;opacity:0;left:-9999px;top:-9999px';"
-                "document.body.appendChild(i);"
-                "})(arguments[0]);",
-                url,
-            )
-            pkt = driver.listen.wait(count=1, timeout=15)
             driver.listen.stop()
-            if not pkt or pkt is False:
-                return None, _guess_image_media_type(url)
-            body = pkt.response.body
-            data = body if isinstance(body, bytes) else (body.encode("latin-1") if body else b"")
-            if not _is_image_bytes(data):
-                return None, _guess_image_media_type(url)
-            media_type = _guess_image_media_type(url)
-            try:
-                media_type = pkt.response.headers.get("content-type", media_type).split(";", 1)[0]
-            except Exception:
-                pass
-            return data, media_type
         except Exception:
-            return None, _guess_image_media_type(url)
+            pass
+        return None
+
+
+def _cache_cover(slug: str, url: str, driver) -> None:
+    """Sauvegarde la cover localement via le navigateur baillé fourni."""
+    cover_path = COVERS_DIR / f"{slug}.jpg"
+    if cover_path.exists() or not url:
+        return
+    data = _grab_via_listen(driver, url)
+    if data:
+        cover_path.write_bytes(data)
+        print(f"[cover] {slug}.jpg → {len(data)} bytes", flush=True)
+
+
+def _scrape_meta(html: str) -> dict:
+    """Extrait synopsis/genres/year/creator/cover_url depuis le HTML d'une fiche."""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+    meta: dict = {}
+
+    og = soup.find("meta", property="og:image")
+    if og and og.get("content"):
+        meta["cover_url"] = og["content"]
+    else:
+        for sel in [".summary_image img", "[class*=thumbnail] img", ".wp-post-image"]:
+            img = soup.select_one(sel)
+            if img:
+                src = img.get("data-src") or img.get("src") or ""
+                if src and not src.startswith("data:"):
+                    meta["cover_url"] = src
+                    break
+
+    p = soup.select_one(".entry-content p")
+    if p:
+        text = p.get_text(strip=True)
+        if len(text) > 20:
+            meta["synopsis"] = text
+
+    genres = [a.get_text(strip=True) for a in soup.select(".genres-content a, [class*=genre] a") if a.get_text(strip=True)]
+    if genres:
+        meta["genres"] = genres
+
+    m = _re.search(r'\b(19[5-9]\d|20[0-2]\d)\b', html)
+    if m:
+        meta["year"] = m.group(0)
+
+    for sel in [".author-content a", "[class*=author] a"]:
+        el = soup.select_one(sel)
+        if el:
+            meta["creator"] = el.get_text(strip=True)
+            break
+
+    return meta
+
+
+# ── API publique ──────────────────────────────────────────────────────────────
+
+def search(query: str) -> list[dict]:
+    _require()
+    with _pool.lease(PRIO_SEARCH) as drv:
+        try:
+            results = _mod.search_manga(query, driver=drv)
+        except Exception as e:
+            raise RuntimeError(f"Erreur Sushiscan lors de la recherche : {e}") from e
+
+    return [
+        {
+            "title": r.title,
+            "subtitle": "",
+            "work_url": r.url,
+            "image_url": (
+                f"/api/search/sushiscan/image?url={getattr(r, 'image_url', '')}"
+                if getattr(r, "image_url", None) else None
+            ),
+            "source": "sushiscan",
+        }
+        for r in results
+    ]
+
+
+def get_chapters(manga_url: str) -> dict | None:
+    _require()
+    with _pool.lease(PRIO_SEARCH) as drv:
+        try:
+            chapters = _mod.fetch_chapters(manga_url, driver=drv)
+        except Exception as e:
+            raise RuntimeError(f"Erreur Sushiscan lors de la récupération des chapitres : {e}") from e
+
+    if not chapters:
+        return None
+
+    # Sépare chapitres et volumes (Sushiscan peut mélanger les deux)
+    by_kind: dict[str, list] = {}
+    for c in chapters:
+        by_kind.setdefault(c.kind, []).append(c)
+
+    kinds_info = {}
+    for k, lst in by_kind.items():
+        lst_sorted = sorted(lst, key=lambda c: c.number)
+        kinds_info[k] = {
+            "first": lst_sorted[0].number,
+            "last": lst_sorted[-1].number,
+            "total": len(lst_sorted),
+        }
+
+    first_kind = next(iter(kinds_info))
+    return {
+        "manga_url": manga_url,
+        "kinds": kinds_info,
+        "kind": first_kind,
+        "first_chapter": kinds_info[first_kind]["first"],
+        "last_chapter": kinds_info[first_kind]["last"],
+        "total": sum(v["total"] for v in kinds_info.values()),
+    }
+
+
+def get_meta(manga_url: str, manga_id: str | None = None) -> dict:
+    if not _load_module():
+        return {}
+    try:
+        with _pool.lease(PRIO_SEARCH) as drv:
+            html = _mod.fetch_html(manga_url, wait=3.0, driver=drv)
+            meta = _scrape_meta(html)
+            if manga_id and meta.get("cover_url"):
+                _cache_cover(manga_id, meta["cover_url"], drv)
+            return meta
+    except Exception as e:
+        print(f"[get_meta] error: {e}", flush=True)
+        return {}
+
+
+def download(
+    job_id: str,
+    manga_name: str,
+    manga_url: str,
+    start: float,
+    end: float,
+    kind_filter: str | None = None,
+    make_epub: bool = True,
+    keep_images: bool = False,
+    page_height: int = 1878,
+    batch_size: int = 5,
+) -> None:
+    """
+    Download d'un job Sushiscan. Prend un bail navigateur PAR CHAPITRE et le
+    relâche entre chaque → les recherches interactives peuvent s'intercaler.
+    """
+    from . import jobs as jobs_svc
+
+    if not _load_module():
+        jobs_svc.update_job(job_id, status="error", error="Sushiscan indisponible (DrissionPage non installé)")
+        return
+
+    jobs_svc.update_job(job_id, status="running")
+
+    try:
+        # 1) Liste des chapitres (bail court, priorité download)
+        with _pool.lease(PRIO_DOWNLOAD) as drv:
+            chapters = _mod.fetch_chapters(manga_url, driver=drv)
+        if not chapters:
+            jobs_svc.update_job(job_id, status="error", error="Aucun chapitre trouvé")
+            return
+
+        targets = [
+            c for c in chapters
+            if start <= c.number <= end and (not kind_filter or c.kind == kind_filter)
+        ]
+        if not targets:
+            jobs_svc.update_job(job_id, status="error", error="Aucun chapitre dans cette plage")
+            return
+
+        jobs_svc.update_job(job_id, total=len(targets))
+
+        kind = kind_filter or targets[0].kind
+        safe_name = _mod.sanitize_name(manga_name)
+        base_dir = EXTRACTION_DIR / safe_name / "sushiscan"
+        base_dir.mkdir(parents=True, exist_ok=True)
+        manga_id = _make_manga_id(safe_name, "sushiscan")
+
+        # 2) Métadonnées + cover (bail court)
+        meta: dict = {
+            "manga_name": manga_name, "manga_url": manga_url,
+            "source": "sushiscan", "kind": kind,
+        }
+        try:
+            with _pool.lease(PRIO_DOWNLOAD) as drv:
+                html = _mod.fetch_html(manga_url, wait=3.0, driver=drv)
+                meta.update(_scrape_meta(html))
+                if meta.get("cover_url"):
+                    _cache_cover(manga_id, meta["cover_url"], drv)
+        except Exception:
+            pass
+        (base_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+        # 3) Chapitres — un bail par chapitre (relâché entre chaque)
+        for progress, chapter in enumerate(targets, 1):
+            label = f"{chapter.kind} {chapter.number}"
+            chapter_dir = base_dir / label
+            chapter_dir.mkdir(parents=True, exist_ok=True)
+
+            try:
+                with _pool.lease(PRIO_DOWNLOAD) as drv:
+                    _mod._download_one_chapter(chapter.url, chapter_dir, batch_size, driver=drv)
+            except Exception as e:
+                print(f"[download] {label}: {e}", flush=True)
+                jobs_svc.update_job(job_id, progress=progress)
+                continue
+
+            if make_epub:
+                try:
+                    _mod._process_epub(
+                        chapter_dir, manga_name, chapter.number, chapter.kind,
+                        page_height, keep_images, create_epub, split_fixed,
+                    )
+                    # Offload vers le backend de stockage (no-op en mode local)
+                    epub_path = base_dir / f"{chapter.kind} {chapter.number}.epub"
+                    if epub_path.exists():
+                        try:
+                            from . import storage
+                            storage.store_epub(manga_id, chapter.number, chapter.kind, epub_path)
+                        except Exception as se:
+                            print(f"[storage] offload {label}: {se}", flush=True)
+                except Exception as epub_err:
+                    print(f"[epub ERROR] {label}: {epub_err}", flush=True)
+
+            jobs_svc.update_job(job_id, progress=progress)
+
+        jobs_svc.update_job(job_id, status="done")
+
+    except Exception as exc:
+        jobs_svc.update_job(job_id, status="error", error=str(exc))
 
 
 def fetch_image(url: str) -> tuple[bytes | None, str]:
-    """Proxy a Sushiscan image; falls back to the live Chromium session when needed."""
+    """Proxy image Sushiscan : HTTP direct d'abord, fallback via navigateur baillé."""
     if not url:
         return None, "application/octet-stream"
+    # 1) HTTP simple (rapide, souvent suffisant)
     try:
-        req = Request(url, headers={
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://sushiscan.net/",
-        })
+        req = Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://sushiscan.net/"})
         with urlopen(req, timeout=20) as r:
             data = r.read()
             media_type = r.headers.get_content_type() or _guess_image_media_type(url)
@@ -516,4 +388,24 @@ def fetch_image(url: str) -> tuple[bytes | None, str]:
                 return data, media_type
     except Exception:
         pass
-    return _fetch_image_via_driver(url)
+    # 2) Fallback CF via un navigateur du pool (priorité interactive)
+    if not _load_module():
+        return None, _guess_image_media_type(url)
+    try:
+        with _pool.lease(PRIO_SEARCH) as drv:
+            data = _grab_via_listen(drv, url)
+            if data:
+                return data, _guess_image_media_type(url)
+    except Exception:
+        pass
+    return None, _guess_image_media_type(url)
+
+
+def close_driver() -> None:
+    """Ferme les navigateurs inactifs du pool (libère la RAM). Sans effet sur les baux actifs."""
+    if _pool is not None:
+        _pool.shutdown()
+
+
+def pool_stats() -> dict:
+    return _pool.stats() if _pool is not None else {"available": False}

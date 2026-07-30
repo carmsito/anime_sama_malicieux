@@ -1,9 +1,9 @@
-import threading
 from fastapi import APIRouter, Depends, HTTPException
 from ..auth import get_current_user
 from ..models.schemas import ExtractRequest, Job
 from ..services import jobs as jobs_svc, scraper
 from ..services import mangadex_svc, sushiscan_svc
+from ..services import job_queue
 
 router = APIRouter(prefix="/extract", tags=["extract"])
 
@@ -25,9 +25,9 @@ def extract(body: ExtractRequest, user: dict = Depends(get_current_user)):
             end_chapter=0,
             source="mangadex",
         )
-        thread = threading.Thread(
-            target=mangadex_svc.download,
-            kwargs={
+        job_queue.enqueue(
+            mangadex_svc.download,
+            {
                 "job_id": job["id"],
                 "manga_id": manga_id,
                 "manga_name": body.manga_name,
@@ -38,7 +38,6 @@ def extract(body: ExtractRequest, user: dict = Depends(get_current_user)):
                 "keep_images": body.keep_images,
                 "page_height": body.page_height,
             },
-            daemon=True,
         )
 
     elif body.source == "sushiscan":
@@ -53,9 +52,9 @@ def extract(body: ExtractRequest, user: dict = Depends(get_current_user)):
             end_chapter=body.end_chapter,
             source="sushiscan",
         )
-        thread = threading.Thread(
-            target=sushiscan_svc.download,
-            kwargs={
+        job_queue.enqueue(
+            sushiscan_svc.download,
+            {
                 "job_id": job["id"],
                 "manga_name": body.manga_name,
                 "manga_url": manga_url,
@@ -67,7 +66,6 @@ def extract(body: ExtractRequest, user: dict = Depends(get_current_user)):
                 "page_height": body.page_height,
                 "batch_size": body.batch_size,
             },
-            daemon=True,
         )
 
     else:
@@ -82,9 +80,9 @@ def extract(body: ExtractRequest, user: dict = Depends(get_current_user)):
             end_chapter=body.end_chapter,
             source="anime-sama",
         )
-        thread = threading.Thread(
-            target=scraper.download_chapters,
-            kwargs={
+        job_queue.enqueue(
+            scraper.download_chapters,
+            {
                 "job_id": job["id"],
                 "work_url": body.work_url,
                 "category_url": body.category_url,
@@ -97,8 +95,6 @@ def extract(body: ExtractRequest, user: dict = Depends(get_current_user)):
                 "make_epub": body.make_epub,
                 "keep_images": body.keep_images,
             },
-            daemon=True,
         )
 
-    thread.start()
     return Job(**job)
