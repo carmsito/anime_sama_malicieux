@@ -106,9 +106,67 @@ class TelegramMTProto:
             msg = await self._client.get_messages(channel, ids=msg_id)
             if not msg:
                 return None
+            # 1) Tentative rapide : téléchargement PARALLÈLE (plusieurs connexions).
+            #    N'utilise que upload.getFile (pas les méthodes rate-limitées).
+            try:
+                ok = await self._download_parallel(msg, out_path)
+                if ok:
+                    return out_path
+            except Exception as e:
+                print(f"[telegram] download parallèle échoué, fallback: {e}", flush=True)
+            # 2) Fallback sûr : méthode standard de Telethon.
             return await self._client.download_media(msg, file=out_path)
 
         return self._submit(_do())
+
+    async def _download_parallel(self, msg, out_path: str) -> bool:
+        """
+        Télécharge le média avec plusieurs requêtes GetFile CONCURRENTES sur la
+        connexion existante (MTProto multiplexe les requêtes → meilleur débit).
+        Aucune nouvelle connexion / aucun export d'auth → robuste et sans risque
+        sur les méthodes rate-limitées. Retourne True si la taille finale est bonne.
+        """
+        import asyncio, os
+        from telethon import utils
+        from telethon.tl.functions.upload import GetFileRequest
+
+        try:
+            size = msg.file.size
+        except Exception:
+            return False
+        if not size:
+            return False
+
+        _dc_id, location = utils.get_input_location(msg.media)
+        workers = int(os.environ.get("TELEGRAM_DL_CONN", "8"))
+        workers = max(2, min(workers, 12))
+        part = 512 * 1024                     # part standard Telegram
+        stride = workers * part
+
+        f = open(out_path, "wb")
+        f.truncate(size)
+        try:
+            async def worker(start):
+                offset = start
+                while offset < size:
+                    res = await self._client(GetFileRequest(location, offset=offset, limit=part))
+                    data = getattr(res, "bytes", None)
+                    if data:
+                        f.seek(offset)        # pas d'await entre seek et write → sûr
+                        f.write(data)
+                    offset += stride
+
+            await asyncio.gather(*[worker(i * part) for i in range(workers)])
+        finally:
+            f.close()
+
+        if os.path.getsize(out_path) != size:
+            try:
+                os.remove(out_path)
+            except Exception:
+                pass
+            return False
+        return True
 
     def delete(self, msg_id: int) -> None:
         channel = _channel()

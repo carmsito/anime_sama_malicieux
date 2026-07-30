@@ -17,5 +17,8 @@ DrissionPage>=4.1.0
 
 # Stockage Telegram (MTProto) — activé seulement si STORAGE_BACKEND=telegram
 telethon>=1.36.0
+# cryptg : déchiffrement AES en C (au lieu de Python pur) → up/download Telegram
+# 2-5x plus rapides. Telethon l'utilise automatiquement. Aucune requête en plus.
+cryptg>=0.4.0
 
 # Système requis (NON pip) : chromium, xvfb, imagemagick (voir deploy/Dockerfile)
