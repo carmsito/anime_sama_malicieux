@@ -43,6 +43,7 @@ export const api = {
   epubUrl: (mangaId, chapterNum) => `${BASE}/mangas/${mangaId}/chapters/${chapterNum}/epub`,
   deleteChapter: (mangaId, chapterNum) =>
     req(`/mangas/${mangaId}/chapters/${chapterNum}`, { method: 'DELETE' }),
+  deleteManga: (mangaId) => req(`/mangas/${mangaId}`, { method: 'DELETE' }),
 
   // Reading progress
   getProgress: (mangaId) => req(`/mangas/${mangaId}/progress`),

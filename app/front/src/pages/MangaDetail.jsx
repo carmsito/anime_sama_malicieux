@@ -240,6 +240,16 @@ export default function MangaDetail() {
     }
   }
 
+  const onDeleteManga = async () => {
+    if (!confirm(`Supprimer TOUT le manga "${manga.name}" (${manga.category}) ?\nTous les chapitres seront effacés (local + Telegram).`)) return
+    try {
+      await api.deleteManga(mangaId)
+      navigate('/')
+    } catch (e) {
+      alert(`Erreur: ${e.message}`)
+    }
+  }
+
   const onDownloadSelected = async () => {
     if (selectedChaps.size === 0) return
     setDownloading(true)
@@ -314,6 +324,18 @@ export default function MangaDetail() {
             >
               {refreshingInfo ? '↻' : '⟳'}
             </button>
+            {isAdmin && (
+              <button
+                onClick={onDeleteManga}
+                title="Supprimer le manga"
+                style={{
+                  background: 'none', border: 'none', color: 'rgba(255,120,120,.9)',
+                  cursor: 'pointer', padding: '.4rem', display: 'flex', alignItems: 'center', fontSize: '1.1rem',
+                }}
+              >
+                🗑
+              </button>
+            )}
           </div>
 
           <div className="detail-meta-line">

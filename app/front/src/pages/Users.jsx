@@ -56,6 +56,7 @@ export default function Users() {
         <input type="password" placeholder="Mot de passe" value={nu.password}
           onChange={e => setNu({ ...nu, password: e.target.value })} required />
         <select value={nu.role} onChange={e => setNu({ ...nu, role: e.target.value })}>
+          <option value="lecteur">lecteur</option>
           <option value="scrapper">scrapper</option>
           <option value="admin">admin</option>
         </select>
@@ -78,6 +79,7 @@ export default function Users() {
               <div className="user-actions">
                 <select value={u.role} onChange={e => onRole(u, e.target.value)}
                   disabled={u.id === user?.id}>
+                  <option value="lecteur">lecteur</option>
                   <option value="scrapper">scrapper</option>
                   <option value="admin">admin</option>
                 </select>

@@ -36,7 +36,8 @@ def _save_users(users: list[dict]) -> None:
     USERS_FILE.write_text(json.dumps(users, ensure_ascii=False, indent=2))
 
 
-ROLES = ("admin", "scrapper")
+ROLES = ("admin", "scrapper", "lecteur")
+DEFAULT_ROLE = "lecteur"  # inscription publique = lecture seule ; admin promeut ensuite
 
 
 def ensure_admin() -> None:
@@ -65,11 +66,11 @@ def create_user(username: str, password: str, role: str | None = None) -> dict:
     users = _load_users()
     if any(u["username"] == username for u in users):
         raise HTTPException(status_code=400, detail="Nom d'utilisateur déjà pris")
-    # Le tout premier utilisateur est admin (bootstrap). Les suivants : scrapper par défaut.
+    # Le tout premier utilisateur est admin (bootstrap). Les suivants : lecteur par défaut.
     if not users:
         role = "admin"
     elif role not in ROLES:
-        role = "scrapper"
+        role = DEFAULT_ROLE
     user = {
         "id": str(uuid.uuid4()),
         "username": username,

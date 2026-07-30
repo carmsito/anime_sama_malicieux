@@ -157,6 +157,40 @@ def delete_chapter(manga_id: str, chapter_number: float, user: dict = Depends(re
     return {"deleted": True, "local_removed": removed, "manga_id": manga_id, "chapter": chapter_number}
 
 
+@router.delete("/{manga_id}", summary="Supprimer un manga entier (tous chapitres + Telegram + DB + fichiers)")
+def delete_manga(manga_id: str, user: dict = Depends(require_admin)):
+    import shutil
+    from ..config import EXTRACTION_DIR
+    from ..services import storage, db
+    m = library.get_manga(manga_id)
+    if not m:
+        raise HTTPException(404, "Manga introuvable")
+
+    # 1) Supprime chaque chapitre offloadé sur Telegram + entrées DB
+    for rec in db.list_files(manga_id):
+        try:
+            storage.delete_epub(manga_id, rec["chapter_number"], rec.get("kind") or "Chapitre")
+        except Exception as e:
+            print(f"[delete_manga] {rec.get('chapter_number')}: {e}", flush=True)
+
+    # 2) Supprime le dossier de la catégorie (et le dossier manga s'il devient vide)
+    cat_dir = EXTRACTION_DIR / m["name"] / m["category"]
+    shutil.rmtree(cat_dir, ignore_errors=True)
+    manga_dir = EXTRACTION_DIR / m["name"]
+    try:
+        if manga_dir.exists() and not any(manga_dir.iterdir()):
+            manga_dir.rmdir()
+    except Exception:
+        pass
+
+    # 3) Cover locale + cache de résolution
+    (COVERS_DIR / f"{manga_id}.jpg").unlink(missing_ok=True)
+    for key in [k for k in _epub_path_cache if k[0] == manga_id]:
+        _epub_path_cache.pop(key, None)
+
+    return {"deleted": True, "manga_id": manga_id, "name": m["name"]}
+
+
 @router.get("/{manga_id}/chapters/{chapter_number}/images", summary="Liste des images d'un chapitre")
 def list_chapter_images(manga_id: str, chapter_number: float):
     path = _resolve_epub(manga_id, chapter_number)
