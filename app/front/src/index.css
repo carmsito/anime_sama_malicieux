@@ -29,6 +29,18 @@ a { color: inherit; text-decoration: none; }
 ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
 
 /* ── NAVBAR ── */
+/* ── LECTEUR : hauteur = zone visible réelle (100dvh), header+footer toujours visibles.
+      dvh s'adapte à la taille de l'écran (iPhone 13, 17 Pro Max, etc.). ── */
+.reader-root {
+  height: 100vh;              /* fallback anciens navigateurs */
+  height: 100dvh;            /* zone visible dynamique → header ET footer visibles */
+}
+.reader-bottombar {
+  /* Remonte la barre au-dessus de la barre home iPhone */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-sizing: content-box;
+}
+
 .navbar {
   position: fixed; top: 0; left: 0; right: 0; z-index: 200;
   height: 68px;

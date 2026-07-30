@@ -73,7 +73,7 @@ export default function EpubReader() {
   const nextChap = chapters.find((c) => c.number === num + 1)
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#000' }}>
+    <div className="reader-root" style={{ display: 'flex', flexDirection: 'column', background: '#000' }}>
       {/* Top bar */}
       <div className="reader-topbar" style={{
         flexShrink: 0, height: 48,
@@ -155,7 +155,7 @@ export default function EpubReader() {
       </div>
 
       {/* Bottom bar */}
-      <div style={{
+      <div className="reader-bottombar" style={{
         flexShrink: 0, height: 44,
         display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.5rem',
         background: 'rgba(0,0,0,.9)', borderTop: '1px solid rgba(255,255,255,.08)',
