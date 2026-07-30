@@ -88,6 +88,15 @@ export default function EpubReader() {
           {manga?.name} — Chap. {chapterNum}
         </span>
         <div style={{ flex: 1 }} />
+        {loaded && images.length > 0 && current > 0 && (
+          <button onClick={() => { setCurrent(0); setImgReady(false); slide(-1) }}
+            title="Reprendre depuis le début"
+            style={{ color: 'rgba(255,255,255,.6)', fontSize: '.78rem', padding: '.25rem .55rem',
+              background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: '.3rem' }}>
+            ↺ Début
+          </button>
+        )}
         <span style={{ color: 'rgba(255,255,255,.35)', fontSize: '.78rem' }}>
           {loaded ? `${current + 1} / ${images.length}` : '…'}
         </span>
