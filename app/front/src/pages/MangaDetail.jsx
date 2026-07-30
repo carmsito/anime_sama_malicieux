@@ -44,7 +44,7 @@ function ChapterCard({ manga, ch, onRead, isLoading, isSelected, onToggleSelect,
         </div>
         <a href={api.epubUrl(manga.id, ch.number)} download className="chapter-card-dl" onClick={(e) => e.stopPropagation()}>⬇</a>
         {progress > 0 && (
-          <span className={`chapter-card-pct ${done ? 'done' : ''}`}>{done ? '✓ Lu' : `${progress}%`}</span>
+          <span className="chapter-card-pct">{progress}%</span>
         )}
         {progress > 0 && !done && (
           <div className="chapter-card-progress"><div style={{ width: `${progress}%` }} /></div>

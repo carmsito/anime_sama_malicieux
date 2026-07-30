@@ -75,9 +75,19 @@ FRONT_DIST = Path(__file__).parent.parent / "front" / "dist"
 if FRONT_DIST.exists():
     app.mount("/assets", StaticFiles(directory=str(FRONT_DIST / "assets")), name="assets")
 
+    # Types MIME explicites pour les fichiers PWA (sinon Chrome refuse le manifest / SW)
+    _MIME = {
+        ".webmanifest": "application/manifest+json",
+        ".js": "text/javascript",
+        ".png": "image/png",
+    }
+
     @app.get("/{full_path:path}", include_in_schema=False)
     def serve_spa(full_path: str):
         file = FRONT_DIST / full_path
         if file.exists() and file.is_file():
-            return FileResponse(str(file))
+            mt = _MIME.get(file.suffix)
+            # Le service worker doit pouvoir contrôler toute l'app (scope racine)
+            headers = {"Service-Worker-Allowed": "/"} if file.name == "sw.js" else None
+            return FileResponse(str(file), media_type=mt, headers=headers)
         return FileResponse(str(FRONT_DIST / "index.html"))
