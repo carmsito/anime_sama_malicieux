@@ -75,7 +75,7 @@ export default function EpubReader() {
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#000' }}>
       {/* Top bar */}
-      <div style={{
+      <div className="reader-topbar" style={{
         flexShrink: 0, height: 48,
         display: 'flex', alignItems: 'center', padding: '0 1rem', gap: '.6rem',
         background: 'rgba(0,0,0,.9)', borderBottom: '1px solid rgba(255,255,255,.08)',
