@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useContext } from 'rea
 import { useNavigate } from 'react-router-dom'
 import { gsap } from 'gsap'
 import { api } from '../api/client'
-import { SearchCtx } from '../contexts'
+import { JobsCtx, SearchCtx } from '../contexts'
 
 // ── Manga Card ─────────────────────────────────────────────────────────────
 
@@ -20,7 +20,7 @@ function getMangaUnit(manga) {
   return manga?.kind || 'Chapitre'
 }
 
-function MangaCard({ manga, onClick, isNew }) {
+function MangaCard({ manga, onClick, isNew, isUpdating }) {
   const [imgOk, setImgOk] = useState(!!manga.cover_url)
   const [info, setInfo] = useState(infoCache[manga.id] || null)
   const infoLoadingRef = useRef(false)
@@ -72,6 +72,12 @@ function MangaCard({ manga, onClick, isNew }) {
           : <div className="manga-card-ph">📖</div>
         }
         {isNew && <div className="card-new-badge">Nouveau</div>}
+        {isUpdating && (
+          <div className="card-loading-badge">
+            <div className="spin" style={{ width: 14, height: 14 }} />
+            <span>Mise à jour</span>
+          </div>
+        )}
         {/* Overlay on hover with genres + synopsis */}
         <div className="manga-card-overlay-info">
           {genres.length > 0 && (
@@ -240,14 +246,24 @@ export default function Home() {
   const gridRef = useRef()
   const filterRef = useRef()
   const { query } = useContext(SearchCtx)
+  const { jobs } = useContext(JobsCtx)
   const knownIdsRef = useRef(null)
+  const knownCountsRef = useRef({})
   const pollRef = useRef()
   const prevJobStatusesRef = useRef({})
+
+  const hasActiveJobForManga = useCallback((manga) => jobs.some((job) => (
+    ['pending', 'running'].includes(job.status) &&
+    job.manga_name === manga.name &&
+    job.source === (manga.source || 'anime-sama') &&
+    (job.source !== 'anime-sama' || job.category === manga.category)
+  )), [jobs])
 
   useEffect(() => {
     api.listMangas().then((list) => {
       setMangas(list)
       knownIdsRef.current = new Set(list.map((m) => m.id))
+      knownCountsRef.current = Object.fromEntries(list.map((m) => [m.id, m.chapter_count]))
     }).catch(console.error).finally(() => setLoading(false))
   }, [])
 
@@ -272,17 +288,22 @@ export default function Home() {
         const list = await api.listMangas()
         const known = knownIdsRef.current
         if (!known) return
+        const knownCounts = knownCountsRef.current || {}
 
         const added = list.filter((m) => !known.has(m.id))
-        if (added.length > 0) {
+        const updated = list.filter((m) => known.has(m.id) && (knownCounts[m.id] ?? 0) < m.chapter_count)
+
+        if (added.length > 0 || updated.length > 0) {
           added.forEach((m) => known.add(m.id))
+          list.forEach((m) => { knownCounts[m.id] = m.chapter_count })
+
           setNewIds((prev) => {
             const next = new Set(prev)
             added.forEach((m) => next.add(m.id))
             return next
           })
           setMangas(list)
-          // Remove "new" highlight after animation
+
           setTimeout(() => {
             setNewIds((prev) => {
               const next = new Set(prev)
@@ -419,7 +440,13 @@ export default function Home() {
           ) : (
             <div className="manga-grid" ref={gridRef}>
               {filtered.map((m) => (
-                <MangaCard key={m.id} manga={m} isNew={newIds.has(m.id)} onClick={() => navigate(`/manga/${m.id}`)} />
+                <MangaCard
+                  key={m.id}
+                  manga={m}
+                  isNew={newIds.has(m.id)}
+                  isUpdating={hasActiveJobForManga(m)}
+                  onClick={() => navigate(`/manga/${m.id}`)}
+                />
               ))}
             </div>
           )}

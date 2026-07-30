@@ -44,6 +44,34 @@ function ChapterCard({ manga, ch, onRead, isLoading, isSelected, onToggleSelect,
   )
 }
 
+function PendingChapterCard({ label }) {
+  return (
+    <div className="chapter-card" style={{ position: 'relative' }}>
+      <div className="chapter-card-img">
+        <div style={{
+          width: '100%', height: '100%',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          gap: '.6rem',
+          background: 'linear-gradient(145deg, #1a1a1a, #222)',
+        }}>
+          <div className="spin" style={{ width: 28, height: 28 }} />
+          <div style={{ fontSize: '.74rem', color: 'rgba(255,255,255,.6)', fontWeight: 700 }}>
+            Téléchargement…
+          </div>
+        </div>
+      </div>
+      <div className="chapter-card-foot">
+        <div className="chapter-card-num">{label}</div>
+      </div>
+    </div>
+  )
+}
+
+function formatPendingNumber(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '?'
+  return Number.isInteger(value) ? `${value}.0` : String(value)
+}
+
 export default function MangaDetail() {
   const { mangaId } = useParams()
   const navigate = useNavigate()
@@ -64,16 +92,19 @@ export default function MangaDetail() {
   const galleryRef = useRef()
   const pollIntervalRef = useRef(null)
   const mangaRef = useRef(null)
+  const latestJobStateRef = useRef(null)
 
   const chapterKey = (ch) => `${ch.number}:${ch.title || ''}`
   const currentSource = manga?.source || 'anime-sama'
-  const activeJob = manga
-    ? jobs.find((job) => (
-      ['pending', 'running'].includes(job.status) &&
-      job.manga_name === manga.name &&
-      job.source === currentSource &&
-      (job.source !== 'anime-sama' || job.category === manga.category)
-    ))
+  const matchesCurrentMangaJob = (job) => (
+    manga &&
+    job.manga_name === manga.name &&
+    job.source === currentSource &&
+    (job.source !== 'anime-sama' || job.category === manga.category)
+  )
+  const latestRelevantJob = manga ? jobs.find(matchesCurrentMangaJob) : null
+  const activeJob = latestRelevantJob && ['pending', 'running'].includes(latestRelevantJob.status)
+    ? latestRelevantJob
     : null
   const itemLabel = manga?.kind || 'Chapitre'
   const itemLabelPlural = itemLabel === 'Chapitre' ? 'Chapitres' : `${itemLabel}s`
@@ -134,6 +165,28 @@ export default function MangaDetail() {
       clearInterval(pollIntervalRef.current)
     }
   }, [mangaId, activeJob?.id, activeJob?.status])
+
+  useEffect(() => {
+    const previous = latestJobStateRef.current
+    const current = latestRelevantJob
+      ? { id: latestRelevantJob.id, status: latestRelevantJob.status }
+      : null
+    latestJobStateRef.current = current
+
+    if (!previous || !current) return
+    if (previous.id !== current.id) return
+    if (!['pending', 'running'].includes(previous.status)) return
+    if (!['done', 'error'].includes(current.status)) return
+
+    Promise.all([
+      api.getManga(mangaId),
+      api.getMangaInfo(mangaId).catch(() => info),
+    ]).then(([refreshedManga, refreshedInfo]) => {
+      mangaRef.current = refreshedManga
+      setManga(refreshedManga)
+      if (refreshedInfo) setInfo(refreshedInfo)
+    }).catch(() => {})
+  }, [info, latestRelevantJob, mangaId])
 
   useEffect(() => {
     if (!manga || !galleryRef.current) return
@@ -206,6 +259,12 @@ export default function MangaDetail() {
   const sorted = (manga.chapters || [])
     .filter((ch) => !chapFilter || String(ch.number).includes(chapFilter))
     .sort((a, b) => sortAsc ? a.number - b.number : b.number - a.number)
+  const pendingLabels = activeJob
+    ? Array.from({ length: Math.max(0, (activeJob.total || 1) - activeJob.progress) }, (_, idx) => {
+      const nextNumber = (activeJob.start_chapter || 0) + activeJob.progress + idx
+      return `${itemLabel} ${formatPendingNumber(nextNumber)}`
+    })
+    : []
 
   const synopsis = info?.synopsis || ''
   const shortSyn = synopsis.length > 220 ? `${synopsis.slice(0, 220)}…` : synopsis
@@ -226,6 +285,7 @@ export default function MangaDetail() {
             <button
               onClick={onRefreshInfo}
               disabled={refreshingInfo}
+              className={`detail-refresh-btn ${(refreshingInfo || !!activeJob) ? 'spinning' : ''}`}
               style={{
                 background: 'none', border: 'none', color: '#fff', cursor: 'pointer',
                 padding: '.4rem', display: 'flex', alignItems: 'center', fontSize: '1.2rem',
@@ -392,9 +452,17 @@ export default function MangaDetail() {
           </div>
 
           {!sorted.length ? (
-            <div className="empty" style={{ padding: '2rem 0' }}>
-              <p>{chapFilter ? `Aucun résultat pour « ${chapFilter} »` : `Aucun ${itemLabel.toLowerCase()} disponible`}</p>
-            </div>
+            pendingLabels.length > 0 ? (
+              <div className="chapter-gallery" ref={galleryRef}>
+                {pendingLabels.map((label, idx) => (
+                  <PendingChapterCard key={`pending-${idx}`} label={label} />
+                ))}
+              </div>
+            ) : (
+              <div className="empty" style={{ padding: '2rem 0' }}>
+                <p>{chapFilter ? `Aucun résultat pour « ${chapFilter} »` : `Aucun ${itemLabel.toLowerCase()} disponible`}</p>
+              </div>
+            )
           ) : (
             <div className="chapter-gallery" ref={galleryRef}>
               {sorted.map((ch) => (
@@ -408,6 +476,9 @@ export default function MangaDetail() {
                   onToggleSelect={() => toggleChapSelect(ch.number)}
                   selectionMode={selectionMode}
                 />
+              ))}
+              {pendingLabels.map((label, idx) => (
+                <PendingChapterCard key={`pending-${idx}`} label={label} />
               ))}
             </div>
           )}

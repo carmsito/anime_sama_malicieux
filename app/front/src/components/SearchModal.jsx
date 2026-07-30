@@ -11,6 +11,22 @@ const SEARCH_DEBOUNCE_MS = {
   sushiscan: 3000,
 }
 
+function SearchResultItem({ result, disabled, onPick }) {
+  const [imgError, setImgError] = useState(false)
+
+  return (
+    <div className="s-item" onClick={() => !disabled && onPick(result)}>
+      {result.image_url && !imgError
+        ? <img className="s-item-thumb" src={result.image_url} alt="" onError={() => setImgError(true)} />
+        : <div className="s-item-thumb-ph">&#128218;</div>}
+      <div className="s-item-body">
+        <div className="s-item-title">{result.title}</div>
+        {result.subtitle && <div className="s-item-sub">{result.subtitle}</div>}
+      </div>
+    </div>
+  )
+}
+
 export default function SearchModal({
   onClose,
   prefillMangaName = '',
@@ -87,12 +103,17 @@ export default function SearchModal({
     api.closeSushiscan().catch(() => {})
   }
 
+  const modalBusy = loadingCats || loadingLangs || loadingSushi || extracting
+
   const scheduleSearch = (value, searchSource = sourceRef.current, delay = SEARCH_DEBOUNCE_MS[searchSource] || 380) => {
     invalidatePendingSearch()
     if (!value.trim()) {
       setResults([])
       setSearching(false)
       return
+    }
+    if (searchSource === 'sushiscan') {
+      sushiTouchedRef.current = true
     }
     deb.current = setTimeout(() => { doSearch(value, searchSource) }, delay)
   }
@@ -205,6 +226,9 @@ export default function SearchModal({
     if (!value.trim()) {
       if (mountedRef.current) setResults([])
       return
+    }
+    if (searchSource === 'sushiscan') {
+      sushiTouchedRef.current = true
     }
     const reqId = ++searchReqRef.current
     setSearching(true)
@@ -428,6 +452,7 @@ export default function SearchModal({
             <button
               key={s}
               className={`cat-pill ${source === s ? 'on' : ''}`}
+              disabled={modalBusy}
               onClick={() => switchSource(s)}
             >
               {SOURCE_LABELS[s]}
@@ -444,6 +469,7 @@ export default function SearchModal({
                 autoFocus
                 placeholder={`Titre du manga (${SOURCE_LABELS[source]})...`}
                 value={query}
+                disabled={modalBusy}
                 onChange={onQuery}
               />
               {(searching || loadingSushi) && <div className="spin" style={{ alignSelf: 'center' }} />}
@@ -456,15 +482,7 @@ export default function SearchModal({
             )}
             <div className="s-results">
               {results.map((r) => (
-                <div key={r.work_url} className="s-item" onClick={() => !loadingSushi && pickResult(r)}>
-                  {r.image_url
-                    ? <img className="s-item-thumb" src={r.image_url} alt="" onError={(e) => { e.target.style.display = 'none' }} />
-                    : <div className="s-item-thumb-ph">&#128218;</div>}
-                  <div className="s-item-body">
-                    <div className="s-item-title">{r.title}</div>
-                    {r.subtitle && <div className="s-item-sub">{r.subtitle}</div>}
-                  </div>
-                </div>
+                <SearchResultItem key={r.work_url} result={r} disabled={loadingSushi} onPick={pickResult} />
               ))}
               {!results.length && query && !searching && !loadingSushi && (
                 <div style={{ color: 'rgba(255,255,255,.3)', textAlign: 'center', padding: '1.5rem .5rem', fontSize: '.85rem' }}>
@@ -579,7 +597,16 @@ export default function SearchModal({
           </>
         )}
 
-        {step === S.CHAP && source === 'sushiscan' && sushiChapInfo && (
+        {step === S.CHAP && source === 'sushiscan' && loadingSushi && (
+          <>
+            <div className="modal-spinner-state" style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <div className="spin" />
+              <span className="modal-timeout-hint">Connexion à Sushiscan et récupération des chapitres…</span>
+            </div>
+          </>
+        )}
+
+        {step === S.CHAP && source === 'sushiscan' && !loadingSushi && sushiChapInfo && (
           <>
             {sushiChapInfo.kinds && Object.keys(sushiChapInfo.kinds).length > 1 && (
               <div style={{ display: 'flex', gap: '.5rem', marginBottom: '.8rem', flexWrap: 'wrap' }}>

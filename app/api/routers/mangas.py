@@ -12,6 +12,15 @@ def _work_url(meta: dict) -> str | None:
     return meta.get("work_url") or meta.get("manga_url") or meta.get("manga_id")
 
 
+def _prefer_local_cover(manga_id: str, info: dict | None) -> dict:
+    payload = dict(info or {})
+    current = library.get_manga(manga_id)
+    local_cover = current.get("cover_url") if current else None
+    if local_cover:
+        payload["cover_url"] = local_cover
+    return payload
+
+
 @router.get("", response_model=list[Manga], summary="Lister tous les mangas")
 def list_mangas():
     return [
@@ -126,7 +135,7 @@ def _refresh_info_sync(manga_id: str) -> dict:
         detail = mangadex_svc._fetch_manga_detail(manga_id_param)
         info = mangadex_svc._extract_info_from_detail(manga_id_param, detail)
         library.save_manga_info(manga_id, info)
-        return info
+        return _prefer_local_cover(manga_id, info)
 
     if source == "sushiscan":
         from ..services import sushiscan_svc
@@ -137,7 +146,7 @@ def _refresh_info_sync(manga_id: str) -> dict:
         try:
             info = sushiscan_svc.get_meta(manga_url, manga_id=manga_id)
             library.save_manga_info(manga_id, info)
-            return info
+            return _prefer_local_cover(manga_id, info)
         finally:
             sushiscan_svc.close_driver()
 
@@ -149,7 +158,7 @@ def _refresh_info_sync(manga_id: str) -> dict:
     info = sc.fetch_work_info(work_url, meta.get("verify_ssl", True))
     if info:
         library.save_manga_info(manga_id, info)
-    return info
+    return _prefer_local_cover(manga_id, info)
 
 
 @router.post("/{manga_id}/info-refresh", summary="Rafraîchir les infos")
@@ -174,7 +183,7 @@ def get_manga_info(manga_id: str, force: bool = False):
     INFO_KEYS = ["synopsis", "genres", "year", "status", "creator", "cover_url"]
     cached = {k: meta[k] for k in INFO_KEYS if k in meta}
     if cached:
-        return cached
+        return _prefer_local_cover(manga_id, cached)
 
     # --- Cache miss: fetch based on source ---
     if source == "mangadex":
@@ -187,7 +196,7 @@ def get_manga_info(manga_id: str, force: bool = False):
             detail = mangadex_svc._fetch_manga_detail(manga_id_param)
             info = mangadex_svc._extract_info_from_detail(manga_id_param, detail)
             library.save_manga_info(manga_id, info)
-            return info
+            return _prefer_local_cover(manga_id, info)
         except Exception as e:
             print(f"[ERROR] MangaDex cache miss fetch failed: {e}", flush=True)
             return {}
@@ -202,7 +211,7 @@ def get_manga_info(manga_id: str, force: bool = False):
             info = sushiscan_svc.get_meta(manga_url, manga_id=manga_id)
             print(f"[INFO] Cache miss: got {list(info.keys())}", flush=True)
             library.save_manga_info(manga_id, info)
-            return info
+            return _prefer_local_cover(manga_id, info)
         except Exception as e:
             print(f"[ERROR] Sushiscan cache miss fetch failed: {e}", flush=True)
             return {}
@@ -214,7 +223,7 @@ def get_manga_info(manga_id: str, force: bool = False):
         info = sc.fetch_work_info(work_url, meta.get("verify_ssl", True))
         if info:
             library.save_manga_info(manga_id, info)
-        return info
+        return _prefer_local_cover(manga_id, info)
 
 
 @router.post("/{manga_id}/chapters/download", summary="Télécharger plusieurs chapitres en ZIP")

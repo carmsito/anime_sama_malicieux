@@ -11,6 +11,7 @@ import os
 import sys
 import threading
 from pathlib import Path
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 # Set CHROME_BIN env var before importing the module so it picks up the right path.
@@ -435,14 +436,84 @@ def close_driver() -> None:
         pass
 
 
+def _guess_image_media_type(url: str) -> str:
+    suffix = Path(urlparse(url).path).suffix.lower()
+    return {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".avif": "image/avif",
+        ".gif": "image/gif",
+    }.get(suffix, "image/jpeg")
+
+
+def _is_image_bytes(data: bytes) -> bool:
+    if not data or len(data) < 16:
+        return False
+    if data[:1] == b"<":
+        return False
+    if data[:2] == b"\xff\xd8":
+        return True
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return True
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return True
+    if data[:4] == b"GIF8":
+        return True
+    if b"ftyp" in data[4:12]:
+        return True
+    return False
+
+
+def _fetch_image_via_driver(url: str) -> tuple[bytes | None, str]:
+    if not _load_module():
+        return None, "application/octet-stream"
+    with _chrome_lock:
+        try:
+            driver = _mod.get_driver()
+            driver.listen.start(targets=url)
+            driver.run_js(
+                "(function(src){"
+                "var i=document.createElement('img');"
+                "i.src=src;"
+                "i.style.cssText='position:fixed;width:1px;height:1px;opacity:0;left:-9999px;top:-9999px';"
+                "document.body.appendChild(i);"
+                "})(arguments[0]);",
+                url,
+            )
+            pkt = driver.listen.wait(count=1, timeout=15)
+            driver.listen.stop()
+            if not pkt or pkt is False:
+                return None, _guess_image_media_type(url)
+            body = pkt.response.body
+            data = body if isinstance(body, bytes) else (body.encode("latin-1") if body else b"")
+            if not _is_image_bytes(data):
+                return None, _guess_image_media_type(url)
+            media_type = _guess_image_media_type(url)
+            try:
+                media_type = pkt.response.headers.get("content-type", media_type).split(";", 1)[0]
+            except Exception:
+                pass
+            return data, media_type
+        except Exception:
+            return None, _guess_image_media_type(url)
+
+
 def fetch_image(url: str) -> tuple[bytes | None, str]:
-    """Proxy a Sushiscan image with headers that avoid hotlink failures."""
+    """Proxy a Sushiscan image; falls back to the live Chromium session when needed."""
     if not url:
         return None, "application/octet-stream"
-    req = Request(url, headers={
-        "User-Agent": "Mozilla/5.0",
-        "Referer": "https://sushiscan.net/",
-    })
-    with urlopen(req, timeout=20) as r:
-        data = r.read()
-        return data, r.headers.get_content_type() or "image/jpeg"
+    try:
+        req = Request(url, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://sushiscan.net/",
+        })
+        with urlopen(req, timeout=20) as r:
+            data = r.read()
+            media_type = r.headers.get_content_type() or _guess_image_media_type(url)
+            if _is_image_bytes(data):
+                return data, media_type
+    except Exception:
+        pass
+    return _fetch_image_via_driver(url)

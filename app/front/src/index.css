@@ -451,6 +451,16 @@ button { cursor: pointer; font: inherit; border: none; background: none; }
   text-transform: uppercase; pointer-events: none;
   animation: badgePop .4s cubic-bezier(.175,.885,.32,1.275) both;
 }
+.card-loading-badge {
+  position: absolute; top: .45rem; right: .45rem;
+  display: inline-flex; align-items: center; gap: .32rem;
+  background: rgba(20,20,20,.88); color: #fff;
+  font-size: .62rem; font-weight: 700; letter-spacing: .3px;
+  padding: .15rem .45rem; border-radius: 3px;
+  border: 1px solid rgba(255,255,255,.14);
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0,0,0,.28);
+}
 @keyframes badgePop {
   from { opacity: 0; transform: scale(0.6); }
   to   { opacity: 1; transform: scale(1); }
@@ -678,6 +688,12 @@ button { cursor: pointer; font: inherit; border: none; background: none; }
 }
 .detail-meta-dot { color: rgba(255,255,255,.25); }
 .detail-btns { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
+.detail-refresh-btn.spinning {
+  animation: detail-refresh-spin .9s linear infinite;
+}
+@keyframes detail-refresh-spin {
+  to { transform: rotate(360deg); }
+}
 
 /* Responsive detail page */
 @media (max-width: 768px) {
