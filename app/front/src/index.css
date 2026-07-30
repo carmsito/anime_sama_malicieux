@@ -819,6 +819,13 @@ input, select {
 input:focus, select:focus { border-color: rgba(255,255,255,.4); }
 input::placeholder { color: rgba(255,255,255,.3); }
 
+/* iOS : champs >= 16px sur mobile → empêche le zoom automatique au focus (ex. ouverture
+   du modal Extraire). !important pour couvrir aussi les champs à style inline.
+   N'affecte PAS le pinch-zoom des pages du lecteur. */
+@media (max-width: 768px) {
+  input, select, textarea { font-size: 16px !important; }
+}
+
 /* Search results with images */
 .s-row { display: flex; gap: .5rem; margin-bottom: .85rem; }
 .s-row input { flex: 1; }
