@@ -377,6 +377,26 @@ def get_cover(manga_id: str):
 
 # ── Progression de lecture (marque-page, par utilisateur) ─────────────────────
 
+@router.get("/continue/reading", summary="Reprendre la lecture (derniers chapitres lus)")
+def continue_reading(user: dict = Depends(_require_user)):
+    from ..services import db
+    all_mangas = {m["id"]: m for m in library.list_mangas()}
+    out = []
+    for p in db.get_continue(user["id"]):
+        m = all_mangas.get(p["manga_id"])
+        if not m:
+            continue  # manga supprimé
+        pct = (min(100, round(((p["page"] + 1) / p["total_pages"]) * 100))
+               if p["total_pages"] else 0)
+        out.append({
+            "id": m["id"], "name": m["name"], "category": m["category"],
+            "cover_url": m["cover_url"], "source": m.get("meta", {}).get("source", "anime-sama"),
+            "chapter_number": p["chapter_number"], "percent": pct,
+            "updated_at": p["updated_at"],
+        })
+    return {"items": out}
+
+
 @router.get("/{manga_id}/progress", summary="Progression de lecture de l'utilisateur")
 def get_progress(manga_id: str, user: dict = Depends(_require_user)):
     from ..services import db

@@ -5,7 +5,7 @@ import { api } from '../api/client'
 import SearchModal from '../components/SearchModal'
 import { JobsCtx, AuthCtx } from '../contexts'
 
-function ChapterCard({ manga, ch, onRead, isLoading, isSelected, onToggleSelect, selectionMode, isAdmin, onDelete, progress = 0 }) {
+function ChapterCard({ manga, ch, onRead, isLoading, isSelected, onToggleSelect, selectionMode, progress = 0 }) {
   const [ok, setOk] = useState(true)
   const label = ch.title || `Chapitre ${ch.number}`
   const done = progress >= 100
@@ -37,10 +37,6 @@ function ChapterCard({ manga, ch, onRead, isLoading, isSelected, onToggleSelect,
           <span style={{ fontSize: '1.8rem', fontWeight: 900, color: '#e50914', cursor: 'pointer' }}>Lire</span>
         </div>
         <a href={api.epubUrl(manga.id, ch.number)} download className="chapter-card-dl" onClick={(e) => e.stopPropagation()}>⬇</a>
-        {isAdmin && (
-          <button className="chapter-card-del" title="Supprimer"
-            onClick={(e) => { e.stopPropagation(); onDelete(ch) }}>🗑</button>
-        )}
         {progress > 0 && (
           <span className={`chapter-card-pct ${done ? 'done' : ''}`}>{done ? '✓ Lu' : `${progress}%`}</span>
         )}
@@ -101,7 +97,9 @@ export default function MangaDetail() {
   const [refreshingInfo, setRefreshingInfo] = useState(false)
   const [selectedChaps, setSelectedChaps] = useState(new Set())
   const [downloading, setDownloading] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [selectionMode, setSelectionMode] = useState(false)
+  const [selAction, setSelAction] = useState('download')  // 'download' | 'delete'
   const [rangeInput, setRangeInput] = useState('')
   const galleryRef = useRef()
   const pollIntervalRef = useRef(null)
@@ -245,26 +243,30 @@ export default function MangaDetail() {
     })
   }
 
-  const onDeleteChapter = async (ch) => {
-    const label = ch.title || `Chapitre ${ch.number}`
-    if (!confirm(`Supprimer ${label} ? (local + Telegram)`)) return
+  const onDeleteSelected = async () => {
+    if (selectedChaps.size === 0) return
+    if (!confirm(`Supprimer ${selectedChaps.size} élément(s) ? (local + Telegram)`)) return
+    setDeleting(true)
     try {
-      await api.deleteChapter(mangaId, ch.number)
+      for (const num of selectedChaps) {
+        await api.deleteChapter(mangaId, num)
+      }
       const updated = await api.getManga(mangaId)
-      setManga(updated)
-      mangaRef.current = updated
+      setManga(updated); mangaRef.current = updated
+      setSelectedChaps(new Set()); setSelectionMode(false)
     } catch (e) {
       alert(`Erreur: ${e.message}`)
-    }
+    } finally { setDeleting(false) }
   }
 
   const onDeleteManga = async () => {
     if (!confirm(`Supprimer TOUT le manga "${manga.name}" (${manga.category}) ?\nTous les chapitres seront effacés (local + Telegram).`)) return
+    setDeleting(true)
     try {
       await api.deleteManga(mangaId)
       navigate('/')
     } catch (e) {
-      alert(`Erreur: ${e.message}`)
+      alert(`Erreur: ${e.message}`); setDeleting(false)
     }
   }
 
@@ -324,6 +326,21 @@ export default function MangaDetail() {
         <div className="detail-hero-fade" />
 
         <button className="detail-back" onClick={() => navigate('/')}>←</button>
+        {isAdmin && (
+          <button className={`detail-del-btn ${selectionMode && selAction === 'delete' ? 'active' : ''}`}
+            onClick={() => {
+              if (selectionMode && selAction === 'delete') { setSelectionMode(false); return }
+              setSelAction('delete'); setSelectionMode(true); setSelectedChaps(new Set())
+            }}
+            title="Supprimer des chapitres / le manga">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+              <path d="M10 11v6M14 11v6"/>
+              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+            </svg>
+          </button>
+        )}
 
         <div className="detail-hero-body">
           <div className="detail-tag">{manga.category}</div>
@@ -342,18 +359,6 @@ export default function MangaDetail() {
             >
               {refreshingInfo ? '↻' : '⟳'}
             </button>
-            {isAdmin && (
-              <button
-                onClick={onDeleteManga}
-                title="Supprimer le manga"
-                style={{
-                  background: 'none', border: 'none', color: 'rgba(255,120,120,.9)',
-                  cursor: 'pointer', padding: '.4rem', display: 'flex', alignItems: 'center', fontSize: '1.1rem',
-                }}
-              >
-                🗑
-              </button>
-            )}
           </div>
 
           <div className="detail-meta-line">
@@ -401,11 +406,15 @@ export default function MangaDetail() {
             )}
             <button className="btn btn-dark" onClick={() => setShowExtract(true)}>+ Extraire</button>
             <button
-              onClick={() => { setSelectionMode(!selectionMode); if (!selectionMode) deselectAll() }}
+              onClick={() => {
+                const active = selectionMode && selAction === 'download'
+                if (active) { setSelectionMode(false); return }
+                setSelAction('download'); setSelectionMode(true); deselectAll()
+              }}
               style={{
                 background: 'none', border: 'none', color: '#fff', cursor: 'pointer',
                 padding: '.4rem', display: 'flex', alignItems: 'center',
-                opacity: selectionMode ? 1 : 0.6, transition: 'opacity .2s',
+                opacity: (selectionMode && selAction === 'download') ? 1 : 0.6, transition: 'opacity .2s',
               }}
               title={selectionMode ? 'Désactiver la sélection' : 'Télécharger en masse'}
             >
@@ -479,11 +488,24 @@ export default function MangaDetail() {
                   }}
                 />
 
-                {selectedChaps.size > 0 && (
+                {selAction === 'download' && selectedChaps.size > 0 && (
                   <button className="btn btn-primary btn-sm" onClick={onDownloadSelected} disabled={downloading}>
                     {downloading ? '⬇ Téléchargement...' : `⬇ Télécharger ${selectedChaps.size}`}
                   </button>
                 )}
+                {selAction === 'delete' && (
+                  <>
+                    {selectedChaps.size > 0 && (
+                      <button className="btn btn-danger btn-sm" onClick={onDeleteSelected} disabled={deleting}>
+                        {deleting ? '🗑 Suppression...' : `🗑 Supprimer ${selectedChaps.size}`}
+                      </button>
+                    )}
+                    <button className="btn btn-danger-ghost btn-sm" onClick={onDeleteManga} disabled={deleting}>
+                      Supprimer tout le manga
+                    </button>
+                  </>
+                )}
+                <button className="btn btn-sm btn-ghost" onClick={() => setSelectionMode(false)}>Annuler</button>
               </div>
             )}
 
@@ -534,8 +556,6 @@ export default function MangaDetail() {
                   isSelected={selectedChaps.has(ch.number)}
                   onToggleSelect={() => toggleChapSelect(ch.number)}
                   selectionMode={selectionMode}
-                  isAdmin={isAdmin}
-                  onDelete={onDeleteChapter}
                   progress={progressMap[ch.number] || 0}
                 />
               ))}

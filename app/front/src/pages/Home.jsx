@@ -237,6 +237,7 @@ function HeroCarousel({ mangas }) {
 
 export default function Home() {
   const [mangas, setMangas] = useState([])
+  const [continueItems, setContinueItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [newIds, setNewIds] = useState(new Set())
   const [filterOpen, setFilterOpen] = useState(false)
@@ -258,6 +259,10 @@ export default function Home() {
     job.source === (manga.source || 'anime-sama') &&
     (job.source !== 'anime-sama' || job.category === manga.category)
   )), [jobs])
+
+  useEffect(() => {
+    api.continueReading().then((r) => setContinueItems(r.items || [])).catch(() => {})
+  }, [])
 
   useEffect(() => {
     api.listMangas().then((list) => {
@@ -396,6 +401,29 @@ export default function Home() {
   return (
     <div>
       {!query && <HeroCarousel mangas={mangas} />}
+
+      {!query && continueItems.length > 0 && (
+        <div className="continue-section">
+          <div className="continue-title">Reprendre la lecture</div>
+          <div className="continue-row">
+            {continueItems.map((it) => (
+              <div key={`${it.id}-${it.chapter_number}`} className="continue-card"
+                onClick={() => navigate(`/manga/${it.id}/read/${it.chapter_number}`)}>
+                <div className="continue-thumb">
+                  {it.cover_url
+                    ? <img src={it.cover_url} alt={it.name} onError={(e) => { e.target.style.display = 'none' }} />
+                    : <div className="continue-ph">📖</div>}
+                  <div className="continue-play">▶</div>
+                  <div className="continue-bar"><div style={{ width: `${it.percent}%` }} /></div>
+                </div>
+                <div className="continue-name">{it.name}</div>
+                <div className="continue-sub">Chap. {it.chapter_number} · {it.percent}%</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ padding: query ? '88px 4% 5rem' : '0 4% 5rem' }}>
         <div className="section">
           <div className="section-head">

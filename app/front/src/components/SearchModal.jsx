@@ -452,7 +452,7 @@ export default function SearchModal({
             <button
               key={s}
               className={`cat-pill ${source === s ? 'on' : ''}`}
-              disabled={modalBusy}
+              disabled={modalBusy || searching}
               onClick={() => switchSource(s)}
             >
               {SOURCE_LABELS[s]}
@@ -469,11 +469,19 @@ export default function SearchModal({
                 autoFocus
                 placeholder={`Titre du manga (${SOURCE_LABELS[source]})...`}
                 value={query}
-                disabled={modalBusy}
+                disabled={modalBusy || searching}
                 onChange={onQuery}
               />
               {(searching || loadingSushi) && <div className="spin" style={{ alignSelf: 'center' }} />}
             </div>
+            {searching && (
+              <div className="modal-spinner-state">
+                <div className="spin" />
+                <span className="modal-timeout-hint">
+                  Recherche en cours sur {SOURCE_LABELS[source]}…{source === 'sushiscan' ? ' (peut prendre quelques secondes)' : ''}
+                </span>
+              </div>
+            )}
             {loadingSushi && (
               <div className="modal-spinner-state">
                 <div className="spin" />

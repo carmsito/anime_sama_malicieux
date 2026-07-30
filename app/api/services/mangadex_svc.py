@@ -151,11 +151,13 @@ def search(query: str) -> list[dict]:
                 title = alt["en"]
                 break
         # cover depuis les relationships (pas d'appel supplémentaire)
+        # → proxifiée par le serveur (le navigateur ne charge pas toujours le CDN direct)
         cover_url = None
         for rel in item.get("relationships", []):
             if rel.get("type") == "cover_art" and rel.get("attributes", {}).get("fileName"):
                 fn = rel["attributes"]["fileName"]
-                cover_url = f"https://uploads.mangadex.org/covers/{mid}/{fn}.512.jpg"
+                raw = f"https://uploads.mangadex.org/covers/{mid}/{fn}.512.jpg"
+                cover_url = f"/api/search/mangadex/cover?url={raw}"
                 break
         year = attrs.get("year")
         status = attrs.get("status", "")

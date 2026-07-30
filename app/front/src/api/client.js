@@ -46,6 +46,7 @@ export const api = {
   deleteManga: (mangaId) => req(`/mangas/${mangaId}`, { method: 'DELETE' }),
 
   // Reading progress
+  continueReading: () => req('/mangas/continue/reading'),
   getProgress: (mangaId) => req(`/mangas/${mangaId}/progress`),
   saveProgress: (mangaId, chapterNum, page, totalPages) =>
     req(`/mangas/${mangaId}/chapters/${chapterNum}/progress`,

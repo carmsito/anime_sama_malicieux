@@ -118,3 +118,19 @@ def proxy_sushiscan_image(url: str = Query(...)):
     if not data:
         raise HTTPException(404, "Image introuvable")
     return Response(content=data, media_type=media_type, headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.get("/mangadex/cover", summary="Proxy cover MangaDex")
+def proxy_mangadex_cover(url: str = Query(...)):
+    # Sécurité : on ne proxifie QUE le CDN de covers MangaDex (pas d'open proxy).
+    if not url.startswith("https://uploads.mangadex.org/covers/"):
+        raise HTTPException(400, "URL non autorisée")
+    from urllib.request import Request, urlopen
+    try:
+        req = Request(url, headers={"User-Agent": "mangadex-dl/1.0"})
+        with urlopen(req, timeout=15) as r:
+            data = r.read()
+            media_type = r.headers.get_content_type() or "image/jpeg"
+    except Exception as e:
+        raise HTTPException(502, f"Cover MangaDex inaccessible : {e}")
+    return Response(content=data, media_type=media_type, headers={"Cache-Control": "public, max-age=86400"})

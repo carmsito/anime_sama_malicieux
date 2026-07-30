@@ -214,3 +214,23 @@ def get_progress(user_id: str, manga_id: str) -> list[dict]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def get_continue(user_id: str, limit: int = 20) -> list[dict]:
+    """Dernier chapitre lu par manga (le plus récent d'abord) — pour 'Reprendre'."""
+    init()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """SELECT rp.manga_id, rp.chapter_number, rp.page, rp.total_pages, rp.updated_at
+                 FROM reading_progress rp
+                 JOIN (SELECT manga_id, MAX(updated_at) mu FROM reading_progress
+                       WHERE user_id=? GROUP BY manga_id) x
+                   ON rp.manga_id=x.manga_id AND rp.updated_at=x.mu
+                WHERE rp.user_id=?
+                ORDER BY rp.updated_at DESC LIMIT ?""",
+            (user_id, user_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
