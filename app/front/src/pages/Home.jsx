@@ -217,8 +217,14 @@ function HeroCarousel({ mangas }) {
         )}
 
         <div className="hero-btns">
-          <button className="btn btn-white" onClick={() => navigate(`/manga/${m.id}`)}>▶ Lire</button>
-          <button className="btn btn-dark" onClick={() => navigate(`/manga/${m.id}`)}>ⓘ Détails</button>
+          <button className="btn btn-white" onClick={() => navigate(`/manga/${m.id}`)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+            Lire
+          </button>
+          <button className="btn btn-dark" onClick={() => navigate(`/manga/${m.id}`)}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            Détails
+          </button>
         </div>
       </div>
 
@@ -413,7 +419,9 @@ export default function Home() {
                   {it.cover_url
                     ? <img src={it.cover_url} alt={it.name} onError={(e) => { e.target.style.display = 'none' }} />
                     : <div className="continue-ph">📖</div>}
-                  <div className="continue-play">▶</div>
+                  <div className="continue-play">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                  </div>
                   <div className="continue-bar"><div style={{ width: `${it.percent}%` }} /></div>
                 </div>
                 <div className="continue-name">{it.name}</div>

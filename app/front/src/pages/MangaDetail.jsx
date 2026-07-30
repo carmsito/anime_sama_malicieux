@@ -5,6 +5,12 @@ import { api } from '../api/client'
 import SearchModal from '../components/SearchModal'
 import { JobsCtx, AuthCtx } from '../contexts'
 
+const PlayIcon = ({ size = 15 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M8 5v14l11-7z" />
+  </svg>
+)
+
 function ChapterCard({ manga, ch, onRead, isLoading, isSelected, onToggleSelect, selectionMode, progress = 0 }) {
   const [ok, setOk] = useState(true)
   const label = ch.title || `Chapitre ${ch.number}`
@@ -87,6 +93,7 @@ export default function MangaDetail() {
   const isAdmin = user?.role === 'admin'
   const [manga, setManga] = useState(null)
   const [progressMap, setProgressMap] = useState({})
+  const [resumeChapter, setResumeChapter] = useState(null)
   const [info, setInfo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showExtract, setShowExtract] = useState(false)
@@ -134,15 +141,18 @@ export default function MangaDetail() {
       setManga(m)
       setInfo(i)
     }).finally(() => setLoading(false))
-    // Progression de lecture (marque-page) → % par chapitre
+    // Progression de lecture (marque-page) → % par chapitre + dernier chapitre lu
     api.getProgress(mangaId).then((res) => {
+      const list = res.progress || []
       const map = {}
-      for (const p of (res.progress || [])) {
+      for (const p of list) {
         const pct = p.total_pages > 0
           ? Math.min(100, Math.round(((p.page + 1) / p.total_pages) * 100)) : 0
         map[Number(p.chapter_number)] = pct
       }
       setProgressMap(map)
+      // list est trié du plus récent au plus ancien → [0] = dernier lu
+      if (list.length) setResumeChapter(Number(list[0].chapter_number))
     }).catch(() => {})
   }, [mangaId])
 
@@ -401,10 +411,17 @@ export default function MangaDetail() {
           <div className="detail-btns">
             {first && (
               <button className="btn btn-white" onClick={() => navigate(`/manga/${mangaId}/read/${first.number}`)}>
-                ▶ Lire depuis le début
+                <PlayIcon /> Lire depuis le début
               </button>
             )}
-            <button className="btn btn-dark" onClick={() => setShowExtract(true)}>+ Extraire</button>
+            {resumeChapter != null && (
+              <button className="btn btn-primary" onClick={() => navigate(`/manga/${mangaId}/read/${resumeChapter}`)}>
+                <PlayIcon /> Reprendre {itemLabel} {resumeChapter}
+              </button>
+            )}
+            {user?.role !== 'lecteur' && (
+              <button className="btn btn-dark" onClick={() => setShowExtract(true)}>+ Extraire</button>
+            )}
             <button
               onClick={() => {
                 const active = selectionMode && selAction === 'download'
