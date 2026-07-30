@@ -550,6 +550,19 @@ button { cursor: pointer; font: inherit; border: none; background: none; }
 .chapter-card:hover .chapter-card-del { opacity: 1; }
 .chapter-card-del:hover { color: #fff; background: rgba(229,9,20,.85); border-color: transparent; }
 
+/* Progression de lecture sur la carte chapitre */
+.chapter-card-pct {
+  position: absolute; bottom: .4rem; left: .45rem;
+  background: rgba(0,0,0,.72); color: #fff; font-size: .68rem; font-weight: 700;
+  padding: .12rem .42rem; border-radius: 20px; letter-spacing: .3px;
+}
+.chapter-card-pct.done { background: rgba(46,160,67,.9); }
+.chapter-card-progress {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 4px;
+  background: rgba(255,255,255,.15);
+}
+.chapter-card-progress > div { height: 100%; background: var(--accent); transition: width .3s; }
+
 .chapter-card-foot { padding: .45rem .55rem .6rem; }
 .chapter-card-num { font-size: .8rem; font-weight: 700; }
 

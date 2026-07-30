@@ -5,9 +5,10 @@ import { api } from '../api/client'
 import SearchModal from '../components/SearchModal'
 import { JobsCtx, AuthCtx } from '../contexts'
 
-function ChapterCard({ manga, ch, onRead, isLoading, isSelected, onToggleSelect, selectionMode, isAdmin, onDelete }) {
+function ChapterCard({ manga, ch, onRead, isLoading, isSelected, onToggleSelect, selectionMode, isAdmin, onDelete, progress = 0 }) {
   const [ok, setOk] = useState(true)
   const label = ch.title || `Chapitre ${ch.number}`
+  const done = progress >= 100
 
   return (
     <div className="chapter-card" style={{ position: 'relative' }}>
@@ -39,6 +40,12 @@ function ChapterCard({ manga, ch, onRead, isLoading, isSelected, onToggleSelect,
         {isAdmin && (
           <button className="chapter-card-del" title="Supprimer"
             onClick={(e) => { e.stopPropagation(); onDelete(ch) }}>🗑</button>
+        )}
+        {progress > 0 && (
+          <span className={`chapter-card-pct ${done ? 'done' : ''}`}>{done ? '✓ Lu' : `${progress}%`}</span>
+        )}
+        {progress > 0 && !done && (
+          <div className="chapter-card-progress"><div style={{ width: `${progress}%` }} /></div>
         )}
       </div>
       <div className="chapter-card-foot">
@@ -83,6 +90,7 @@ export default function MangaDetail() {
   const { user } = useContext(AuthCtx)
   const isAdmin = user?.role === 'admin'
   const [manga, setManga] = useState(null)
+  const [progressMap, setProgressMap] = useState({})
   const [info, setInfo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showExtract, setShowExtract] = useState(false)
@@ -128,6 +136,16 @@ export default function MangaDetail() {
       setManga(m)
       setInfo(i)
     }).finally(() => setLoading(false))
+    // Progression de lecture (marque-page) → % par chapitre
+    api.getProgress(mangaId).then((res) => {
+      const map = {}
+      for (const p of (res.progress || [])) {
+        const pct = p.total_pages > 0
+          ? Math.min(100, Math.round(((p.page + 1) / p.total_pages) * 100)) : 0
+        map[Number(p.chapter_number)] = pct
+      }
+      setProgressMap(map)
+    }).catch(() => {})
   }, [mangaId])
 
   useEffect(() => {
@@ -518,6 +536,7 @@ export default function MangaDetail() {
                   selectionMode={selectionMode}
                   isAdmin={isAdmin}
                   onDelete={onDeleteChapter}
+                  progress={progressMap[ch.number] || 0}
                 />
               ))}
               {pendingLabels.map((label, idx) => (
