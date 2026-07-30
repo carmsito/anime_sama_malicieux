@@ -552,7 +552,7 @@ button { cursor: pointer; font: inherit; border: none; background: none; }
 
 /* Progression de lecture sur la carte chapitre */
 .chapter-card-pct {
-  position: absolute; bottom: .4rem; left: .45rem;
+  position: absolute; bottom: .4rem; right: .45rem;
   background: rgba(0,0,0,.72); color: #fff; font-size: .68rem; font-weight: 700;
   padding: .12rem .42rem; border-radius: 20px; letter-spacing: .3px;
 }
