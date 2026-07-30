@@ -1,4 +1,4 @@
-import React, { useContext, useState } from 'react'
+import React, { useContext, useState, useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import Login from './pages/Login'
 import Home from './pages/Home'
@@ -9,6 +9,7 @@ import Navbar from './components/Navbar'
 import JobStatus from './components/JobStatus'
 import PageErrorBoundary from './components/PageErrorBoundary'
 import { AuthCtx, JobsCtx, SearchCtx } from './contexts'
+import { api } from './api/client'
 
 function useAuth() {
   const [user, setUser] = useState(() => {
@@ -16,6 +17,17 @@ function useAuth() {
   })
   const login = (u, t) => { localStorage.setItem('token', t); localStorage.setItem('user', JSON.stringify(u)); setUser(u) }
   const logout = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); setUser(null) }
+
+  // Au chargement, rafraîchit le profil depuis /me (récupère le rôle même pour les
+  // sessions ouvertes avant l'ajout des rôles → le lien Admin apparaît sans re-login).
+  useEffect(() => {
+    if (!localStorage.getItem('token')) return
+    api.me().then((u) => {
+      setUser(u)
+      localStorage.setItem('user', JSON.stringify(u))
+    }).catch(() => {})
+  }, [])
+
   return { user, login, logout }
 }
 
