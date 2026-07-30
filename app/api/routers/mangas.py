@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse, Response
 
 from ..services import library, epub_reader
 from ..config import COVERS_DIR
 from ..models.schemas import Manga, Chapter
+from ..auth import require_admin, get_current_user as _require_user
 
 router = APIRouter(prefix="/mangas", tags=["mangas"])
 
@@ -72,27 +73,39 @@ def get_manga_variants(manga_id: str):
     return {"name": m["name"], "variants": sorted(variants, key=lambda v: v["category"])}
 
 
+# Cache du chemin EPUB résolu par (manga_id, chapitre) → évite de re-scanner TOUTE
+# la bibliothèque à chaque image (le lecteur fait 1 requête par page).
+_epub_path_cache: dict[tuple, "Path"] = {}
+
+
 def _resolve_epub(manga_id: str, chapter_number: float):
     """
-    Chemin de l'EPUB : local d'abord, sinon récupéré depuis le backend de stockage
-    (Telegram) et mis en cache. Utilisé par TOUTES les routes de lecture pour que
-    le mode Telegram (local supprimé) fonctionne aussi dans le lecteur.
+    Chemin de l'EPUB : cache → local → backend de stockage (Telegram).
+    Utilisé par TOUTES les routes de lecture. Le cache rend le service des pages O(1).
     """
+    key = (manga_id, float(chapter_number))
+    cached = _epub_path_cache.get(key)
+    if cached is not None and cached.exists():
+        return cached
+
     path = library.get_epub_path(manga_id, chapter_number)
+    if not path:
+        try:
+            from ..services import storage
+            m = library.get_manga(manga_id)
+            kind = None
+            for ch in (m or {}).get("chapters", []) or []:
+                if float(ch.get("number", -1)) == float(chapter_number):
+                    kind = ch.get("kind")
+                    break
+            kind = kind or (m or {}).get("meta", {}).get("kind") or "Chapitre"
+            path = storage.fetch_epub(manga_id, chapter_number, kind)
+        except Exception:
+            path = None
+
     if path:
-        return path
-    try:
-        from ..services import storage
-        m = library.get_manga(manga_id)
-        kind = None
-        for ch in (m or {}).get("chapters", []) or []:
-            if float(ch.get("number", -1)) == float(chapter_number):
-                kind = ch.get("kind")
-                break
-        kind = kind or (m or {}).get("meta", {}).get("kind") or "Chapitre"
-        return storage.fetch_epub(manga_id, chapter_number, kind)
-    except Exception:
-        return None
+        _epub_path_cache[key] = path
+    return path
 
 
 @router.get("/{manga_id}/chapters/{chapter_number}/epub", summary="Télécharger l'EPUB")
@@ -102,6 +115,46 @@ def get_epub(manga_id: str, chapter_number: float):
         raise HTTPException(404, "Chapitre introuvable")
     return FileResponse(str(path), media_type="application/epub+zip",
                         filename=path.name, headers={"Content-Disposition": "inline"})
+
+
+@router.delete("/{manga_id}/chapters/{chapter_number}", summary="Supprimer un chapitre (local + Telegram + DB)")
+def delete_chapter(manga_id: str, chapter_number: float, user: dict = Depends(require_admin)):
+    from ..config import EXTRACTION_DIR
+    from ..services import storage
+    m = library.get_manga(manga_id)
+    if not m:
+        raise HTTPException(404, "Manga introuvable")
+
+    # kind du chapitre (Chapitre/Volume/Tome)
+    kind = None
+    for ch in m.get("chapters", []) or []:
+        if float(ch.get("number", -1)) == float(chapter_number):
+            kind = ch.get("kind")
+            break
+    kind = kind or m.get("meta", {}).get("kind") or "Chapitre"
+
+    # 1) Telegram + DB + cache
+    try:
+        storage.delete_epub(manga_id, chapter_number, kind)
+    except Exception as e:
+        print(f"[delete] storage: {e}", flush=True)
+
+    # 2) fichier local (essaie plusieurs noms : "Chapitre 5", "Volume 5.0"…)
+    cat_dir = EXTRACTION_DIR / m["name"] / m["category"]
+    removed = False
+    for prefix in ("Chapitre", "Volume", "Tome"):
+        for num in (str(chapter_number), str(int(chapter_number)) if float(chapter_number).is_integer() else None):
+            if not num:
+                continue
+            for d in (cat_dir, cat_dir.parent):
+                f = d / f"{prefix} {num}.epub"
+                if f.exists():
+                    f.unlink()
+                    removed = True
+
+    # invalide le cache de résolution
+    _epub_path_cache.pop((manga_id, float(chapter_number)), None)
+    return {"deleted": True, "local_removed": removed, "manga_id": manga_id, "chapter": chapter_number}
 
 
 @router.get("/{manga_id}/chapters/{chapter_number}/images", summary="Liste des images d'un chapitre")
@@ -286,3 +339,19 @@ def get_cover(manga_id: str):
     if not cover.exists():
         raise HTTPException(404)
     return FileResponse(str(cover), media_type="image/jpeg")
+
+
+# ── Progression de lecture (marque-page, par utilisateur) ─────────────────────
+
+@router.get("/{manga_id}/progress", summary="Progression de lecture de l'utilisateur")
+def get_progress(manga_id: str, user: dict = Depends(_require_user)):
+    from ..services import db
+    return {"progress": db.get_progress(user["id"], manga_id)}
+
+
+@router.put("/{manga_id}/chapters/{chapter_number}/progress", summary="Enregistrer la progression")
+def set_progress(manga_id: str, chapter_number: float, body: dict, user: dict = Depends(_require_user)):
+    from ..services import db
+    db.set_progress(user["id"], manga_id, chapter_number,
+                    page=int(body.get("page", 0)), total_pages=int(body.get("total_pages", 0)))
+    return {"saved": True}

@@ -29,11 +29,26 @@ export const api = {
     req('/auth/register', { method: 'POST', body: JSON.stringify({ username, password }) }),
   me: () => req('/auth/me'),
 
+  // Users (admin)
+  listUsers: () => req('/auth/users'),
+  createUser: (username, password, role) =>
+    req('/auth/users', { method: 'POST', body: JSON.stringify({ username, password, role }) }),
+  setUserRole: (id, role) => req(`/auth/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
+  deleteUser: (id) => req(`/auth/users/${id}`, { method: 'DELETE' }),
+
   // Library
   listMangas: () => req('/mangas'),
   getManga: (id) => req(`/mangas/${id}`),
   getMangaVariants: (id) => req(`/mangas/${id}/variants`),
   epubUrl: (mangaId, chapterNum) => `${BASE}/mangas/${mangaId}/chapters/${chapterNum}/epub`,
+  deleteChapter: (mangaId, chapterNum) =>
+    req(`/mangas/${mangaId}/chapters/${chapterNum}`, { method: 'DELETE' }),
+
+  // Reading progress
+  getProgress: (mangaId) => req(`/mangas/${mangaId}/progress`),
+  saveProgress: (mangaId, chapterNum, page, totalPages) =>
+    req(`/mangas/${mangaId}/chapters/${chapterNum}/progress`,
+        { method: 'PUT', body: JSON.stringify({ page, total_pages: totalPages }) }),
 
   // Search — Anime-Sama (backward compat)
   search: (q) => req(`/search?q=${encodeURIComponent(q)}`),

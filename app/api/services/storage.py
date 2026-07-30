@@ -16,6 +16,7 @@ L'import de Telethon est paresseux : le reste de l'app fonctionne sans la lib.
 """
 from __future__ import annotations
 
+import re
 import threading
 from pathlib import Path
 from typing import Optional
@@ -74,8 +75,12 @@ class TelegramStorage:
         from .telegram_client import get_client
         cache = DATA_DIR / "epub_cache"
         cache.mkdir(parents=True, exist_ok=True)
-        out = cache / (rec.get("filename") or f"{manga_id}_{kind}_{chapter_number}.epub")
-        if out.exists():
+        # Nom de cache UNIQUE par manga+kind+chapitre (sinon "Chapitre 1.epub"
+        # collisionne entre mangas → mauvais contenu servi).
+        import re as _re
+        safe = _re.sub(r"[^A-Za-z0-9._-]+", "-", f"{manga_id}__{kind}__{chapter_number}")
+        out = cache / f"{safe}.epub"
+        if out.exists() and out.stat().st_size > 0:
             return out
         get_client().download(rec["msg_id"], str(out))
         return out if out.exists() else None
@@ -111,3 +116,25 @@ def store_epub(manga_id: str, chapter_number: float, kind: str, epub_path: Path)
 
 def fetch_epub(manga_id: str, chapter_number: float, kind: str) -> Optional[Path]:
     return get_backend().fetch_epub(manga_id, chapter_number, kind)
+
+
+def delete_epub(manga_id: str, chapter_number: float, kind: str) -> None:
+    """Supprime le message Telegram (si offloadé) + l'entrée DB + le cache local."""
+    rec = db.get_file(manga_id, chapter_number, kind)
+    if rec and rec.get("msg_id"):
+        try:
+            from .telegram_client import get_client
+            get_client().delete(int(rec["msg_id"]))
+        except Exception as e:
+            print(f"[storage] delete Telegram msg échoué: {e}", flush=True)
+    db.delete_file(manga_id, chapter_number, kind)
+    # purge du cache local éventuel
+    try:
+        from ..config import DATA_DIR
+        cache = DATA_DIR / "epub_cache"
+        if cache.exists():
+            for f in cache.glob("*.epub"):
+                if f.stem.startswith(re.sub(r"[^A-Za-z0-9._-]+", "-", f"{manga_id}__{kind}__{chapter_number}")):
+                    f.unlink(missing_ok=True)
+    except Exception:
+        pass

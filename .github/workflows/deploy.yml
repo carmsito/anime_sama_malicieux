@@ -1,0 +1,66 @@
+name: Deploy
+
+# Déploiement automatique à chaque push sur main (ou manuellement via l'onglet Actions).
+# Principe : synchronise le code sur le serveur (rsync) puis rebuild + redémarre les
+# conteneurs. Pas de registry : le serveur build l'image lui-même (box dédiée, idle).
+#
+# Secrets requis (Settings → Secrets and variables → Actions) :
+#   SSH_HOST  = 62.238.63.117
+#   SSH_USER  = root
+#   SSH_KEY   = contenu de la clé PRIVÉE SSH autorisée sur le serveur
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Préparer la clé SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Synchroniser le code (rsync)
+        run: |
+          rsync -az --delete \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'app/venv' --exclude 'app/.venv' \
+            --exclude 'app/front/node_modules' --exclude 'app/front/dist' \
+            --exclude '__pycache__' --exclude '*.pyc' \
+            --exclude 'extraction' \
+            --exclude 'app/api/data' \
+            --exclude '.env' \
+            --exclude 'srv-data' --exclude 'srv-extraction' \
+            -e "ssh -i ~/.ssh/id_deploy" \
+            ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/root/anime_sama_malicieux/"
+
+      - name: Rebuild + redémarrage
+        run: |
+          ssh -i ~/.ssh/id_deploy "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" '
+            cd /root/anime_sama_malicieux/deploy &&
+            docker compose -f docker-compose.prod.yml up -d --build &&
+            docker image prune -f'
+
+      - name: Vérifier la santé
+        run: |
+          sleep 15
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.SSH_HOST }}:8000/api/health" || true)
+            echo "health: $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 6
+          done
+          echo "Healthcheck échoué" && exit 1

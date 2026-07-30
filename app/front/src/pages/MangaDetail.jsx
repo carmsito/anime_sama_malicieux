@@ -3,9 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { gsap } from 'gsap'
 import { api } from '../api/client'
 import SearchModal from '../components/SearchModal'
-import { JobsCtx } from '../contexts'
+import { JobsCtx, AuthCtx } from '../contexts'
 
-function ChapterCard({ manga, ch, onRead, isLoading, isSelected, onToggleSelect, selectionMode }) {
+function ChapterCard({ manga, ch, onRead, isLoading, isSelected, onToggleSelect, selectionMode, isAdmin, onDelete }) {
   const [ok, setOk] = useState(true)
   const label = ch.title || `Chapitre ${ch.number}`
 
@@ -36,6 +36,10 @@ function ChapterCard({ manga, ch, onRead, isLoading, isSelected, onToggleSelect,
           <span style={{ fontSize: '1.8rem', fontWeight: 900, color: '#e50914', cursor: 'pointer' }}>Lire</span>
         </div>
         <a href={api.epubUrl(manga.id, ch.number)} download className="chapter-card-dl" onClick={(e) => e.stopPropagation()}>⬇</a>
+        {isAdmin && (
+          <button className="chapter-card-del" title="Supprimer"
+            onClick={(e) => { e.stopPropagation(); onDelete(ch) }}>🗑</button>
+        )}
       </div>
       <div className="chapter-card-foot">
         <div className="chapter-card-num">{label}</div>
@@ -76,6 +80,8 @@ export default function MangaDetail() {
   const { mangaId } = useParams()
   const navigate = useNavigate()
   const { jobs } = useContext(JobsCtx)
+  const { user } = useContext(AuthCtx)
+  const isAdmin = user?.role === 'admin'
   const [manga, setManga] = useState(null)
   const [info, setInfo] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -219,6 +225,19 @@ export default function MangaDetail() {
       else next.add(chapNum)
       return next
     })
+  }
+
+  const onDeleteChapter = async (ch) => {
+    const label = ch.title || `Chapitre ${ch.number}`
+    if (!confirm(`Supprimer ${label} ? (local + Telegram)`)) return
+    try {
+      await api.deleteChapter(mangaId, ch.number)
+      const updated = await api.getManga(mangaId)
+      setManga(updated)
+      mangaRef.current = updated
+    } catch (e) {
+      alert(`Erreur: ${e.message}`)
+    }
   }
 
   const onDownloadSelected = async () => {
@@ -475,6 +494,8 @@ export default function MangaDetail() {
                   isSelected={selectedChaps.has(ch.number)}
                   onToggleSelect={() => toggleChapSelect(ch.number)}
                   selectionMode={selectionMode}
+                  isAdmin={isAdmin}
+                  onDelete={onDeleteChapter}
                 />
               ))}
               {pendingLabels.map((label, idx) => (

@@ -148,10 +148,21 @@ def create_driver() -> ChromiumPage:
     opts.set_browser_path(CHROME_BIN)
     opts.set_argument("--no-sandbox")
     opts.set_argument("--disable-dev-shm-usage")
-    opts.set_argument("--disable-gpu")
-    opts.set_argument("--disable-software-rasterizer")
+    # WebGL logiciel activé : SANS ça (--disable-gpu), le navigateur n'a PAS de WebGL
+    # → signal de bot évident pour Cloudflare. SwiftShader donne un vrai renderer.
+    opts.set_argument("--use-gl=angle")
+    opts.set_argument("--use-angle=swiftshader")
+    opts.set_argument("--enable-unsafe-swiftshader")
     opts.set_argument("--window-size=1920,1080")
     opts.set_argument("--window-position=-2400,-2400")
+    # Anti-détection : masque le flag d'automatisation que Cloudflare cherche.
+    opts.set_argument("--disable-blink-features=AutomationControlled")
+    # Proxy optionnel (ex: WARP sidecar) pour contourner le blocage CF des IP
+    # datacenter : seul le trafic du navigateur passe par ce proxy.
+    proxy = os.environ.get("SUSHISCAN_PROXY")
+    if proxy:
+        opts.set_argument(f"--proxy-server={proxy}")
+        print_flush(f"Proxy navigateur : {proxy}")
     # auto_port() → port de debug + user-data-dir isolés : indispensable pour
     # faire tourner plusieurs Chrome en parallèle sans collision.
     try:
@@ -160,11 +171,33 @@ def create_driver() -> ChromiumPage:
         pass
 
     driver = ChromiumPage(addr_or_opts=opts)
+    # Spoof du renderer WebGL : SwiftShader = signal de bot. On fait croire à un vrai
+    # GPU Intel/Mesa (cohérent avec Linux) pour passer la détection Cloudflare.
+    try:
+        driver.run_cdp("Page.addScriptToEvaluateOnNewDocument", source=_WEBGL_SPOOF_JS)
+    except Exception:
+        pass
     driver.get(BASE_URL)
     driver.wait.doc_loaded()
     time.sleep(PAGE_WAIT)
     _try_solve_cf(driver)
     return driver
+
+
+_WEBGL_SPOOF_JS = r"""
+(function(){
+  const spoof = {37445: 'Intel Inc.', 37446: 'ANGLE (Intel, Mesa Intel(R) UHD Graphics (CML GT2), OpenGL 4.6)'};
+  function patch(proto){
+    if(!proto) return;
+    const orig = proto.getParameter;
+    proto.getParameter = function(p){ return (p in spoof) ? spoof[p] : orig.call(this, p); };
+    try { proto.getParameter.toString = orig.toString.bind(orig); } catch(e){}
+  }
+  try { patch(WebGLRenderingContext.prototype); } catch(e){}
+  try { patch(WebGL2RenderingContext.prototype); } catch(e){}
+  try { Object.defineProperty(navigator, 'webdriver', {get: () => undefined}); } catch(e){}
+})();
+"""
 
 
 def get_driver() -> ChromiumPage:

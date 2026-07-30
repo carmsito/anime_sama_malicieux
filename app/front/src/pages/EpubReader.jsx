@@ -20,9 +20,27 @@ export default function EpubReader() {
     setLoaded(false); setCurrent(0); setImgReady(false)
     fetch(`/api/mangas/${mangaId}/chapters/${chapterNum}/images`)
       .then((r) => r.json())
-      .then((d) => { setImages(d.urls || []); setLoaded(true) })
+      .then((d) => {
+        const urls = d.urls || []
+        setImages(urls)
+        setLoaded(true)
+        // Reprise : positionne sur la dernière page lue de ce chapitre
+        api.getProgress(mangaId).then((res) => {
+          const p = (res.progress || []).find((x) => Number(x.chapter_number) === num)
+          if (p && p.page > 0 && p.page < urls.length) setCurrent(p.page)
+        }).catch(() => {})
+      })
       .catch(console.error)
-  }, [mangaId, chapterNum])
+  }, [mangaId, chapterNum]) // eslint-disable-line
+
+  // Sauvegarde de la progression (marque-page), throttlée
+  useEffect(() => {
+    if (!loaded || images.length === 0) return
+    const t = setTimeout(() => {
+      api.saveProgress(mangaId, num, current, images.length).catch(() => {})
+    }, 600)
+    return () => clearTimeout(t)
+  }, [current, loaded, images.length, mangaId, num])
 
   const slide = useCallback((dir) => {
     if (!imgRef.current) return

@@ -43,6 +43,18 @@ CREATE TABLE IF NOT EXISTS kv (
     k TEXT PRIMARY KEY,
     v TEXT
 );
+
+-- Progression de lecture par utilisateur (marque-page)
+CREATE TABLE IF NOT EXISTS reading_progress (
+    user_id        TEXT    NOT NULL,
+    manga_id       TEXT    NOT NULL,
+    chapter_number REAL    NOT NULL,
+    page           INTEGER NOT NULL DEFAULT 0,
+    total_pages    INTEGER NOT NULL DEFAULT 0,
+    updated_at     TEXT    NOT NULL,
+    PRIMARY KEY (user_id, manga_id, chapter_number)
+);
+CREATE INDEX IF NOT EXISTS idx_progress_user_manga ON reading_progress (user_id, manga_id);
 """
 
 
@@ -165,5 +177,40 @@ def kv_set(k: str, v: str) -> None:
             (k, v),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Progression de lecture ────────────────────────────────────────────────────
+
+def set_progress(user_id: str, manga_id: str, chapter_number: float,
+                 page: int, total_pages: int = 0) -> None:
+    init()
+    conn = _connect()
+    try:
+        conn.execute(
+            """INSERT INTO reading_progress
+                 (user_id, manga_id, chapter_number, page, total_pages, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(user_id, manga_id, chapter_number) DO UPDATE SET
+                 page=excluded.page, total_pages=excluded.total_pages, updated_at=excluded.updated_at""",
+            (user_id, manga_id, float(chapter_number), int(page), int(total_pages), _now()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_progress(user_id: str, manga_id: str) -> list[dict]:
+    """Progression de tous les chapitres lus d'un manga par cet utilisateur."""
+    init()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT chapter_number, page, total_pages, updated_at FROM reading_progress "
+            "WHERE user_id=? AND manga_id=? ORDER BY updated_at DESC",
+            (user_id, manga_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()

@@ -129,25 +129,41 @@ def _extract_info_from_detail(manga_id: str, detail: dict) -> dict:
 
 def search(query: str) -> list[dict]:
     """
-    Search manga on MangaDex. Returns list of dicts with
-    {title, subtitle, work_url (=manga_id), image_url, source}.
+    Search manga on MangaDex. UN SEUL appel API avec includes[]=cover_art :
+    les covers arrivent dans la même réponse (avant : 1 appel detail par résultat
+    → lent + rate-limit MangaDex). Retourne {title, subtitle, work_url, image_url, source}.
     """
-    results, _total = _search_manga(query, limit=10, offset=0)
+    data = _api_get("/manga", {
+        "title": query,
+        "limit": 10,
+        "offset": 0,
+        "order[relevance]": "desc",
+        "includes[]": ["cover_art"],
+    })
     out: list[dict] = []
-    for r in results:
-        cover_url: str | None = None
-        try:
-            detail = _fetch_manga_detail(r.id)
-            cover_url = _cover_url_from_detail(r.id, detail)
-        except Exception:
-            pass
-        time.sleep(RATE_LIMIT_DELAY)
-
-        year_str = f" ({r.year})" if r.year else ""
+    for item in data.get("data", []):
+        mid = item["id"]
+        attrs = item.get("attributes", {})
+        titles = attrs.get("title", {})
+        title = titles.get("en") or titles.get("ja-ro") or next(iter(titles.values()), "?")
+        for alt in attrs.get("altTitles", []):
+            if "en" in alt:
+                title = alt["en"]
+                break
+        # cover depuis les relationships (pas d'appel supplémentaire)
+        cover_url = None
+        for rel in item.get("relationships", []):
+            if rel.get("type") == "cover_art" and rel.get("attributes", {}).get("fileName"):
+                fn = rel["attributes"]["fileName"]
+                cover_url = f"https://uploads.mangadex.org/covers/{mid}/{fn}.512.jpg"
+                break
+        year = attrs.get("year")
+        status = attrs.get("status", "")
+        year_str = f" ({year})" if year else ""
         out.append({
-            "title": r.title,
-            "subtitle": f"{r.status}{year_str}",
-            "work_url": r.id,          # manga_id acts as work_url
+            "title": title,
+            "subtitle": f"{status}{year_str}".strip(),
+            "work_url": mid,
             "image_url": cover_url,
             "source": "mangadex",
         })
@@ -282,7 +298,10 @@ def download(
                     filename = rel["attributes"]["fileName"]
                     cover_url = f"https://uploads.mangadex.org/covers/{manga_id}/{filename}.512.jpg"
                     meta["cover_url"] = cover_url
-                    _cache_cover(manga_id, cover_url)
+                    # Cache sous le manga_id de la LIBRARY (slug_lang), pas l'UUID brut,
+                    # sinon _cover_url ne trouve jamais le fichier.
+                    from .library import _make_manga_id
+                    _cache_cover(_make_manga_id(_sanitize(manga_name), lang), cover_url)
         except Exception:
             pass
 

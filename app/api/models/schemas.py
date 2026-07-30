@@ -118,6 +118,7 @@ class Job(BaseModel):
 class UserCreate(BaseModel):
     username: str
     password: str
+    role: Optional[str] = None
 
 
 class UserLogin(BaseModel):
@@ -128,7 +129,12 @@ class UserLogin(BaseModel):
 class UserOut(BaseModel):
     id: str
     username: str
-    created_at: str
+    role: str = "scrapper"
+    created_at: Optional[str] = None
+
+
+class RoleUpdate(BaseModel):
+    role: str
 
 
 class Token(BaseModel):

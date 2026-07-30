@@ -1,0 +1,37 @@
+# Compose de PRODUCTION (utilisé par la CI/CD et sur le serveur).
+# À lancer depuis le dossier deploy/ :  docker compose -f docker-compose.prod.yml up -d --build
+# Les chemins de bind-mount sont relatifs à ce fichier → data persistante hors conteneur.
+#
+#   ../.env            → secrets (SECRET_KEY, TELEGRAM_*, …) — gitignoré
+#   ../srv-data        → DB SQLite, covers, session Telegram (tg.session), cache EPUB
+#   ../srv-extraction  → cache EPUB local (court-vécu quand Telegram activé)
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      FLARESOLVERR_URL: http://flaresolverr:8191/v1
+    depends_on:
+      - flaresolverr
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../srv-data:/srv/app/api/data
+      - ../srv-extraction:/srv/extraction
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Résout le managed challenge Cloudflare de Sushiscan (interne uniquement).
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: info

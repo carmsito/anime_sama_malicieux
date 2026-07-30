@@ -7,10 +7,13 @@ python-multipart>=0.0.9
 aiofiles>=23.2.1
 
 # Scraping / extraction
-DrissionPage>=4.1.0
+# Sushiscan : bypass Cloudflare via FlareSolverr (conteneur) + curl_cffi (JA3 Chrome).
+curl_cffi>=0.7.0
 beautifulsoup4>=4.12.0
 lxml>=5.0.0
 requests>=2.31.0
+# DrissionPage : plus requis côté serveur pour Sushiscan, gardé pour l'usage CLI local.
+DrissionPage>=4.1.0
 
 # Stockage Telegram (MTProto) — activé seulement si STORAGE_BACKEND=telegram
 telethon>=1.36.0

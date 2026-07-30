@@ -14,7 +14,9 @@ from .services import job_queue, db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     loop = asyncio.get_event_loop()
-    db.init()          # crée les tables (mapping Telegram, kv)
+    db.init()          # crée les tables (mapping Telegram, kv, progression)
+    from .auth import ensure_admin
+    ensure_admin()     # migration rôles : garantit un admin
     loop.run_in_executor(None, warm_base_url)  # non-blocking warm-up
     job_queue.start()  # démarre le pool de workers
     yield
@@ -45,6 +47,16 @@ app.include_router(mangas.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
 app.include_router(extract.router, prefix="/api")
 app.include_router(jobs.router, prefix="/api")
+
+# Healthcheck (déploiement / CI-CD) — léger, sans auth, ne touche à rien.
+@app.get("/api/health", tags=["ops"])
+def health():
+    from .services import job_queue, storage
+    return {
+        "status": "ok",
+        "storage": storage.get_backend().name,
+        "workers": job_queue.stats().get("workers", 0),
+    }
 
 # Serve cover images directly
 from .config import COVERS_DIR

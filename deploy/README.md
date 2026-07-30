@@ -1,4 +1,31 @@
-# Déploiement gratuit
+# Déploiement
+
+## CI/CD (GitHub Actions) — déploiement auto sur push `main`
+
+Le workflow `.github/workflows/deploy.yml` : à chaque push sur `main`, il **rsync le
+code** sur le serveur puis **rebuild + redémarre** les conteneurs, et vérifie `/api/health`.
+
+**Secrets à ajouter** (repo GitHub → Settings → Secrets and variables → Actions → New secret) :
+
+| Secret | Valeur |
+|---|---|
+| `SSH_HOST` | IP du serveur (ex. `62.238.63.117`) |
+| `SSH_USER` | `root` |
+| `SSH_KEY`  | contenu de la **clé privée** SSH autorisée sur le serveur (`~/.ssh/id_rsa`) |
+
+Ensuite : `git push` sur `main` = déploiement automatique. Lançable aussi à la main
+(onglet **Actions** → **Deploy** → *Run workflow*).
+
+## Architecture Sushiscan (Cloudflare)
+
+Sushiscan est derrière un *managed challenge* Cloudflare qui bloque les navigateurs
+headless sur IP datacenter. Solution (0 €, sans proxy) : un conteneur **FlareSolverr**
+résout le challenge et fournit le cookie `cf_clearance`, puis **curl_cffi** (empreinte
+TLS de Chrome) télécharge HTML + images. Voir `app/api/services/sushiscan_svc.py`.
+
+---
+
+# Provisionnement d'un serveur (gratuit / bas coût)
 
 Objectif : ~10 utilisateurs, **0 €**, API + jobs qui ne s'arrêtent jamais, stockage
 EPUB sur Telegram.

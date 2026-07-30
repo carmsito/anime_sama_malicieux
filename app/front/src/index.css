@@ -540,6 +540,15 @@ button { cursor: pointer; font: inherit; border: none; background: none; }
 }
 .chapter-card:hover .chapter-card-dl { opacity: 1; }
 .chapter-card-dl:hover { color: #fff; background: rgba(0,0,0,.9); }
+.chapter-card-del {
+  position: absolute; top: .45rem; left: .45rem;
+  background: rgba(0,0,0,.65); color: var(--text2); cursor: pointer;
+  border-radius: var(--r); padding: .28rem .4rem; font-size: .72rem;
+  opacity: 0; transition: opacity .18s, background .18s, color .18s;
+  border: 1px solid rgba(255,255,255,.15); line-height: 1;
+}
+.chapter-card:hover .chapter-card-del { opacity: 1; }
+.chapter-card-del:hover { color: #fff; background: rgba(229,9,20,.85); border-color: transparent; }
 
 .chapter-card-foot { padding: .45rem .55rem .6rem; }
 .chapter-card-num { font-size: .8rem; font-weight: 700; }
@@ -847,13 +856,21 @@ input::placeholder { color: rgba(255,255,255,.3); }
 
 /* ── LOGIN ── */
 .login-page {
-  min-height: 100vh; display: flex; align-items: center; justify-content: center;
-  background: url("data:image/svg+xml,%3Csvg...%3E") center/cover, #141414;
+  position: fixed; inset: 0;                 /* couvre TOUT l'écran, sans débordement */
+  min-height: 100vh; min-height: 100dvh;     /* dvh = correct sur mobile (barres navigateur) */
+  display: flex; align-items: center; justify-content: center;
   background: #141414;
+  padding: 1.25rem; overflow-y: auto;
+  box-sizing: border-box;
 }
 .login-card {
-  background: rgba(0,0,0,.75); border-radius: 4px;
+  background: rgba(0,0,0,.75); border-radius: 8px;
   padding: 3.5rem 4.5rem 4rem; width: 100%; max-width: 400px;
+  box-sizing: border-box;
+}
+@media (max-width: 480px) {
+  .login-card { padding: 2.25rem 1.5rem 2.5rem; border-radius: 10px; }
+  .login-h { font-size: 1.6rem; }
 }
 .login-logo-txt {
   font-size: 1.6rem; font-weight: 900; color: var(--accent);
@@ -864,6 +881,41 @@ input::placeholder { color: rgba(255,255,255,.3); }
 .f-field label { display: none; }
 .f-field input { border-radius: 4px; background: #333; border-color: #333; padding: 1rem 1rem; }
 .f-field input:focus { border-color: rgba(255,255,255,.4); background: #454545; }
+
+/* ── USERS (admin) ── */
+.users-page { max-width: 820px; margin: 0 auto; padding: 5.5rem 1.25rem 3rem; }
+.users-head { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.75rem; }
+.users-head h1 { font-size: 1.7rem; font-weight: 800; }
+.user-create {
+  display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: 1.75rem;
+  background: #1a1a1a; padding: 1rem; border-radius: 8px;
+}
+.user-create input, .user-create select {
+  background: #333; border: 1px solid #333; border-radius: 5px; color: #fff;
+  padding: .6rem .8rem; font-family: inherit; font-size: .88rem; flex: 1; min-width: 140px;
+}
+.user-list { display: flex; flex-direction: column; gap: .5rem; }
+.user-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  background: #1a1a1a; padding: .85rem 1.1rem; border-radius: 8px; flex-wrap: wrap;
+}
+.user-info { display: flex; align-items: center; gap: .75rem; }
+.user-name { font-weight: 600; }
+.user-badge {
+  font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+  padding: .18rem .5rem; border-radius: 20px;
+}
+.user-badge.admin { background: rgba(229,9,20,.22); color: #ff6b6b; }
+.user-badge.scrapper { background: rgba(255,255,255,.12); color: var(--text2); }
+.user-actions { display: flex; align-items: center; gap: .5rem; }
+.user-actions select {
+  background: #333; border: 1px solid #444; border-radius: 5px; color: #fff;
+  padding: .4rem .6rem; font-family: inherit; font-size: .82rem; cursor: pointer;
+}
+@media (max-width: 520px) {
+  .user-row { flex-direction: column; align-items: stretch; }
+  .user-actions { justify-content: space-between; }
+}
 
 /* ── MISC ── */
 .empty { text-align: center; padding: 5rem 1rem; color: var(--text2); }

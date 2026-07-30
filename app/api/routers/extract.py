@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from ..auth import get_current_user
+from ..auth import require_scraper
 from ..models.schemas import ExtractRequest, Job
 from ..services import jobs as jobs_svc, scraper
 from ..services import mangadex_svc, sushiscan_svc
@@ -9,7 +9,7 @@ router = APIRouter(prefix="/extract", tags=["extract"])
 
 
 @router.post("", response_model=Job, summary="Lancer l'extraction de chapitres en arrière-plan")
-def extract(body: ExtractRequest, user: dict = Depends(get_current_user)):
+def extract(body: ExtractRequest, user: dict = Depends(require_scraper)):
     if body.source == "mangadex":
         manga_id = body.manga_id
         if not manga_id:
