@@ -113,7 +113,7 @@ function MangaCard({ manga, onClick, isNew, isUpdating, favorite = false, percen
         <div className="manga-card-name">{manga.name}</div>
         <div className="manga-card-cat">
           {manga.chapter_count} {unitShort} · {manga.category}
-          {percent > 0 && <span className="manga-card-cat-pct"> · {percent}%</span>}
+          {percent > 0 && <>{' · '}<span className="manga-card-cat-pct">{percent}% lu</span></>}
         </div>
       </div>
     </div>
