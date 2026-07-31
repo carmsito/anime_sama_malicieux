@@ -378,14 +378,20 @@ def get_cover(manga_id: str):
 # ── Progression de lecture (marque-page, par utilisateur) ─────────────────────
 
 def _manga_percent(progress_rows: list[dict], total_chapters: int) -> int:
-    """% de complétion d'un manga = chapitres finis / total chapitres (borné 0-100)."""
+    """
+    % de complétion d'un manga = somme des progressions fractionnaires / total chapitres.
+    Un chapitre lu à 5 % compte pour 0,05 chapitre (et non 0), pour être cohérent avec
+    'Reprendre la lecture'. Borné 0-100.
+    """
     if not total_chapters or total_chapters < 0:
         return 0
-    done = sum(
-        1 for r in progress_rows
-        if r.get("total_pages") and r.get("page", 0) >= 0 and (r["page"] + 1) >= r["total_pages"]
-    )
-    return max(0, min(100, round(done / total_chapters * 100)))
+    frac = 0.0
+    for r in progress_rows:
+        tp = r.get("total_pages") or 0
+        pg = r.get("page", 0)
+        if tp > 0 and pg >= 0:
+            frac += min(1.0, (pg + 1) / tp)
+    return max(0, min(100, round(frac / total_chapters * 100)))
 
 
 def _resume_target(manga: dict, last: dict) -> tuple[float, int]:
