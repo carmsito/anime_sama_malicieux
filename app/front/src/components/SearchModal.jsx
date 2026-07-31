@@ -8,7 +8,7 @@ const SOURCE_LABELS = { 'anime-sama': 'Anime-Sama', 'mangadex': 'MangaDex', 'sus
 const SEARCH_DEBOUNCE_MS = {
   'anime-sama': 700,
   mangadex: 700,
-  sushiscan: 5000,   // laisse le temps de taper avant de bloquer le clavier
+  sushiscan: 10000,   // laisse largement le temps de taper avant de bloquer le clavier
 }
 
 function SearchResultItem({ result, disabled, onPick }) {

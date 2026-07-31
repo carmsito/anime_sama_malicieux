@@ -12,8 +12,15 @@ export default function EpubReader() {
   const [current, setCurrent] = useState(0)
   const [loaded, setLoaded] = useState(false)
   const [imgReady, setImgReady] = useState(false)
+  // Préférence de navigation au scroll (molette/swipe) — désactivée par défaut, persistée
+  const [scrollNav, setScrollNav] = useState(() => localStorage.getItem('reader_scrollnav') === '1')
+  const [fullscreen, setFullscreen] = useState(false)
   const imgRef = useRef()
   const num = Number(chapterNum)
+
+  const toggleScrollNav = () => {
+    setScrollNav((v) => { localStorage.setItem('reader_scrollnav', v ? '0' : '1'); return !v })
+  }
   // Page forcée via l'URL (?p=N) : "Lire depuis le début" (p=0) ou reprise ciblée.
   // Si présent, on NE reprend PAS la page enregistrée.
   const forcedPage = searchParams.get('p')
@@ -91,25 +98,27 @@ export default function EpubReader() {
   }, [goNext, goPrev, navigate, mangaId])
 
   // Navigation au scroll (comme une liseuse) : bas = page suivante, haut = précédente.
+  // Activée seulement si l'utilisateur a coché le mode (scrollNav).
   const wheelLock = useRef(0)
   const onWheel = useCallback((e) => {
+    if (!scrollNav) return
     const now = Date.now()
     if (now - wheelLock.current < 350) return       // 1 cran = 1 page
     if (Math.abs(e.deltaY) < 12) return
     wheelLock.current = now
     if (e.deltaY > 0) goNext(); else goPrev()
-  }, [goNext, goPrev])
+  }, [scrollNav, goNext, goPrev])
 
   // Swipe vertical tactile (mobile) : glisser vers le haut = page suivante.
   const touchStartY = useRef(null)
   const onTouchStart = useCallback((e) => { touchStartY.current = e.touches[0].clientY }, [])
   const onTouchEnd = useCallback((e) => {
-    if (touchStartY.current == null) return
+    if (!scrollNav || touchStartY.current == null) return
     const dy = e.changedTouches[0].clientY - touchStartY.current
     touchStartY.current = null
     if (Math.abs(dy) < 45) return                   // ignore les petits mouvements
     if (dy < 0) goNext(); else goPrev()             // doigt vers le haut → page suivante
-  }, [goNext, goPrev])
+  }, [scrollNav, goNext, goPrev])
 
   const prevChap = prevChapNum != null ? { number: prevChapNum } : null
   const nextChap = nextChapNum != null ? { number: nextChapNum } : null
@@ -119,7 +128,7 @@ export default function EpubReader() {
       {/* Top bar */}
       <div className="reader-topbar" style={{
         flexShrink: 0, height: 48,
-        display: 'flex', alignItems: 'center', padding: '0 1rem', gap: '.6rem',
+        display: fullscreen ? 'none' : 'flex', alignItems: 'center', padding: '0 1rem', gap: '.6rem',
         background: 'rgba(0,0,0,.9)', borderBottom: '1px solid rgba(255,255,255,.08)',
       }}>
         <button
@@ -142,6 +151,23 @@ export default function EpubReader() {
             Début
           </button>
         )}
+        <button onClick={toggleScrollNav}
+          title={scrollNav ? 'Navigation au scroll : ON' : 'Navigation au scroll : OFF'}
+          style={{ color: scrollNav ? '#e50914' : 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
+            background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
+            display: 'flex', alignItems: 'center' }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="6" y="2" width="12" height="20" rx="6"/><line x1="12" y1="6" x2="12" y2="10"/>
+          </svg>
+        </button>
+        <button onClick={() => setFullscreen(true)} title="Plein écran"
+          style={{ color: 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
+            background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
+            display: 'flex', alignItems: 'center' }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>
+          </svg>
+        </button>
         <span style={{ color: 'rgba(255,255,255,.35)', fontSize: '.78rem' }}>
           {loaded ? `${current + 1} / ${images.length}` : '…'}
         </span>
@@ -201,10 +227,19 @@ export default function EpubReader() {
         )}
       </div>
 
+      {/* Bouton flottant pour quitter le plein écran */}
+      {fullscreen && (
+        <button onClick={() => setFullscreen(false)} className="reader-fs-exit" title="Quitter le plein écran">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>
+          </svg>
+        </button>
+      )}
+
       {/* Bottom bar */}
       <div className="reader-bottombar" style={{
         flexShrink: 0, height: 44,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.5rem',
+        display: fullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.5rem',
         background: 'rgba(0,0,0,.9)', borderTop: '1px solid rgba(255,255,255,.08)',
       }}>
         <button onClick={goPrev} disabled={current === 0}

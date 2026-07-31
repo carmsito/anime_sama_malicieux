@@ -40,13 +40,13 @@ function ChapterCard({ manga, ch, onRead, onRestart, isLoading, isSelected, onTo
           <div className="chapter-card-ph">📄</div>
         )}
         <div className="chapter-card-overlay" onClick={onRead}>
-          <span className="chapter-card-read">Lire</span>
+          {!done && <span className="chapter-card-read">Lire</span>}
         </div>
-        {/* Chapitre terminé : bouton pour le recommencer depuis la 1ʳᵉ planche */}
+        {/* Chapitre terminé : icône reload centrée pour le recommencer (1ʳᵉ planche) */}
         {done && !selectionMode && (
           <button className="chapter-card-restart" title="Recommencer le chapitre"
             onClick={(e) => { e.stopPropagation(); onRestart() }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
             </svg>
           </button>
@@ -164,8 +164,8 @@ export default function MangaDetail() {
       const list = res.progress || []
       const map = {}
       for (const p of list) {
-        const pct = p.total_pages > 0
-          ? Math.min(100, Math.round(((p.page + 1) / p.total_pages) * 100)) : 0
+        const pct = p.total_pages > 0 && p.page >= 0
+          ? Math.max(0, Math.min(100, Math.round(((p.page + 1) / p.total_pages) * 100))) : 0
         map[Number(p.chapter_number)] = pct
       }
       setProgressMap(map)
@@ -375,14 +375,8 @@ export default function MangaDetail() {
         <div className="detail-hero-fade" />
 
         <button className="detail-back" onClick={() => navigate('/')}>←</button>
-        <div className="detail-hero-actions">
-          <button className={`detail-fav-btn ${isFav ? 'on' : ''}`} onClick={toggleFav}
-            title={isFav ? 'Retirer des favoris' : 'Ajouter aux favoris'}>
-            <svg width="19" height="19" viewBox="0 0 24 24" fill={isFav ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-            </svg>
-          </button>
-          {isAdmin && (
+        {isAdmin && (
+          <div className="detail-hero-actions">
             <button className={`detail-del-btn ${selectionMode && selAction === 'delete' ? 'active' : ''}`}
               onClick={() => {
                 if (selectionMode && selAction === 'delete') { setSelectionMode(false); return }
@@ -396,8 +390,8 @@ export default function MangaDetail() {
                 <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
               </svg>
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
         <div className="detail-hero-body">
           <div className="detail-tag">{manga.category}</div>
@@ -486,6 +480,12 @@ export default function MangaDetail() {
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                 <polyline points="7 10 12 15 17 10" />
                 <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            </button>
+            <button className={`detail-fav-inline ${isFav ? 'on' : ''}`} onClick={toggleFav}
+              title={isFav ? 'Retirer des favoris' : 'Ajouter aux favoris'}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill={isFav ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
               </svg>
             </button>
           </div>

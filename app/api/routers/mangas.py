@@ -378,14 +378,14 @@ def get_cover(manga_id: str):
 # ── Progression de lecture (marque-page, par utilisateur) ─────────────────────
 
 def _manga_percent(progress_rows: list[dict], total_chapters: int) -> int:
-    """% de complétion d'un manga = chapitres finis / total chapitres."""
-    if not total_chapters:
+    """% de complétion d'un manga = chapitres finis / total chapitres (borné 0-100)."""
+    if not total_chapters or total_chapters < 0:
         return 0
     done = sum(
         1 for r in progress_rows
-        if r.get("total_pages") and (r["page"] + 1) >= r["total_pages"]
+        if r.get("total_pages") and r.get("page", 0) >= 0 and (r["page"] + 1) >= r["total_pages"]
     )
-    return min(100, round(done / total_chapters * 100))
+    return max(0, min(100, round(done / total_chapters * 100)))
 
 
 def _resume_target(manga: dict, last: dict) -> tuple[float, int]:
@@ -412,8 +412,8 @@ def continue_reading(user: dict = Depends(_require_user)):
         m = library.get_manga(p["manga_id"])  # avec chapitres (pour la reprise)
         if not m:
             continue  # manga supprimé
-        pct = (min(100, round(((p["page"] + 1) / p["total_pages"]) * 100))
-               if p["total_pages"] else 0)
+        pct = (max(0, min(100, round(((p["page"] + 1) / p["total_pages"]) * 100)))
+               if p["total_pages"] and p["page"] >= 0 else 0)
         target_ch, target_page = _resume_target(m, p)
         out.append({
             "id": m["id"], "name": m["name"], "category": m["category"],

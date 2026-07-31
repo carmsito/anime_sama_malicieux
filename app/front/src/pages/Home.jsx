@@ -22,7 +22,7 @@ function getMangaUnit(manga) {
 
 const IS_TOUCH = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches
 
-function MangaCard({ manga, onClick, isNew, isUpdating, favorite = false, percent = 0, onToggleFav }) {
+function MangaCard({ manga, onClick, isNew, isUpdating, favorite = false, percent = 0, onToggleFav, previewing = false, onPreview }) {
   const [imgOk, setImgOk] = useState(!!manga.cover_url)
   const [info, setInfo] = useState(infoCache[manga.id] || null)
   const infoLoadingRef = useRef(false)
@@ -46,15 +46,10 @@ function MangaCard({ manga, onClick, isNew, isUpdating, favorite = false, percen
     }
   }, [isNew])
 
-  // Mobile (pas de survol) : charge les infos à l'affichage pour montrer tags + description
+  // Mobile : au 1er tap on affiche l'aperçu (tags + description), donc on charge les infos
   useEffect(() => {
-    if (!IS_TOUCH || !cardRef.current) return
-    const io = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) { loadInfo(); io.disconnect() }
-    }, { rootMargin: '200px' })
-    io.observe(cardRef.current)
-    return () => io.disconnect()
-  }, []) // eslint-disable-line
+    if (previewing) loadInfo()
+  }, [previewing]) // eslint-disable-line
 
   const onEnter = () => {
     // Lazy load info on hover (480ms delay)
@@ -69,13 +64,19 @@ function MangaCard({ manga, onClick, isNew, isUpdating, favorite = false, percen
     return () => clearTimeout(timerRef.current)
   }, [])
 
+  // Tactile : 1er tap = aperçu (comme un survol), 2e tap = ouvre. Desktop : clic = ouvre.
+  const handleClick = () => {
+    if (IS_TOUCH && !previewing) { onPreview?.(); return }
+    onClick()
+  }
+
   const genres = info?.genres?.slice(0, 3) || []
   const synopsis = info?.synopsis
   const unit = getMangaUnit(manga)
   const unitShort = unit === 'Chapitre' ? 'chap.' : unit.toLowerCase()
 
   return (
-    <div ref={cardRef} className="manga-card" onClick={onClick} onMouseEnter={onEnter} onMouseLeave={onLeave}>
+    <div ref={cardRef} className={`manga-card ${previewing ? 'previewing' : ''}`} onClick={handleClick} onMouseEnter={onEnter} onMouseLeave={onLeave}>
       <div className="manga-card-img">
         {imgOk
           ? <img src={manga.cover_url} alt={manga.name} onError={() => setImgOk(false)} />
@@ -270,6 +271,7 @@ export default function Home() {
   const [favItems, setFavItems] = useState([])
   const [favSet, setFavSet] = useState(new Set())
   const [progressMap, setProgressMap] = useState({})
+  const [previewId, setPreviewId] = useState(null)  // carte en aperçu (mobile)
   const [loading, setLoading] = useState(true)
   const [newIds, setNewIds] = useState(new Set())
   const [filterOpen, setFilterOpen] = useState(false)
@@ -554,6 +556,8 @@ export default function Home() {
                   favorite={favSet.has(m.id)}
                   percent={progressMap[m.id] || 0}
                   onToggleFav={() => toggleFav(m.id)}
+                  previewing={previewId === m.id}
+                  onPreview={() => setPreviewId(m.id)}
                   onClick={() => navigate(`/manga/${m.id}`)}
                 />
               ))}
