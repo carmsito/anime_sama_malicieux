@@ -11,13 +11,13 @@ const PlayIcon = ({ size = 15 }) => (
   </svg>
 )
 
-function ChapterCard({ manga, ch, onRead, isLoading, isSelected, onToggleSelect, selectionMode, progress = 0 }) {
+function ChapterCard({ manga, ch, onRead, onRestart, isLoading, isSelected, onToggleSelect, selectionMode, progress = 0 }) {
   const [ok, setOk] = useState(true)
   const label = ch.title || `Chapitre ${ch.number}`
   const done = progress >= 100
 
   return (
-    <div className="chapter-card" style={{ position: 'relative' }}>
+    <div className={`chapter-card ${done ? 'done' : ''}`} style={{ position: 'relative' }}>
       {selectionMode && (
         <button
           onClick={onToggleSelect}
@@ -40,9 +40,26 @@ function ChapterCard({ manga, ch, onRead, isLoading, isSelected, onToggleSelect,
           <div className="chapter-card-ph">📄</div>
         )}
         <div className="chapter-card-overlay" onClick={onRead}>
-          <span style={{ fontSize: '1.8rem', fontWeight: 900, color: '#e50914', cursor: 'pointer' }}>Lire</span>
+          <span className="chapter-card-read">Lire</span>
         </div>
-        <a href={api.epubUrl(manga.id, ch.number)} download className="chapter-card-dl" onClick={(e) => e.stopPropagation()}>⬇</a>
+        {/* Chapitre terminé : bouton pour le recommencer depuis la 1ʳᵉ planche */}
+        {done && !selectionMode && (
+          <button className="chapter-card-restart" title="Recommencer le chapitre"
+            onClick={(e) => { e.stopPropagation(); onRestart() }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+            </svg>
+          </button>
+        )}
+        {!selectionMode && (
+          <a href={api.epubUrl(manga.id, ch.number)} download className="chapter-card-dl" title="Télécharger l'EPUB" onClick={(e) => e.stopPropagation()}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+          </a>
+        )}
         {progress > 0 && (
           <span className="chapter-card-pct">{progress}%</span>
         )}
@@ -93,7 +110,8 @@ export default function MangaDetail() {
   const isAdmin = user?.role === 'admin'
   const [manga, setManga] = useState(null)
   const [progressMap, setProgressMap] = useState({})
-  const [resumeChapter, setResumeChapter] = useState(null)
+  const [lastProgress, setLastProgress] = useState(null)  // {chapter_number, page, total_pages}
+  const [isFav, setIsFav] = useState(false)
   const [info, setInfo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showExtract, setShowExtract] = useState(false)
@@ -152,9 +170,17 @@ export default function MangaDetail() {
       }
       setProgressMap(map)
       // list est trié du plus récent au plus ancien → [0] = dernier lu
-      if (list.length) setResumeChapter(Number(list[0].chapter_number))
+      if (list.length) setLastProgress(list[0])
     }).catch(() => {})
+    // état favori
+    api.userStates().then((s) => setIsFav((s.favorites || []).includes(mangaId))).catch(() => {})
   }, [mangaId])
+
+  const toggleFav = async () => {
+    const next = !isFav
+    setIsFav(next)
+    try { await api.setFavorite(mangaId, next) } catch { setIsFav(!next) }
+  }
 
   useEffect(() => {
     if (!manga || !activeJob) return
@@ -315,6 +341,19 @@ export default function MangaDetail() {
   const coverUrl = manga.cover_url || info?.cover_url
   const bgStyle = coverUrl ? { backgroundImage: `url(${coverUrl})` } : {}
   const first = manga.chapters?.[0]
+
+  // Cible de reprise : si le dernier chapitre lu est terminé, on pointe le suivant (page 0).
+  let resumeTarget = null
+  if (lastProgress && manga.chapters?.length) {
+    const cur = Number(lastProgress.chapter_number)
+    const finished = lastProgress.total_pages > 0 && (lastProgress.page + 1) >= lastProgress.total_pages
+    if (finished) {
+      const nextNum = manga.chapters.map((c) => c.number).sort((a, b) => a - b).find((n) => n > cur)
+      if (nextNum != null) resumeTarget = { chapter: nextNum, page: 0 }
+    } else {
+      resumeTarget = { chapter: cur, page: lastProgress.page }
+    }
+  }
   const sorted = (manga.chapters || [])
     .filter((ch) => !chapFilter || String(ch.number).includes(chapFilter))
     .sort((a, b) => sortAsc ? a.number - b.number : b.number - a.number)
@@ -336,21 +375,29 @@ export default function MangaDetail() {
         <div className="detail-hero-fade" />
 
         <button className="detail-back" onClick={() => navigate('/')}>←</button>
-        {isAdmin && (
-          <button className={`detail-del-btn ${selectionMode && selAction === 'delete' ? 'active' : ''}`}
-            onClick={() => {
-              if (selectionMode && selAction === 'delete') { setSelectionMode(false); return }
-              setSelAction('delete'); setSelectionMode(true); setSelectedChaps(new Set())
-            }}
-            title="Supprimer des chapitres / le manga">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="3 6 5 6 21 6"/>
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-              <path d="M10 11v6M14 11v6"/>
-              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+        <div className="detail-hero-actions">
+          <button className={`detail-fav-btn ${isFav ? 'on' : ''}`} onClick={toggleFav}
+            title={isFav ? 'Retirer des favoris' : 'Ajouter aux favoris'}>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill={isFav ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
             </svg>
           </button>
-        )}
+          {isAdmin && (
+            <button className={`detail-del-btn ${selectionMode && selAction === 'delete' ? 'active' : ''}`}
+              onClick={() => {
+                if (selectionMode && selAction === 'delete') { setSelectionMode(false); return }
+                setSelAction('delete'); setSelectionMode(true); setSelectedChaps(new Set())
+              }}
+              title="Supprimer des chapitres / le manga">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                <path d="M10 11v6M14 11v6"/>
+                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+              </svg>
+            </button>
+          )}
+        </div>
 
         <div className="detail-hero-body">
           <div className="detail-tag">{manga.category}</div>
@@ -410,13 +457,13 @@ export default function MangaDetail() {
 
           <div className="detail-btns">
             {first && (
-              <button className="btn btn-white" onClick={() => navigate(`/manga/${mangaId}/read/${first.number}`)}>
+              <button className="btn btn-white" onClick={() => navigate(`/manga/${mangaId}/read/${first.number}?p=0`)}>
                 <PlayIcon /> Lire depuis le début
               </button>
             )}
-            {resumeChapter != null && (
-              <button className="btn btn-primary" onClick={() => navigate(`/manga/${mangaId}/read/${resumeChapter}`)}>
-                <PlayIcon /> Reprendre {itemLabel} {resumeChapter}
+            {resumeTarget && (
+              <button className="btn btn-primary" onClick={() => navigate(`/manga/${mangaId}/read/${resumeTarget.chapter}?p=${resumeTarget.page}`)}>
+                <PlayIcon /> Reprendre {itemLabel} {resumeTarget.chapter}
               </button>
             )}
             {user?.role !== 'lecteur' && (
@@ -569,6 +616,7 @@ export default function MangaDetail() {
                   manga={manga}
                   ch={ch}
                   onRead={() => navigate(`/manga/${mangaId}/read/${ch.number}`)}
+                  onRestart={() => navigate(`/manga/${mangaId}/read/${ch.number}?p=0`)}
                   isLoading={loadingChaps.has(ch.number)}
                   isSelected={selectedChaps.has(ch.number)}
                   onToggleSelect={() => toggleChapSelect(ch.number)}

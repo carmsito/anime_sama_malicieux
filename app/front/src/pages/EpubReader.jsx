@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { gsap } from 'gsap'
 import { api } from '../api/client'
 
 export default function EpubReader() {
   const { mangaId, chapterNum } = useParams()
+  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const [manga, setManga] = useState(null)
   const [images, setImages] = useState([])
@@ -13,6 +14,9 @@ export default function EpubReader() {
   const [imgReady, setImgReady] = useState(false)
   const imgRef = useRef()
   const num = Number(chapterNum)
+  // Page forcée via l'URL (?p=N) : "Lire depuis le début" (p=0) ou reprise ciblée.
+  // Si présent, on NE reprend PAS la page enregistrée.
+  const forcedPage = searchParams.get('p')
 
   useEffect(() => { api.getManga(mangaId).then(setManga).catch(console.error) }, [mangaId])
 
@@ -24,6 +28,15 @@ export default function EpubReader() {
         const urls = d.urls || []
         setImages(urls)
         setLoaded(true)
+        if (forcedPage != null) {
+          // page imposée par l'URL (bornée) — pas de reprise auto.
+          // 'last' = dernière page (arrivée sur le chapitre précédent).
+          const p = forcedPage === 'last'
+            ? urls.length - 1
+            : Math.max(0, Math.min(Number(forcedPage) || 0, urls.length - 1))
+          setCurrent(Math.max(0, p))
+          return
+        }
         // Reprise : positionne sur la dernière page lue de ce chapitre
         api.getProgress(mangaId).then((res) => {
           const p = (res.progress || []).find((x) => Number(x.chapter_number) === num)
@@ -31,7 +44,7 @@ export default function EpubReader() {
         }).catch(() => {})
       })
       .catch(console.error)
-  }, [mangaId, chapterNum]) // eslint-disable-line
+  }, [mangaId, chapterNum, forcedPage]) // eslint-disable-line
 
   // Sauvegarde de la progression (marque-page), throttlée
   useEffect(() => {
@@ -50,13 +63,22 @@ export default function EpubReader() {
     )
   }, [])
 
+  // Chapitres triés → chapitre précédent / suivant (gère les numéros non consécutifs)
+  const sortedNums = (manga?.chapters || []).map((c) => c.number).sort((a, b) => a - b)
+  const nextChapNum = sortedNums.find((n) => n > num)
+  const prevChapNum = [...sortedNums].reverse().find((n) => n < num)
+
   const goNext = useCallback(() => {
-    if (current < images.length - 1) { setCurrent((p) => p + 1); setImgReady(false); slide(1) }
-  }, [current, images.length, slide])
+    if (current < images.length - 1) { setCurrent((p) => p + 1); setImgReady(false); slide(1); return }
+    // fin du chapitre → chapitre suivant, 1ʳᵉ planche
+    if (nextChapNum != null) navigate(`/manga/${mangaId}/read/${nextChapNum}?p=0`)
+  }, [current, images.length, slide, nextChapNum, mangaId, navigate])
 
   const goPrev = useCallback(() => {
-    if (current > 0) { setCurrent((p) => p - 1); setImgReady(false); slide(-1) }
-  }, [current, slide])
+    if (current > 0) { setCurrent((p) => p - 1); setImgReady(false); slide(-1); return }
+    // début du chapitre → chapitre précédent, dernière planche
+    if (prevChapNum != null) navigate(`/manga/${mangaId}/read/${prevChapNum}?p=last`)
+  }, [current, slide, prevChapNum, mangaId, navigate])
 
   useEffect(() => {
     const k = (e) => {
@@ -68,9 +90,29 @@ export default function EpubReader() {
     return () => window.removeEventListener('keydown', k)
   }, [goNext, goPrev, navigate, mangaId])
 
-  const chapters = manga?.chapters || []
-  const prevChap = chapters.find((c) => c.number === num - 1)
-  const nextChap = chapters.find((c) => c.number === num + 1)
+  // Navigation au scroll (comme une liseuse) : bas = page suivante, haut = précédente.
+  const wheelLock = useRef(0)
+  const onWheel = useCallback((e) => {
+    const now = Date.now()
+    if (now - wheelLock.current < 350) return       // 1 cran = 1 page
+    if (Math.abs(e.deltaY) < 12) return
+    wheelLock.current = now
+    if (e.deltaY > 0) goNext(); else goPrev()
+  }, [goNext, goPrev])
+
+  // Swipe vertical tactile (mobile) : glisser vers le haut = page suivante.
+  const touchStartY = useRef(null)
+  const onTouchStart = useCallback((e) => { touchStartY.current = e.touches[0].clientY }, [])
+  const onTouchEnd = useCallback((e) => {
+    if (touchStartY.current == null) return
+    const dy = e.changedTouches[0].clientY - touchStartY.current
+    touchStartY.current = null
+    if (Math.abs(dy) < 45) return                   // ignore les petits mouvements
+    if (dy < 0) goNext(); else goPrev()             // doigt vers le haut → page suivante
+  }, [goNext, goPrev])
+
+  const prevChap = prevChapNum != null ? { number: prevChapNum } : null
+  const nextChap = nextChapNum != null ? { number: nextChapNum } : null
 
   return (
     <div className="reader-root" style={{ display: 'flex', flexDirection: 'column', background: '#000' }}>
@@ -122,7 +164,12 @@ export default function EpubReader() {
       </div>
 
       {/* Image area */}
-      <div style={{ flex: 1, overflow: 'hidden', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div
+        onWheel={onWheel}
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+        style={{ flex: 1, overflow: 'hidden', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      >
         {!loaded && (
           <div style={{ color: 'rgba(255,255,255,.3)', fontSize: '.88rem', display: 'flex', gap: '.5rem', alignItems: 'center' }}>
             <div className="spin" /> Chargement…

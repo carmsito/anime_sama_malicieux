@@ -55,6 +55,15 @@ CREATE TABLE IF NOT EXISTS reading_progress (
     PRIMARY KEY (user_id, manga_id, chapter_number)
 );
 CREATE INDEX IF NOT EXISTS idx_progress_user_manga ON reading_progress (user_id, manga_id);
+
+-- Favoris par utilisateur
+CREATE TABLE IF NOT EXISTS favorites (
+    user_id    TEXT NOT NULL,
+    manga_id   TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, manga_id)
+);
+CREATE INDEX IF NOT EXISTS idx_fav_user ON favorites (user_id);
 """
 
 
@@ -212,6 +221,51 @@ def get_progress(user_id: str, manga_id: str) -> list[dict]:
             (user_id, manga_id),
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_progress_all(user_id: str) -> list[dict]:
+    """Toutes les progressions de l'utilisateur (pour calculer le % par manga)."""
+    init()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT manga_id, chapter_number, page, total_pages FROM reading_progress WHERE user_id=?",
+            (user_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# ── Favoris ───────────────────────────────────────────────────────────────────
+
+def set_favorite(user_id: str, manga_id: str, on: bool) -> None:
+    init()
+    conn = _connect()
+    try:
+        if on:
+            conn.execute(
+                "INSERT OR IGNORE INTO favorites (user_id, manga_id, created_at) VALUES (?, ?, ?)",
+                (user_id, manga_id, _now()),
+            )
+        else:
+            conn.execute("DELETE FROM favorites WHERE user_id=? AND manga_id=?", (user_id, manga_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_favorites(user_id: str) -> list[str]:
+    init()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT manga_id FROM favorites WHERE user_id=? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+        return [r["manga_id"] for r in rows]
     finally:
         conn.close()
 

@@ -377,24 +377,100 @@ def get_cover(manga_id: str):
 
 # ── Progression de lecture (marque-page, par utilisateur) ─────────────────────
 
+def _manga_percent(progress_rows: list[dict], total_chapters: int) -> int:
+    """% de complétion d'un manga = chapitres finis / total chapitres."""
+    if not total_chapters:
+        return 0
+    done = sum(
+        1 for r in progress_rows
+        if r.get("total_pages") and (r["page"] + 1) >= r["total_pages"]
+    )
+    return min(100, round(done / total_chapters * 100))
+
+
+def _resume_target(manga: dict, last: dict) -> tuple[float, int]:
+    """
+    Cible de reprise pour un manga d'après le dernier chapitre lu `last`.
+    Si ce chapitre est terminé (dernière page), on passe au chapitre SUIVANT (page 0).
+    Sinon on reprend le chapitre en cours à la page enregistrée.
+    """
+    cur = float(last["chapter_number"])
+    finished = last.get("total_pages") and (last["page"] + 1) >= last["total_pages"]
+    if finished:
+        nums = sorted(float(c["number"]) for c in manga.get("chapters", []) or [])
+        nexts = [n for n in nums if n > cur]
+        if nexts:
+            return nexts[0], 0
+    return cur, int(last["page"])
+
+
 @router.get("/continue/reading", summary="Reprendre la lecture (derniers chapitres lus)")
 def continue_reading(user: dict = Depends(_require_user)):
     from ..services import db
-    all_mangas = {m["id"]: m for m in library.list_mangas()}
     out = []
     for p in db.get_continue(user["id"]):
-        m = all_mangas.get(p["manga_id"])
+        m = library.get_manga(p["manga_id"])  # avec chapitres (pour la reprise)
         if not m:
             continue  # manga supprimé
         pct = (min(100, round(((p["page"] + 1) / p["total_pages"]) * 100))
                if p["total_pages"] else 0)
+        target_ch, target_page = _resume_target(m, p)
         out.append({
             "id": m["id"], "name": m["name"], "category": m["category"],
             "cover_url": m["cover_url"], "source": m.get("meta", {}).get("source", "anime-sama"),
-            "chapter_number": p["chapter_number"], "percent": pct,
+            "chapter_number": target_ch, "page": target_page, "percent": pct,
             "updated_at": p["updated_at"],
         })
     return {"items": out}
+
+
+@router.get("/favorites/list", summary="Mes favoris (œuvres non terminées en priorité)")
+def list_favorites(user: dict = Depends(_require_user)):
+    from ..services import db
+    fav_ids = set(db.list_favorites(user["id"]))
+    if not fav_ids:
+        return {"items": []}
+    # progressions groupées par manga
+    prog_by_manga: dict[str, list[dict]] = {}
+    for r in db.get_progress_all(user["id"]):
+        prog_by_manga.setdefault(r["manga_id"], []).append(r)
+
+    out = []
+    for m in library.list_mangas():
+        if m["id"] not in fav_ids:
+            continue
+        pct = _manga_percent(prog_by_manga.get(m["id"], []), m.get("chapter_count", 0))
+        out.append({
+            "id": m["id"], "name": m["name"], "category": m["category"],
+            "cover_url": m["cover_url"], "source": m.get("meta", {}).get("source", "anime-sama"),
+            "percent": pct,
+        })
+    # non terminés (pct < 100) d'abord, puis par nom
+    out.sort(key=lambda x: (x["percent"] >= 100, x["name"].lower()))
+    return {"items": out}
+
+
+@router.get("/states/all", summary="États utilisateur par manga (favori + % lu)")
+def user_states(user: dict = Depends(_require_user)):
+    from ..services import db
+    favs = set(db.list_favorites(user["id"]))
+    prog_by_manga: dict[str, list[dict]] = {}
+    for r in db.get_progress_all(user["id"]):
+        prog_by_manga.setdefault(r["manga_id"], []).append(r)
+    progress = {}
+    for m in library.list_mangas():
+        rows = prog_by_manga.get(m["id"])
+        if rows:
+            progress[m["id"]] = _manga_percent(rows, m.get("chapter_count", 0))
+    return {"favorites": list(favs), "progress": progress}
+
+
+@router.put("/{manga_id}/favorite", summary="Ajouter/retirer un manga des favoris")
+def toggle_favorite(manga_id: str, body: dict, user: dict = Depends(_require_user)):
+    from ..services import db
+    on = bool(body.get("favorite", True))
+    db.set_favorite(user["id"], manga_id, on)
+    return {"manga_id": manga_id, "favorite": on}
 
 
 @router.get("/{manga_id}/progress", summary="Progression de lecture de l'utilisateur")

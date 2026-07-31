@@ -48,6 +48,12 @@ export const api = {
   // Reading progress
   continueReading: () => req('/mangas/continue/reading'),
   getProgress: (mangaId) => req(`/mangas/${mangaId}/progress`),
+
+  // Favoris + états utilisateur (favori + % lu par manga)
+  listFavorites: () => req('/mangas/favorites/list'),
+  userStates: () => req('/mangas/states/all'),
+  setFavorite: (mangaId, favorite) =>
+    req(`/mangas/${mangaId}/favorite`, { method: 'PUT', body: JSON.stringify({ favorite }) }),
   saveProgress: (mangaId, chapterNum, page, totalPages) =>
     req(`/mangas/${mangaId}/chapters/${chapterNum}/progress`,
         { method: 'PUT', body: JSON.stringify({ page, total_pages: totalPages }) }),

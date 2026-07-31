@@ -6,9 +6,9 @@ const S = { SEARCH: 0, CAT: 1, LANG: 1, CHAP: 2 }
 const SOURCES = ['anime-sama', 'mangadex', 'sushiscan']
 const SOURCE_LABELS = { 'anime-sama': 'Anime-Sama', 'mangadex': 'MangaDex', 'sushiscan': 'Sushiscan' }
 const SEARCH_DEBOUNCE_MS = {
-  'anime-sama': 380,
-  mangadex: 380,
-  sushiscan: 3000,
+  'anime-sama': 700,
+  mangadex: 700,
+  sushiscan: 5000,   // laisse le temps de taper avant de bloquer le clavier
 }
 
 function SearchResultItem({ result, disabled, onPick }) {
@@ -574,7 +574,7 @@ export default function SearchModal({
             <div className="modal-acts">
               <button className="btn btn-dark btn-sm" onClick={goBack}>&larr; Retour</button>
               <button className="btn btn-primary" onClick={extract} disabled={!canExtract()} style={{ flex: 1, justifyContent: 'center' }}>
-                {extracting ? <><div className="spin" style={{ width: 14, height: 14 }} /> Lancement&hellip;</> : '⬇ Extraire'}
+                {extracting ? <><div className="spin" style={{ width: 14, height: 14 }} /> Lancement&hellip;</> : <><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Extraire</>}
               </button>
             </div>
           </>
@@ -599,7 +599,7 @@ export default function SearchModal({
             <div className="modal-acts">
               <button className="btn btn-dark btn-sm" onClick={goBack}>&larr; Retour</button>
               <button className="btn btn-primary" onClick={extract} disabled={!canExtract()} style={{ flex: 1, justifyContent: 'center' }}>
-                {extracting ? <><div className="spin" style={{ width: 14, height: 14 }} /> Lancement&hellip;</> : '⬇ Extraire'}
+                {extracting ? <><div className="spin" style={{ width: 14, height: 14 }} /> Lancement&hellip;</> : <><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Extraire</>}
               </button>
             </div>
           </>
@@ -658,7 +658,7 @@ export default function SearchModal({
             <div className="modal-acts">
               <button className="btn btn-dark btn-sm" onClick={goBack}>&larr; Rechercher</button>
               <button className="btn btn-primary" onClick={extract} disabled={!canExtract()} style={{ flex: 1, justifyContent: 'center' }}>
-                {extracting ? <><div className="spin" style={{ width: 14, height: 14 }} /> Lancement&hellip;</> : '⬇ Extraire'}
+                {extracting ? <><div className="spin" style={{ width: 14, height: 14 }} /> Lancement&hellip;</> : <><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Extraire</>}
               </button>
             </div>
           </>

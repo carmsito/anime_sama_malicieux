@@ -20,12 +20,22 @@ function getMangaUnit(manga) {
   return manga?.kind || 'Chapitre'
 }
 
-function MangaCard({ manga, onClick, isNew, isUpdating }) {
+const IS_TOUCH = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches
+
+function MangaCard({ manga, onClick, isNew, isUpdating, favorite = false, percent = 0, onToggleFav }) {
   const [imgOk, setImgOk] = useState(!!manga.cover_url)
   const [info, setInfo] = useState(infoCache[manga.id] || null)
   const infoLoadingRef = useRef(false)
   const timerRef = useRef()
   const cardRef = useRef()
+
+  const loadInfo = () => {
+    if (info || infoLoadingRef.current) return
+    infoLoadingRef.current = true
+    api.getMangaInfo(manga.id)
+      .then((i) => { infoCache[manga.id] = i; setInfo(i) })
+      .catch(() => { })
+  }
 
   useEffect(() => {
     if (isNew && cardRef.current) {
@@ -36,19 +46,19 @@ function MangaCard({ manga, onClick, isNew, isUpdating }) {
     }
   }, [isNew])
 
+  // Mobile (pas de survol) : charge les infos à l'affichage pour montrer tags + description
+  useEffect(() => {
+    if (!IS_TOUCH || !cardRef.current) return
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { loadInfo(); io.disconnect() }
+    }, { rootMargin: '200px' })
+    io.observe(cardRef.current)
+    return () => io.disconnect()
+  }, []) // eslint-disable-line
+
   const onEnter = () => {
     // Lazy load info on hover (480ms delay)
-    timerRef.current = setTimeout(() => {
-      if (!info && !infoLoadingRef.current) {
-        infoLoadingRef.current = true
-        api.getMangaInfo(manga.id)
-          .then((i) => {
-            infoCache[manga.id] = i
-            setInfo(i)
-          })
-          .catch(() => { })
-      }
-    }, 480)
+    timerRef.current = setTimeout(loadInfo, 480)
   }
 
   const onLeave = () => {
@@ -78,7 +88,14 @@ function MangaCard({ manga, onClick, isNew, isUpdating }) {
             <span>Mise à jour</span>
           </div>
         )}
-        {/* Overlay on hover with genres + synopsis */}
+        <button className={`manga-card-fav ${favorite ? 'on' : ''}`}
+          onClick={(e) => { e.stopPropagation(); onToggleFav?.() }}
+          title={favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill={favorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+        </button>
+        {/* Overlay with genres + synopsis (survol desktop, permanent mobile) */}
         <div className="manga-card-overlay-info">
           {genres.length > 0 && (
             <div className="card-genres">
@@ -87,10 +104,16 @@ function MangaCard({ manga, onClick, isNew, isUpdating }) {
           )}
           {synopsis && <p className="card-synopsis">{synopsis}</p>}
         </div>
+        {percent > 0 && (
+          <div className="manga-card-pbar"><div style={{ width: `${percent}%` }} /></div>
+        )}
       </div>
       <div className="manga-card-info">
         <div className="manga-card-name">{manga.name}</div>
-        <div className="manga-card-cat">{manga.chapter_count} {unitShort} · {manga.category}</div>
+        <div className="manga-card-cat">
+          {manga.chapter_count} {unitShort} · {manga.category}
+          {percent > 0 && <span className="manga-card-cat-pct"> · {percent}%</span>}
+        </div>
       </div>
     </div>
   )
@@ -244,6 +267,9 @@ function HeroCarousel({ mangas }) {
 export default function Home() {
   const [mangas, setMangas] = useState([])
   const [continueItems, setContinueItems] = useState([])
+  const [favItems, setFavItems] = useState([])
+  const [favSet, setFavSet] = useState(new Set())
+  const [progressMap, setProgressMap] = useState({})
   const [loading, setLoading] = useState(true)
   const [newIds, setNewIds] = useState(new Set())
   const [filterOpen, setFilterOpen] = useState(false)
@@ -268,7 +294,26 @@ export default function Home() {
 
   useEffect(() => {
     api.continueReading().then((r) => setContinueItems(r.items || [])).catch(() => {})
+    api.listFavorites().then((r) => setFavItems(r.items || [])).catch(() => {})
+    api.userStates().then((s) => {
+      setFavSet(new Set(s.favorites || []))
+      setProgressMap(s.progress || {})
+    }).catch(() => {})
   }, [])
+
+  const toggleFav = useCallback(async (mangaId) => {
+    const on = !favSet.has(mangaId)
+    setFavSet((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(mangaId); else next.delete(mangaId)
+      return next
+    })
+    try {
+      await api.setFavorite(mangaId, on)
+      const r = await api.listFavorites()
+      setFavItems(r.items || [])
+    } catch { /* rollback silencieux au prochain refresh */ }
+  }, [favSet])
 
   useEffect(() => {
     api.listMangas().then((list) => {
@@ -414,7 +459,7 @@ export default function Home() {
           <div className="continue-row">
             {continueItems.map((it) => (
               <div key={`${it.id}-${it.chapter_number}`} className="continue-card"
-                onClick={() => navigate(`/manga/${it.id}/read/${it.chapter_number}`)}>
+                onClick={() => navigate(`/manga/${it.id}/read/${it.chapter_number}?p=${it.page ?? 0}`)}>
                 <div className="continue-thumb">
                   {it.cover_url
                     ? <img src={it.cover_url} alt={it.name} onError={(e) => { e.target.style.display = 'none' }} />
@@ -432,7 +477,32 @@ export default function Home() {
         </div>
       )}
 
-      <div style={{ padding: query ? '88px 4% 5rem' : '0 4% 5rem' }}>
+      {!query && favItems.length > 0 && (
+        <div className="continue-section">
+          <div className="continue-title">Mes favoris</div>
+          <div className="continue-row">
+            {favItems.map((it) => (
+              <div key={it.id} className="continue-card" onClick={() => navigate(`/manga/${it.id}`)}>
+                <div className="continue-thumb">
+                  {it.cover_url
+                    ? <img src={it.cover_url} alt={it.name} onError={(e) => { e.target.style.display = 'none' }} />
+                    : <div className="continue-ph">📖</div>}
+                  <div className="continue-fav-badge">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                    </svg>
+                  </div>
+                  {it.percent > 0 && <div className="continue-bar"><div style={{ width: `${it.percent}%` }} /></div>}
+                </div>
+                <div className="continue-name">{it.name}</div>
+                <div className="continue-sub">{it.category} · {it.percent}%</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className={`home-content ${query ? 'searching' : ''}`}>
         <div className="section">
           <div className="section-head">
             <div className="section-title">
@@ -481,6 +551,9 @@ export default function Home() {
                   manga={m}
                   isNew={newIds.has(m.id)}
                   isUpdating={hasActiveJobForManga(m)}
+                  favorite={favSet.has(m.id)}
+                  percent={progressMap[m.id] || 0}
+                  onToggleFav={() => toggleFav(m.id)}
                   onClick={() => navigate(`/manga/${m.id}`)}
                 />
               ))}
