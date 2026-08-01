@@ -18,6 +18,11 @@ export default function EpubReader() {
   // Préférence de navigation au scroll (molette/swipe) — désactivée par défaut, persistée
   const [scrollNav, setScrollNav] = useState(() => localStorage.getItem('reader_scrollnav') === '1')
   const [fullscreen, setFullscreen] = useState(false)
+  // Animation "page qui se tourne" (flip 3D) — togglable, persistée
+  const [pageFlip, setPageFlip] = useState(() => localStorage.getItem('reader_pageflip') === '1')
+  const pageFlipRef = useRef(pageFlip)
+  useEffect(() => { pageFlipRef.current = pageFlip }, [pageFlip])
+  const togglePageFlip = () => setPageFlip((v) => { localStorage.setItem('reader_pageflip', v ? '0' : '1'); return !v })
   // Zoom géré par l'app (pas le navigateur) : double-tap pour zoomer, glisser pour naviguer.
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -89,6 +94,20 @@ export default function EpubReader() {
 
   const slide = useCallback((dir) => {
     if (!imgRef.current) return
+    if (pageFlipRef.current) {
+      // Animation "page qui se tourne" : flip 3D autour du bord.
+      // Suivant (dir=1) → pivote depuis le bord droit ; précédent → depuis le bord gauche.
+      const originX = dir === 1 ? 'right' : 'left'
+      gsap.fromTo(imgRef.current,
+        { rotationY: dir === 1 ? -82 : 82, opacity: 0.35 },
+        {
+          rotationY: 0, opacity: 1, duration: .5, ease: 'power3.out',
+          transformOrigin: `${originX} center`, transformPerspective: 900,
+          clearProps: 'transform',   // retire la transform après → image nette
+        }
+      )
+      return
+    }
     gsap.fromTo(imgRef.current,
       { opacity: 0, x: dir === 1 ? -20 : 20 },
       {
@@ -348,7 +367,7 @@ export default function EpubReader() {
 
       {/* Bottom bar */}
       <div className="reader-bottombar" style={{
-        flexShrink: 0, height: 44,
+        flexShrink: 0, height: 44, position: 'relative',
         display: fullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.5rem',
         background: 'rgba(0,0,0,.9)', borderTop: '1px solid rgba(255,255,255,.08)',
       }}>
@@ -363,6 +382,18 @@ export default function EpubReader() {
           style={{ color: current >= images.length - 1 ? 'rgba(255,255,255,.2)' : 'rgba(255,255,255,.7)',
             background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
             padding: '.3rem .7rem', cursor: 'pointer', fontSize: '1rem' }}>→</button>
+        {/* Toggle animation "page qui se tourne" — tout à droite */}
+        <button onClick={togglePageFlip}
+          title={pageFlip ? 'Animation page : ON' : 'Animation page : OFF'}
+          style={{ position: 'absolute', right: '.8rem', top: '50%', transform: 'translateY(-50%)',
+            color: pageFlip ? '#e50914' : 'rgba(255,255,255,.55)',
+            background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
+            padding: '.32rem .42rem', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+          </svg>
+        </button>
       </div>
     </div>
   )
