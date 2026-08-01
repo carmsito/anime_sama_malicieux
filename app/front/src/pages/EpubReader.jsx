@@ -53,6 +53,8 @@ export default function EpubReader() {
   const [origin, setOrigin] = useState({ x: 0, y: 0 })
   const zoomed = zoom > 1
   const imgRef = useRef()
+  const flipRef = useRef()    // conteneur qui pivote (page)
+  const shadeRef = useRef()   // ombre en dégradé qui balaie la page
   const num = Number(chapterNum)
   const lastTapRef = useRef({ t: 0, x: 0, y: 0 })
   const panStartRef = useRef(null)
@@ -61,6 +63,14 @@ export default function EpubReader() {
 
   // Réinitialise le zoom à chaque changement de page / chapitre
   useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }) }, [current, chapterNum])
+
+  // Précharge les planches voisines → la page qui se tourne s'anime sur une image déjà chargée
+  useEffect(() => {
+    if (!images.length) return
+    for (const i of [current + 1, current - 1, current + 2]) {
+      if (i >= 0 && i < images.length) { const im = new Image(); im.src = images[i] }
+    }
+  }, [current, images])
 
   const toggleZoomAt = (clientX, clientY) => {
     if (zoomed) { setZoom(1); setPan({ x: 0, y: 0 }); return }
@@ -124,15 +134,27 @@ export default function EpubReader() {
   useLayoutEffect(() => {
     const dir = animateRef.current
     animateRef.current = null
-    const el = imgRef.current
+    const el = flipRef.current
     if (dir == null || !el) return
     if (pageFlipRef.current) {
-      // Page qui se tourne : flip 3D souple. Suivant → pivot bord gauche, précédent → bord droit.
+      // Vraie page qui se tourne (façon turn.js / StPageFlip) :
+      // pivot autour de la reliure (proche 90°, sous perspective) + ombre en dégradé
+      // qui balaie la page et s'estompe quand elle se replie à plat.
       const originX = dir === 1 ? 'left' : 'right'
-      gsap.fromTo(el,
-        { rotationY: dir === 1 ? 42 : -42 },
-        { rotationY: 0, duration: .55, ease: 'power2.out',
-          transformOrigin: `${originX} center`, transformPerspective: 1600, clearProps: 'transform' })
+      const shade = shadeRef.current
+      if (shade) {
+        shade.style.background = dir === 1
+          ? 'linear-gradient(90deg, rgba(0,0,0,.55) 0%, rgba(0,0,0,.12) 35%, rgba(0,0,0,0) 60%)'
+          : 'linear-gradient(270deg, rgba(0,0,0,.55) 0%, rgba(0,0,0,.12) 35%, rgba(0,0,0,0) 60%)'
+      }
+      const tl = gsap.timeline()
+      tl.fromTo(el,
+        { rotationY: dir === 1 ? 96 : -96 },
+        { rotationY: 0, duration: .62, ease: 'power2.out',
+          transformOrigin: `${originX} center`, clearProps: 'transform' }, 0)
+      if (shade) {
+        tl.fromTo(shade, { opacity: .9 }, { opacity: 0, duration: .62, ease: 'power1.in' }, 0)
+      }
     } else {
       gsap.fromTo(el,
         { x: dir === 1 ? -20 : 20 },
@@ -336,6 +358,7 @@ export default function EpubReader() {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           touchAction: 'none',   // on gère nous-mêmes zoom/scroll (pas le navigateur)
           background: '#000',    // fond opaque → repaint propre en pannant (pas de traînée)
+          perspective: '2200px', // profondeur 3D pour la page qui se tourne
         }}
       >
         {!loaded && (
@@ -349,31 +372,34 @@ export default function EpubReader() {
         {loaded && images.length > 0 && (
           <>
             {!imgReady && <div className="spin" style={{ position: 'absolute' }} />}
-            <img
-              ref={imgRef}
-              key={images[current]}
-              src={images[current]}
-              alt={`Page ${current + 1}`}
-              onLoad={() => setImgReady(true)}
-              draggable={false}
-              style={{
-                maxHeight: '100%', maxWidth: '100%',
-                objectFit: 'contain', display: 'block',
-                opacity: imgReady ? 1 : 0,
-                userSelect: 'none', cursor: zoomed ? 'grab' : 'default',
-                ...(zoomed
-                  ? {
-                    // translate3d + will-change + backface → couche GPU propre (pas de traînée)
-                    transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
-                    transformOrigin: `${origin.x}px ${origin.y}px`,
-                    transition: 'none',
-                    willChange: 'transform',
-                    backfaceVisibility: 'hidden',
-                    WebkitBackfaceVisibility: 'hidden',
-                  }
-                  : { transition: 'opacity .12s' }),
-              }}
-            />
+            {/* Conteneur "page" qui pivote (flip) + ombre en dégradé par-dessus */}
+            <div ref={flipRef} className="reader-flip">
+              <img
+                ref={imgRef}
+                key={images[current]}
+                src={images[current]}
+                alt={`Page ${current + 1}`}
+                onLoad={() => setImgReady(true)}
+                draggable={false}
+                style={{
+                  maxHeight: '100%', maxWidth: '100%',
+                  objectFit: 'contain', display: 'block',
+                  opacity: imgReady ? 1 : 0,
+                  userSelect: 'none', cursor: zoomed ? 'grab' : 'default',
+                  backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
+                  ...(zoomed
+                    ? {
+                      // translate3d + will-change → couche GPU propre (pas de traînée)
+                      transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
+                      transformOrigin: `${origin.x}px ${origin.y}px`,
+                      transition: 'none',
+                      willChange: 'transform',
+                    }
+                    : { transition: 'opacity .12s' }),
+                }}
+              />
+              <div ref={shadeRef} className="reader-flip-shade" />
+            </div>
           </>
         )}
       </div>
