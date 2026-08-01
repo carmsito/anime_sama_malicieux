@@ -189,22 +189,25 @@ export default function EpubReader() {
       else lastTapRef.current = { t: now, x: t.clientX, y: t.clientY }
       return
     }
-    const x = t.clientX - r.left
-    if (x < r.width * 0.33) { goPrev(); return }     // tiers gauche → précédent
-    if (x > r.width * 0.67) { goNext(); return }     // tiers droit → suivant
-    // Tiers central : double-tap → zoome
-    if (isDouble) { lastTapRef.current = { t: 0, x: 0, y: 0 }; toggleZoomAt(t.clientX, t.clientY) }
-    else lastTapRef.current = { t: now, x: t.clientX, y: t.clientY }
+    // double-tap → zoome (n'importe où)
+    if (isDouble) { lastTapRef.current = { t: 0, x: 0, y: 0 }; toggleZoomAt(t.clientX, t.clientY); return }
+    lastTapRef.current = { t: now, x: t.clientX, y: t.clientY }
+    // Navigation par tap latéral — DÉSACTIVÉE quand le mode scroll est actif
+    if (!scrollNav) {
+      const x = t.clientX - r.left
+      if (x < r.width * 0.33) goPrev()          // tiers gauche → précédent
+      else if (x > r.width * 0.67) goNext()     // tiers droit → suivant
+    }
   }, [zoomed, scrollNav, goNext, goPrev, pan]) // eslint-disable-line
 
   // Souris (desktop) : clic latéral = page, double-clic = zoom
   const onAreaClick = useCallback((e) => {
-    if (IS_TOUCH || zoomed) return
+    if (IS_TOUCH || zoomed || scrollNav) return   // mode scroll actif → pas de nav au clic
     const r = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - r.left
     if (x < r.width * 0.33) goPrev()
     else if (x > r.width * 0.67) goNext()
-  }, [zoomed, goPrev, goNext])
+  }, [zoomed, scrollNav, goPrev, goNext])
   const onAreaDblClick = useCallback((e) => {
     if (IS_TOUCH) return
     toggleZoomAt(e.clientX, e.clientY)
