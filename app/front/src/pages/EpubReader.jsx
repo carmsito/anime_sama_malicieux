@@ -1,28 +1,46 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useContext } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { gsap } from 'gsap'
 import { api } from '../api/client'
+import { AuthCtx } from '../contexts'
 
 const IS_TOUCH = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches
 const ZOOM_LEVEL = 2.5
+const DEFAULT_SENS = 1        // sensibilité de déplacement en zoom par défaut (= vitesse actuelle)
 
 export default function EpubReader() {
   const { mangaId, chapterNum } = useParams()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
+  const { user } = useContext(AuthCtx)
+  // Préférences du lecteur stockées PAR UTILISATEUR (jamais global) → clés préfixées par l'id.
+  const uid = user?.id || 'anon'
+  const prefKey = (k) => `reader_${k}_${uid}`
   const [manga, setManga] = useState(null)
   const [images, setImages] = useState([])
   const [current, setCurrent] = useState(0)
   const [loaded, setLoaded] = useState(false)
   const [imgReady, setImgReady] = useState(false)
-  // Préférence de navigation au scroll (molette/swipe) — désactivée par défaut, persistée
-  const [scrollNav, setScrollNav] = useState(() => localStorage.getItem('reader_scrollnav') === '1')
+  // Préférences (par utilisateur) : chargées depuis localStorage selon l'uid (effet plus bas)
+  const [scrollNav, setScrollNav] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
-  // Animation "page qui se tourne" (flip 3D) — togglable, persistée
-  const [pageFlip, setPageFlip] = useState(() => localStorage.getItem('reader_pageflip') === '1')
+  const [pageFlip, setPageFlip] = useState(false)
+  const [panSens, setPanSens] = useState(DEFAULT_SENS)   // sensibilité déplacement en zoom
   const pageFlipRef = useRef(pageFlip)
+  const sensRef = useRef(panSens)
   useEffect(() => { pageFlipRef.current = pageFlip }, [pageFlip])
-  const togglePageFlip = () => setPageFlip((v) => { localStorage.setItem('reader_pageflip', v ? '0' : '1'); return !v })
+  useEffect(() => { sensRef.current = panSens }, [panSens])
+
+  // Charge les préférences de CET utilisateur (isolées des autres comptes)
+  useEffect(() => {
+    setScrollNav(localStorage.getItem(prefKey('scrollnav')) === '1')
+    setPageFlip(localStorage.getItem(prefKey('pageflip')) === '1')
+    const s = Number(localStorage.getItem(prefKey('pansens')))
+    setPanSens(s > 0 ? s : DEFAULT_SENS)
+  }, [uid]) // eslint-disable-line
+
+  const togglePageFlip = () => setPageFlip((v) => { localStorage.setItem(prefKey('pageflip'), v ? '0' : '1'); return !v })
+  const changeSens = (v) => { setPanSens(v); localStorage.setItem(prefKey('pansens'), String(v)) }
   // Zoom géré par l'app (pas le navigateur) : double-tap pour zoomer, glisser pour naviguer.
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -49,7 +67,7 @@ export default function EpubReader() {
   }
 
   const toggleScrollNav = () => {
-    setScrollNav((v) => { localStorage.setItem('reader_scrollnav', v ? '0' : '1'); return !v })
+    setScrollNav((v) => { localStorage.setItem(prefKey('scrollnav'), v ? '0' : '1'); return !v })
   }
   // Page forcée via l'URL (?p=N) : "Lire depuis le début" (p=0) ou reprise ciblée.
   // Si présent, on NE reprend PAS la page enregistrée.
@@ -92,32 +110,29 @@ export default function EpubReader() {
     return () => clearTimeout(t)
   }, [current, loaded, images.length, mangaId, num])
 
-  const slide = useCallback((dir) => {
-    if (!imgRef.current) return
+  // Direction de la prochaine transition (posée par goNext/goPrev), jouée APRÈS le montage
+  // de la nouvelle image (sinon l'anim s'exécute sur l'ancienne planche → invisible).
+  const animateRef = useRef(null)
+  const slide = useCallback((dir) => { animateRef.current = dir }, [])
+
+  useLayoutEffect(() => {
+    const dir = animateRef.current
+    animateRef.current = null
+    const el = imgRef.current
+    if (dir == null || !el) return
     if (pageFlipRef.current) {
-      // Animation "page qui se tourne" : flip 3D autour du bord.
-      // Suivant (dir=1) → pivote depuis le bord droit ; précédent → depuis le bord gauche.
+      // Page qui se tourne : flip 3D. Suivant → pivot bord droit, précédent → bord gauche.
       const originX = dir === 1 ? 'right' : 'left'
-      gsap.fromTo(imgRef.current,
-        { rotationY: dir === 1 ? -82 : 82, opacity: 0.35 },
-        {
-          rotationY: 0, opacity: 1, duration: .5, ease: 'power3.out',
-          transformOrigin: `${originX} center`, transformPerspective: 900,
-          clearProps: 'transform',   // retire la transform après → image nette
-        }
-      )
-      return
+      gsap.fromTo(el,
+        { rotationY: dir === 1 ? -82 : 82 },
+        { rotationY: 0, duration: .5, ease: 'power3.out',
+          transformOrigin: `${originX} center`, transformPerspective: 900, clearProps: 'transform' })
+    } else {
+      gsap.fromTo(el,
+        { x: dir === 1 ? -20 : 20 },
+        { x: 0, duration: .18, ease: 'power2.out', clearProps: 'transform' })
     }
-    gsap.fromTo(imgRef.current,
-      { opacity: 0, x: dir === 1 ? -20 : 20 },
-      {
-        opacity: 1, x: 0, duration: .18, ease: 'power2.out',
-        // Retire la transform après l'anim : évite que l'image reste sur une couche
-        // GPU rendue en 1x (flou sur les liseuses e-ink / écrans haute densité).
-        clearProps: 'transform',
-      }
-    )
-  }, [])
+  }, [current, chapterNum])
 
   // Chapitres triés → chapitre précédent / suivant (gère les numéros non consécutifs)
   const sortedNums = (manga?.chapters || []).map((c) => c.number).sort((a, b) => a - b)
@@ -178,7 +193,8 @@ export default function EpubReader() {
       const dx = t.clientX - panStartRef.current.tx
       const dy = t.clientY - panStartRef.current.ty
       if (Math.abs(dx) > 4 || Math.abs(dy) > 4) touchMovedRef.current = true
-      setPan({ x: panStartRef.current.px + dx, y: panStartRef.current.py + dy })
+      const s = sensRef.current   // sensibilité réglable (vitesse de déplacement en zoom)
+      setPan({ x: panStartRef.current.px + dx * s, y: panStartRef.current.py + dy * s })
     }
   }, [zoomed])
 
@@ -371,6 +387,18 @@ export default function EpubReader() {
         display: fullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.5rem',
         background: 'rgba(0,0,0,.9)', borderTop: '1px solid rgba(255,255,255,.08)',
       }}>
+        {/* Sensibilité du déplacement en zoom — tout à gauche */}
+        <div style={{ position: 'absolute', left: '.7rem', top: 22, transform: 'translateY(-50%)',
+          display: 'flex', alignItems: 'center', gap: '.35rem' }}
+          title={`Vitesse de déplacement en zoom : ×${panSens.toFixed(1)}`}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 20a8 8 0 1 0-8-8"/><path d="M12 12l4-2"/><path d="M4 12H2M12 4V2"/>
+          </svg>
+          <input type="range" min="0.5" max="3" step="0.1" value={panSens}
+            onChange={(e) => changeSens(Number(e.target.value))}
+            className="reader-sens-slider" />
+          <span style={{ color: 'rgba(255,255,255,.4)', fontSize: '.66rem', minWidth: 24 }}>×{panSens.toFixed(1)}</span>
+        </div>
         <button onClick={goPrev} disabled={current === 0}
           style={{ color: current === 0 ? 'rgba(255,255,255,.2)' : 'rgba(255,255,255,.7)',
             background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
@@ -385,7 +413,7 @@ export default function EpubReader() {
         {/* Toggle animation "page qui se tourne" — tout à droite */}
         <button onClick={togglePageFlip}
           title={pageFlip ? 'Animation page : ON' : 'Animation page : OFF'}
-          style={{ position: 'absolute', right: '.8rem', top: '50%', transform: 'translateY(-50%)',
+          style={{ position: 'absolute', right: '.8rem', top: 22, transform: 'translateY(-50%)',
             color: pageFlip ? '#e50914' : 'rgba(255,255,255,.55)',
             background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
             padding: '.32rem .42rem', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>

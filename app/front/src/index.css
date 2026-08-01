@@ -53,6 +53,22 @@ a { color: inherit; text-decoration: none; }
 }
 .reader-fs-exit:hover { opacity: 1; transform: scale(1.08); }
 
+/* Slider de sensibilité (déplacement en zoom) dans la barre du lecteur */
+.reader-sens-slider {
+  -webkit-appearance: none; appearance: none;
+  width: 62px; height: 4px; border-radius: 3px; padding: 0;
+  background: rgba(255,255,255,.2); outline: none; cursor: pointer;
+}
+.reader-sens-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: var(--accent); border: none; cursor: pointer;
+}
+.reader-sens-slider::-moz-range-thumb {
+  width: 13px; height: 13px; border-radius: 50%;
+  background: var(--accent); border: none; cursor: pointer;
+}
+
 .navbar {
   position: fixed; top: 0; left: 0; right: 0; z-index: 200;
   height: 68px;
