@@ -291,6 +291,7 @@ export default function EpubReader() {
           flex: 1, overflow: 'hidden', position: 'relative',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           touchAction: 'none',   // on gère nous-mêmes zoom/scroll (pas le navigateur)
+          background: '#000',    // fond opaque → repaint propre en pannant (pas de traînée)
         }}
       >
         {!loaded && (
@@ -318,9 +319,13 @@ export default function EpubReader() {
                 userSelect: 'none', cursor: zoomed ? 'grab' : 'default',
                 ...(zoomed
                   ? {
-                    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                    // translate3d + will-change + backface → couche GPU propre (pas de traînée)
+                    transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
                     transformOrigin: `${origin.x}px ${origin.y}px`,
                     transition: 'none',
+                    willChange: 'transform',
+                    backfaceVisibility: 'hidden',
+                    WebkitBackfaceVisibility: 'hidden',
                   }
                   : { transition: 'opacity .12s' }),
               }}
