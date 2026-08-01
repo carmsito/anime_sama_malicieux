@@ -41,7 +41,7 @@ export default function EpubReader() {
 
   const togglePageFlip = () => setPageFlip((v) => { localStorage.setItem(prefKey('pageflip'), v ? '0' : '1'); return !v })
   // Sensibilité : bouton qui cycle ×1 → ×1.5 → … → ×3 → ×1 (défaut ×1)
-  const SENS_STEPS = [1, 1.5, 2, 2.5, 3]
+  const SENS_STEPS = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5]
   const cycleSens = () => {
     const i = SENS_STEPS.findIndex((v) => Math.abs(v - panSens) < 0.001)
     const next = SENS_STEPS[(i + 1) % SENS_STEPS.length]
