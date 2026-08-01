@@ -3,6 +3,9 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { gsap } from 'gsap'
 import { api } from '../api/client'
 
+const IS_TOUCH = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches
+const ZOOM_LEVEL = 2.5
+
 export default function EpubReader() {
   const { mangaId, chapterNum } = useParams()
   const [searchParams] = useSearchParams()
@@ -15,8 +18,30 @@ export default function EpubReader() {
   // Préférence de navigation au scroll (molette/swipe) — désactivée par défaut, persistée
   const [scrollNav, setScrollNav] = useState(() => localStorage.getItem('reader_scrollnav') === '1')
   const [fullscreen, setFullscreen] = useState(false)
+  // Zoom géré par l'app (pas le navigateur) : double-tap pour zoomer, glisser pour naviguer.
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [origin, setOrigin] = useState({ x: 0, y: 0 })
+  const zoomed = zoom > 1
   const imgRef = useRef()
   const num = Number(chapterNum)
+  const lastTapRef = useRef({ t: 0, x: 0, y: 0 })
+  const panStartRef = useRef(null)
+  const touchStartRef = useRef({ x: 0, y: 0 })
+  const touchMovedRef = useRef(false)
+
+  // Réinitialise le zoom à chaque changement de page / chapitre
+  useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }) }, [current, chapterNum])
+
+  const toggleZoomAt = (clientX, clientY) => {
+    if (zoomed) { setZoom(1); setPan({ x: 0, y: 0 }); return }
+    const img = imgRef.current
+    if (!img) return
+    const r = img.getBoundingClientRect()
+    setOrigin({ x: clientX - r.left, y: clientY - r.top })
+    setPan({ x: 0, y: 0 })
+    setZoom(ZOOM_LEVEL)
+  }
 
   const toggleScrollNav = () => {
     setScrollNav((v) => { localStorage.setItem('reader_scrollnav', v ? '0' : '1'); return !v })
@@ -66,7 +91,12 @@ export default function EpubReader() {
     if (!imgRef.current) return
     gsap.fromTo(imgRef.current,
       { opacity: 0, x: dir === 1 ? -20 : 20 },
-      { opacity: 1, x: 0, duration: .18, ease: 'power2.out' }
+      {
+        opacity: 1, x: 0, duration: .18, ease: 'power2.out',
+        // Retire la transform après l'anim : évite que l'image reste sur une couche
+        // GPU rendue en 1x (flou sur les liseuses e-ink / écrans haute densité).
+        clearProps: 'transform',
+      }
     )
   }, [])
 
@@ -88,37 +118,97 @@ export default function EpubReader() {
   }, [current, slide, prevChapNum, mangaId, navigate])
 
   useEffect(() => {
+    // Liseuses (Boox, etc.) : les boutons latéraux envoient des touches clavier
+    // (PageDown/PageUp, Volume Bas/Haut, flèches, Espace). Bas = suivant, Haut = précédent.
+    // Toujours actif (indépendant du toggle scroll molette).
+    const NEXT = new Set(['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Spacebar', 'AudioVolumeDown'])
+    const PREV = new Set(['ArrowLeft', 'ArrowUp', 'PageUp', 'AudioVolumeUp'])
+    const NEXT_CODES = new Set([34, 32, 174])  // PageDown, Space, VolumeDown
+    const PREV_CODES = new Set([33, 175])      // PageUp, VolumeUp
     const k = (e) => {
-      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goNext()
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') goPrev()
-      if (e.key === 'Escape') navigate(`/manga/${mangaId}`)
+      if (NEXT.has(e.key) || NEXT_CODES.has(e.keyCode)) { e.preventDefault(); goNext() }
+      else if (PREV.has(e.key) || PREV_CODES.has(e.keyCode)) { e.preventDefault(); goPrev() }
+      else if (e.key === 'Escape') navigate(`/manga/${mangaId}`)
     }
     window.addEventListener('keydown', k)
     return () => window.removeEventListener('keydown', k)
   }, [goNext, goPrev, navigate, mangaId])
 
-  // Navigation au scroll (comme une liseuse) : bas = page suivante, haut = précédente.
-  // Activée seulement si l'utilisateur a coché le mode (scrollNav).
+  // Navigation à la molette (liseuse/PC) : bas = suivant, haut = précédent. Sous toggle.
   const wheelLock = useRef(0)
   const onWheel = useCallback((e) => {
-    if (!scrollNav) return
+    if (!scrollNav || zoomed) return
     const now = Date.now()
     if (now - wheelLock.current < 350) return       // 1 cran = 1 page
     if (Math.abs(e.deltaY) < 12) return
     wheelLock.current = now
     if (e.deltaY > 0) goNext(); else goPrev()
-  }, [scrollNav, goNext, goPrev])
+  }, [scrollNav, zoomed, goNext, goPrev])
 
-  // Swipe vertical tactile (mobile) : glisser vers le haut = page suivante.
-  const touchStartY = useRef(null)
-  const onTouchStart = useCallback((e) => { touchStartY.current = e.touches[0].clientY }, [])
+  // ── Gestes tactiles : tap latéral = page, double-tap = zoom, glisser = pan/swipe ──
+  const onTouchStart = useCallback((e) => {
+    const t = e.touches[0]
+    touchStartRef.current = { x: t.clientX, y: t.clientY }
+    touchMovedRef.current = false
+    if (zoomed) panStartRef.current = { px: pan.x, py: pan.y, tx: t.clientX, ty: t.clientY }
+  }, [zoomed, pan])
+
+  const onTouchMove = useCallback((e) => {
+    if (zoomed && panStartRef.current) {
+      const t = e.touches[0]
+      const dx = t.clientX - panStartRef.current.tx
+      const dy = t.clientY - panStartRef.current.ty
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) touchMovedRef.current = true
+      setPan({ x: panStartRef.current.px + dx, y: panStartRef.current.py + dy })
+    }
+  }, [zoomed])
+
   const onTouchEnd = useCallback((e) => {
-    if (!scrollNav || touchStartY.current == null) return
-    const dy = e.changedTouches[0].clientY - touchStartY.current
-    touchStartY.current = null
-    if (Math.abs(dy) < 45) return                   // ignore les petits mouvements
-    if (dy < 0) goNext(); else goPrev()             // doigt vers le haut → page suivante
-  }, [scrollNav, goNext, goPrev])
+    const t = e.changedTouches[0]
+    const now = Date.now()
+    // Fin d'un glissement pour paner (zoomé) → ne pas interpréter comme un tap
+    if (zoomed && touchMovedRef.current) { panStartRef.current = null; return }
+    const dx = t.clientX - touchStartRef.current.x
+    const dy = t.clientY - touchStartRef.current.y
+    const moved = Math.abs(dx) > 12 || Math.abs(dy) > 12
+    const r = e.currentTarget.getBoundingClientRect()
+
+    // Swipe vertical (mode molette/scroll activé, non zoomé)
+    if (!zoomed && scrollNav && Math.abs(dy) >= 45 && Math.abs(dy) > Math.abs(dx)) {
+      if (dy < 0) goNext(); else goPrev()
+      return
+    }
+    if (moved) return  // glissement non géré → rien
+
+    // ── C'est un TAP ──
+    const last = lastTapRef.current
+    const isDouble = (now - last.t < 300) && Math.abs(t.clientX - last.x) < 45 && Math.abs(t.clientY - last.y) < 45
+    if (zoomed) {
+      // double-tap n'importe où → dézoome
+      if (isDouble) { lastTapRef.current = { t: 0, x: 0, y: 0 }; setZoom(1); setPan({ x: 0, y: 0 }) }
+      else lastTapRef.current = { t: now, x: t.clientX, y: t.clientY }
+      return
+    }
+    const x = t.clientX - r.left
+    if (x < r.width * 0.33) { goPrev(); return }     // tiers gauche → précédent
+    if (x > r.width * 0.67) { goNext(); return }     // tiers droit → suivant
+    // Tiers central : double-tap → zoome
+    if (isDouble) { lastTapRef.current = { t: 0, x: 0, y: 0 }; toggleZoomAt(t.clientX, t.clientY) }
+    else lastTapRef.current = { t: now, x: t.clientX, y: t.clientY }
+  }, [zoomed, scrollNav, goNext, goPrev, pan]) // eslint-disable-line
+
+  // Souris (desktop) : clic latéral = page, double-clic = zoom
+  const onAreaClick = useCallback((e) => {
+    if (IS_TOUCH || zoomed) return
+    const r = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - r.left
+    if (x < r.width * 0.33) goPrev()
+    else if (x > r.width * 0.67) goNext()
+  }, [zoomed, goPrev, goNext])
+  const onAreaDblClick = useCallback((e) => {
+    if (IS_TOUCH) return
+    toggleZoomAt(e.clientX, e.clientY)
+  }, [zoomed]) // eslint-disable-line
 
   const prevChap = prevChapNum != null ? { number: prevChapNum } : null
   const nextChap = nextChapNum != null ? { number: nextChapNum } : null
@@ -193,8 +283,15 @@ export default function EpubReader() {
       <div
         onWheel={onWheel}
         onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
-        style={{ flex: 1, overflow: 'hidden', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onClick={onAreaClick}
+        onDoubleClick={onAreaDblClick}
+        style={{
+          flex: 1, overflow: 'hidden', position: 'relative',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          touchAction: 'none',   // on gère nous-mêmes zoom/scroll (pas le navigateur)
+        }}
       >
         {!loaded && (
           <div style={{ color: 'rgba(255,255,255,.3)', fontSize: '.88rem', display: 'flex', gap: '.5rem', alignItems: 'center' }}>
@@ -206,9 +303,6 @@ export default function EpubReader() {
         )}
         {loaded && images.length > 0 && (
           <>
-            {/* Click zones */}
-            <div onClick={goPrev} style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '30%', cursor: 'pointer', zIndex: 10 }} />
-            <div onClick={goNext} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '30%', cursor: 'pointer', zIndex: 10 }} />
             {!imgReady && <div className="spin" style={{ position: 'absolute' }} />}
             <img
               ref={imgRef}
@@ -216,11 +310,19 @@ export default function EpubReader() {
               src={images[current]}
               alt={`Page ${current + 1}`}
               onLoad={() => setImgReady(true)}
+              draggable={false}
               style={{
                 maxHeight: '100%', maxWidth: '100%',
                 objectFit: 'contain', display: 'block',
-                opacity: imgReady ? 1 : 0, transition: 'opacity .12s',
-                userSelect: 'none',
+                opacity: imgReady ? 1 : 0,
+                userSelect: 'none', cursor: zoomed ? 'grab' : 'default',
+                ...(zoomed
+                  ? {
+                    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                    transformOrigin: `${origin.x}px ${origin.y}px`,
+                    transition: 'none',
+                  }
+                  : { transition: 'opacity .12s' }),
               }}
             />
           </>

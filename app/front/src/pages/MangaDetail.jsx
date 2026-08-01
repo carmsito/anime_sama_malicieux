@@ -11,6 +11,23 @@ const PlayIcon = ({ size = 15 }) => (
   </svg>
 )
 
+const DlIcon = ({ size = 15 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <polyline points="7 10 12 15 17 10" />
+    <line x1="12" y1="15" x2="12" y2="3" />
+  </svg>
+)
+
+const TrashIcon = ({ size = 15 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="3 6 5 6 21 6" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6M14 11v6" />
+    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+  </svg>
+)
+
 function ChapterCard({ manga, ch, onRead, onRestart, isLoading, isSelected, onToggleSelect, selectionMode, progress = 0 }) {
   const [ok, setOk] = useState(true)
   const label = ch.title || `Chapitre ${ch.number}`
@@ -554,14 +571,18 @@ export default function MangaDetail() {
 
                 {selAction === 'download' && selectedChaps.size > 0 && (
                   <button className="btn btn-primary btn-sm" onClick={onDownloadSelected} disabled={downloading}>
-                    {downloading ? '⬇ Téléchargement...' : `⬇ Télécharger ${selectedChaps.size}`}
+                    {downloading
+                      ? <><span className="spin" style={{ width: 13, height: 13 }} /> Téléchargement…</>
+                      : <><DlIcon /> Télécharger {selectedChaps.size}</>}
                   </button>
                 )}
                 {selAction === 'delete' && (
                   <>
                     {selectedChaps.size > 0 && (
                       <button className="btn btn-danger btn-sm" onClick={onDeleteSelected} disabled={deleting}>
-                        {deleting ? '🗑 Suppression...' : `🗑 Supprimer ${selectedChaps.size}`}
+                        {deleting
+                          ? <><span className="spin" style={{ width: 13, height: 13 }} /> Suppression…</>
+                          : <><TrashIcon /> Supprimer {selectedChaps.size}</>}
                       </button>
                     )}
                     <button className="btn btn-danger-ghost btn-sm" onClick={onDeleteManga} disabled={deleting}>
