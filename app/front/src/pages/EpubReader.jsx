@@ -40,7 +40,13 @@ export default function EpubReader() {
   }, [uid]) // eslint-disable-line
 
   const togglePageFlip = () => setPageFlip((v) => { localStorage.setItem(prefKey('pageflip'), v ? '0' : '1'); return !v })
-  const changeSens = (v) => { setPanSens(v); localStorage.setItem(prefKey('pansens'), String(v)) }
+  // Sensibilité : bouton qui cycle ×1 → ×1.5 → … → ×3 → ×1 (défaut ×1)
+  const SENS_STEPS = [1, 1.5, 2, 2.5, 3]
+  const cycleSens = () => {
+    const i = SENS_STEPS.findIndex((v) => Math.abs(v - panSens) < 0.001)
+    const next = SENS_STEPS[(i + 1) % SENS_STEPS.length]
+    setPanSens(next); localStorage.setItem(prefKey('pansens'), String(next))
+  }
   // Zoom géré par l'app (pas le navigateur) : double-tap pour zoomer, glisser pour naviguer.
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -121,12 +127,12 @@ export default function EpubReader() {
     const el = imgRef.current
     if (dir == null || !el) return
     if (pageFlipRef.current) {
-      // Page qui se tourne : flip 3D. Suivant → pivot bord droit, précédent → bord gauche.
-      const originX = dir === 1 ? 'right' : 'left'
+      // Page qui se tourne : flip 3D souple. Suivant → pivot bord gauche, précédent → bord droit.
+      const originX = dir === 1 ? 'left' : 'right'
       gsap.fromTo(el,
-        { rotationY: dir === 1 ? -82 : 82 },
-        { rotationY: 0, duration: .5, ease: 'power3.out',
-          transformOrigin: `${originX} center`, transformPerspective: 900, clearProps: 'transform' })
+        { rotationY: dir === 1 ? 42 : -42 },
+        { rotationY: 0, duration: .55, ease: 'power2.out',
+          transformOrigin: `${originX} center`, transformPerspective: 1600, clearProps: 'transform' })
     } else {
       gsap.fromTo(el,
         { x: dir === 1 ? -20 : 20 },
@@ -387,18 +393,19 @@ export default function EpubReader() {
         display: fullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.5rem',
         background: 'rgba(0,0,0,.9)', borderTop: '1px solid rgba(255,255,255,.08)',
       }}>
-        {/* Sensibilité du déplacement en zoom — tout à gauche */}
-        <div style={{ position: 'absolute', left: '.7rem', top: 22, transform: 'translateY(-50%)',
-          display: 'flex', alignItems: 'center', gap: '.35rem' }}
-          title={`Vitesse de déplacement en zoom : ×${panSens.toFixed(1)}`}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 20a8 8 0 1 0-8-8"/><path d="M12 12l4-2"/><path d="M4 12H2M12 4V2"/>
+        {/* Sensibilité du déplacement en zoom — bouton qui cycle ×1 → ×3 (tout à gauche) */}
+        <button onClick={cycleSens}
+          title={`Vitesse de déplacement en zoom : ×${panSens} (cliquer pour changer)`}
+          style={{ position: 'absolute', left: '.8rem', top: 22, transform: 'translateY(-50%)',
+            display: 'flex', alignItems: 'center', gap: '.3rem',
+            color: panSens > 1 ? '#e50914' : 'rgba(255,255,255,.6)',
+            background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
+            padding: '.28rem .5rem', cursor: 'pointer', fontSize: '.74rem', fontWeight: 700 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 20a8 8 0 1 0-8-8"/><path d="M12 12l4-2"/>
           </svg>
-          <input type="range" min="0.5" max="3" step="0.1" value={panSens}
-            onChange={(e) => changeSens(Number(e.target.value))}
-            className="reader-sens-slider" />
-          <span style={{ color: 'rgba(255,255,255,.4)', fontSize: '.66rem', minWidth: 24 }}>×{panSens.toFixed(1)}</span>
-        </div>
+          ×{panSens}
+        </button>
         <button onClick={goPrev} disabled={current === 0}
           style={{ color: current === 0 ? 'rgba(255,255,255,.2)' : 'rgba(255,255,255,.7)',
             background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
