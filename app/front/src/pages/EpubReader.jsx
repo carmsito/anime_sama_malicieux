@@ -336,8 +336,9 @@ export default function EpubReader() {
     if (zoomed) return
     const r = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - r.left
-    if (fitWidth) {   // mode défilement : tap latéral change de page (souris + tactile)
-      if (x < r.width * 0.30) goPrev()
+    if (fitWidth) {   // mode défilement
+      if (scrollNav) return   // molette active → nav par scroll/swipe uniquement (pas de doublon)
+      if (x < r.width * 0.30) goPrev()          // sinon : tap latéral change de page (souris + tactile)
       else if (x > r.width * 0.70) goNext()
       return
     }
