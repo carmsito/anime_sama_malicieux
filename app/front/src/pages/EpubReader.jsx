@@ -9,8 +9,8 @@ const ZOOM_LEVEL = 2.5
 const DEFAULT_SENS = 1        // sensibilité de déplacement en zoom par défaut (= vitesse actuelle)
 // Auto-scroll (mode fit-largeur) : px/s par niveau — commence TRÈS lent
 const AUTO_SPEEDS = [8, 16, 28, 46, 72, 110]
-// Niveaux de zoom (double-tap) ajustables — 100% = pas de zoom (défaut)
-const ZOOM_PERCENTS = [100, 150, 200, 250, 300, 400]
+// Mise à l'échelle (mode fit-largeur) — 100% = max (ajusté largeur), on réduit pour adapter
+const ZOOM_PERCENTS = [100, 90, 80, 70, 60, 50]
 
 export default function EpubReader() {
   const { mangaId, chapterNum } = useParams()
@@ -674,7 +674,7 @@ export default function EpubReader() {
               {/* Mise à l'échelle : taille de la planche en mode fit-largeur */}
               <button onClick={cycleZoom} title={`Taille de la planche : ${zoomPct}%`}
                 style={{ display: 'flex', alignItems: 'center', gap: '.25rem',
-                  color: zoomPct > 100 ? '#e50914' : 'rgba(255,255,255,.6)',
+                  color: zoomPct < 100 ? '#e50914' : 'rgba(255,255,255,.6)',
                   background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
                   padding: '.28rem .5rem', cursor: 'pointer', fontSize: '.72rem', fontWeight: 700 }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
