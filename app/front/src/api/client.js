@@ -29,6 +29,12 @@ export const api = {
     req('/auth/register', { method: 'POST', body: JSON.stringify({ username, password }) }),
   me: () => req('/auth/me'),
 
+  // Scénarios de maintenance (admin)
+  getScenarios: () => req('/admin/scenarios', { cache: 'no-store' }),
+  setVerification: (enabled, unit, count) =>
+    req('/admin/scenarios/verification', { method: 'PUT', body: JSON.stringify({ enabled, unit, count }) }),
+  runVerification: () => req('/admin/scenarios/verification/run', { method: 'POST' }),
+
   // Users (admin)
   listUsers: () => req('/auth/users'),
   createUser: (username, password, role) =>

@@ -169,6 +169,28 @@ class TelegramMTProto:
             return False
         return True
 
+    def get_sizes(self, msg_ids: list) -> dict:
+        """Tailles Telegram (métadonnées, SANS téléchargement) pour vérifier l'intégrité.
+        Batché : get_messages accepte une liste → 1-2 appels seulement."""
+        channel = _channel()
+
+        async def _do():
+            out = {}
+            ids = [int(i) for i in msg_ids if i is not None]
+            for i in range(0, len(ids), 100):   # get_messages : max ~100 ids par appel
+                batch = ids[i:i + 100]
+                msgs = await self._client.get_messages(channel, ids=batch)
+                for m in (msgs or []):
+                    if m is None:
+                        continue
+                    try:
+                        out[int(m.id)] = m.file.size
+                    except Exception:
+                        out[int(m.id)] = None
+            return out
+
+        return self._submit(_do())
+
     def delete(self, msg_id: int) -> None:
         channel = _channel()
 

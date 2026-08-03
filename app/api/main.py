@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pathlib import Path
 
-from .routers import auth, mangas, search, extract, jobs
+from .routers import auth, mangas, search, extract, jobs, admin
 from .services.scraper import warm_base_url
 from .services import job_queue, db
 
@@ -19,6 +19,8 @@ async def lifespan(app: FastAPI):
     ensure_admin()     # migration rôles : garantit un admin
     loop.run_in_executor(None, warm_base_url)  # non-blocking warm-up
     job_queue.start()  # démarre le pool de workers
+    from .services import scenarios
+    scenarios.start_scheduler()   # scénarios de maintenance programmés
     yield
 
 
@@ -47,6 +49,7 @@ app.include_router(mangas.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
 app.include_router(extract.router, prefix="/api")
 app.include_router(jobs.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")
 
 # Healthcheck (déploiement / CI-CD) — léger, sans auth, ne touche à rien.
 @app.get("/api/health", tags=["ops"])
