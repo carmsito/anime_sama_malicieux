@@ -30,8 +30,21 @@ const TrashIcon = ({ size = 15 }) => (
 
 function ChapterCard({ manga, ch, onRead, onRestart, isLoading, isSelected, onToggleSelect, selectionMode, progress = 0 }) {
   const [ok, setOk] = useState(true)
+  const [coverTry, setCoverTry] = useState(0)
+  const coverRetries = useRef(0)
   const label = ch.title || `Chapitre ${ch.number}`
   const done = progress >= 100
+
+  // Cover pas encore prête (EPUB en cours d'upload/download sur Telegram) → on réessaie
+  // au lieu d'afficher le placeholder pour toujours (fini le refresh manuel).
+  const onCoverError = () => {
+    if (coverRetries.current < 15) {
+      coverRetries.current += 1
+      setTimeout(() => setCoverTry((t) => t + 1), 3000)
+    } else {
+      setOk(false)
+    }
+  }
 
   return (
     <div className={`chapter-card ${done ? 'done' : ''}`} style={{ position: 'relative' }}>
@@ -52,7 +65,7 @@ function ChapterCard({ manga, ch, onRead, onRestart, isLoading, isSelected, onTo
             <div className="spin" style={{ width: 28, height: 28 }} />
           </div>
         ) : ok ? (
-          <img src={`/api/mangas/${manga.id}/chapters/${ch.number}/cover`} alt={label} onError={() => setOk(false)} />
+          <img src={`/api/mangas/${manga.id}/chapters/${ch.number}/cover?r=${coverTry}`} alt={label} onError={onCoverError} />
         ) : (
           <div className="chapter-card-ph">📄</div>
         )}
@@ -91,20 +104,19 @@ function ChapterCard({ manga, ch, onRead, onRestart, isLoading, isSelected, onTo
   )
 }
 
-function PendingChapterCard({ label }) {
+function PendingChapterCard({ label, active }) {
   return (
-    <div className="chapter-card" style={{ position: 'relative' }}>
+    <div className={`chapter-card pending-card ${active ? 'active' : ''}`} style={{ position: 'relative' }}>
       <div className="chapter-card-img">
-        <div style={{
-          width: '100%', height: '100%',
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          gap: '.6rem',
-          background: 'linear-gradient(145deg, #1a1a1a, #222)',
-        }}>
-          <div className="spin" style={{ width: 28, height: 28 }} />
-          <div style={{ fontSize: '.74rem', color: 'rgba(255,255,255,.6)', fontWeight: 700 }}>
-            Téléchargement…
+        <div className="pending-inner">
+          <div className="pending-dl-icon">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
           </div>
+          <div className="pending-label">{active ? 'Téléchargement…' : 'En attente'}</div>
         </div>
       </div>
       <div className="chapter-card-foot">
@@ -621,7 +633,7 @@ export default function MangaDetail() {
             pendingLabels.length > 0 ? (
               <div className="chapter-gallery" ref={galleryRef}>
                 {pendingLabels.map((label, idx) => (
-                  <PendingChapterCard key={`pending-${idx}`} label={label} />
+                  <PendingChapterCard key={`pending-${idx}`} label={label} active={idx === 0} />
                 ))}
               </div>
             ) : (
@@ -646,7 +658,7 @@ export default function MangaDetail() {
                 />
               ))}
               {pendingLabels.map((label, idx) => (
-                <PendingChapterCard key={`pending-${idx}`} label={label} />
+                <PendingChapterCard key={`pending-${idx}`} label={label} active={idx === 0} />
               ))}
             </div>
           )}

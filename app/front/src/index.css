@@ -662,6 +662,24 @@ button { cursor: pointer; font: inherit; border: none; background: none; }
   filter: drop-shadow(0 2px 5px rgba(0,0,0,.9));
 }
 .chapter-card-restart:hover { color: var(--accent); transform: translate(-50%, -50%) scale(1.18); }
+
+/* Carte en cours de téléchargement (job d'extraction) */
+.pending-inner {
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .55rem;
+  background: linear-gradient(145deg, #1a1a1a, #222);
+}
+.pending-dl-icon { color: rgba(255,255,255,.4); display: flex; }
+.pending-label { font-size: .74rem; color: rgba(255,255,255,.5); font-weight: 700; }
+.pending-card.active .pending-inner { background: linear-gradient(145deg, #2a0d10, #171717); }
+.pending-card.active .pending-dl-icon { color: #e50914; animation: dlBounce 1.1s ease-in-out infinite; }
+.pending-card.active .pending-label { color: #ff6b6b; }
+.pending-card.active { animation: dlPulse 1.7s ease-in-out infinite; }
+@keyframes dlBounce { 0%,100% { transform: translateY(-4px); } 50% { transform: translateY(4px); } }
+@keyframes dlPulse {
+  0%,100% { box-shadow: 0 0 0 1px rgba(229,9,20,.3); }
+  50% { box-shadow: 0 0 16px rgba(229,9,20,.55); }
+}
 .chapter-card-del {
   position: absolute; top: .45rem; left: .45rem;
   background: rgba(0,0,0,.65); color: var(--text2); cursor: pointer;

@@ -53,9 +53,33 @@ class TelegramStorage:
         self.enabled = bool(TELEGRAM_API_ID and TELEGRAM_API_HASH and TELEGRAM_CHANNEL)
 
     def store_epub(self, manga_id: str, chapter_number: float, kind: str, epub_path: Path) -> dict:
+        import zipfile
         from .telegram_client import get_client
         size = epub_path.stat().st_size if epub_path.exists() else None
+
+        # ── Garde-fou 1 : l'EPUB local est-il un ZIP COMPLET ? ──
+        # (un EPUB tronqué à la création n'a pas de central directory → illisible plus tard,
+        #  d'où les volumes "sans cover" impossibles à ouvrir). On refuse d'uploader ça.
+        try:
+            with zipfile.ZipFile(str(epub_path)) as zf:
+                bad = zf.testzip()  # None si tout est OK
+            if bad is not None:
+                raise ValueError(f"entrée corrompue: {bad}")
+        except Exception as e:
+            raise RuntimeError(f"EPUB invalide/tronqué avant upload ({epub_path.name}): {e}")
+
         res = get_client().send_file(str(epub_path), caption=f"{manga_id} | {kind} {chapter_number}")
+
+        # ── Garde-fou 2 : la taille uploadée correspond-elle au fichier local ? ──
+        up = res.get("uploaded_size")
+        if size and up is not None and up != size:
+            # upload tronqué → on supprime le message bancal et on lève (le job réessaiera)
+            try:
+                get_client().delete(res["msg_id"])
+            except Exception:
+                pass
+            raise RuntimeError(f"Upload tronqué {epub_path.name}: {up} != {size} (local)")
+
         db.put_file(
             manga_id, chapter_number, kind,
             file_id=res["file_id"], msg_id=res["msg_id"], size=size, filename=epub_path.name,

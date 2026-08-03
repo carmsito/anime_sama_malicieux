@@ -95,7 +95,8 @@ class TelegramMTProto:
             )
             doc = getattr(msg, "document", None)
             file_id = str(getattr(doc, "id", "") or msg.id)
-            return {"msg_id": msg.id, "file_id": file_id}
+            up_size = getattr(doc, "size", None)
+            return {"msg_id": msg.id, "file_id": file_id, "uploaded_size": up_size}
 
         return self._submit(_do())
 
