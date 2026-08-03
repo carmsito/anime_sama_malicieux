@@ -23,6 +23,33 @@ from ..config import (
 )
 
 
+def _valid_eocd(tail: bytes, file_size: int) -> bool:
+    """Valide l'EOCD (fin de ZIP) dans le dernier bloc `tail` d'un fichier de `file_size`.
+    Comme le fait zipfile : trouve la signature, puis vérifie que le central directory tient
+    avant l'EOCD et que le commentaire consomme exactement la fin → rejette les fausses
+    signatures (données JPEG) et les fichiers tronqués."""
+    import struct
+    sig = b"PK\x05\x06"
+    if len(tail) < 22:
+        return False
+    end = len(tail)
+    while True:
+        i = tail.rfind(sig, 0, end)
+        if i < 0:
+            return False
+        if i + 22 <= len(tail):
+            try:
+                cd_size, cd_offset = struct.unpack("<II", tail[i + 12:i + 20])
+                comment_len = struct.unpack("<H", tail[i + 20:i + 22])[0]
+            except struct.error:
+                cd_size = cd_offset = comment_len = 1 << 62
+            eocd_file_pos = file_size - (len(tail) - i)
+            if (cd_offset + cd_size <= eocd_file_pos
+                    and i + 22 + comment_len == len(tail)):
+                return True
+        end = i   # cherche une occurrence antérieure (rfind sur [0, end) → strictement avant)
+
+
 def _channel():
     """Un id numérique doit être passé en int à Telethon (une chaîne = @username)."""
     ch = TELEGRAM_CHANNEL
@@ -191,10 +218,12 @@ class TelegramMTProto:
 
         return self._submit(_do())
 
-    def check_integrity(self, msg_ids: list) -> dict:
-        """Vrai test d'intégrité ZIP : télécharge SEULEMENT la fin de chaque EPUB (256 Ko)
-        et cherche la signature de fin de ZIP (EOCD 'PK\\x05\\x06'). Absente = tronqué/cassé.
-        Retourne {msg_id: True(sain) | False(cassé) | None(inconnu)}. ~256 Ko/fichier."""
+    def check_integrity(self, msg_ids: list, on_progress=None) -> dict:
+        """Vrai test d'intégrité ZIP : télécharge le dernier bloc de chaque EPUB et VALIDE
+        structurellement l'EOCD (signature + central directory qui tient dans le fichier +
+        commentaire cohérent). Détecte les troncatures ET évite les fausses signatures
+        présentes par hasard dans les données JPEG.
+        Retourne {msg_id: True(sain) | False(cassé) | None(inconnu)}."""
         channel = _channel()
 
         async def _do():
@@ -206,23 +235,33 @@ class TelegramMTProto:
                 for m in (await self._client.get_messages(channel, ids=ids[i:i + 100]) or []):
                     if m is not None:
                         msgs[int(m.id)] = m
-            PART = 256 * 1024
             out = {}
+            done = 0
             for mid in ids:
                 m = msgs.get(mid)
                 if m is None:
                     out[mid] = False   # message disparu → cassé
-                    continue
-                try:
-                    size = m.file.size
-                    _dc, loc = utils.get_input_location(m.media)
-                    off = ((size - 1) // PART) * PART if size > PART else 0
-                    res = await self._client(GetFileRequest(loc, offset=off, limit=PART))
-                    tail = getattr(res, "bytes", b"") or b""
-                    out[mid] = (b"PK\x05\x06" in tail)
-                except Exception as e:
-                    print(f"[integrity] msg {mid}: {e}", flush=True)
-                    out[mid] = None   # erreur → on ne flag pas à tort
+                else:
+                    try:
+                        size = m.file.size
+                        _dc, loc = utils.get_input_location(m.media)
+                        # dernier bloc ≤ 1 Mo, aligné 1 Mo (ne croise pas de frontière) → contient l'EOCD
+                        block_start = ((size - 1) // 1048576) * 1048576 if size else 0
+                        limit = size - block_start
+                        limit = ((limit + 4095) // 4096) * 4096  # multiple de 4096
+                        limit = min(limit, 1048576) or 4096
+                        res = await self._client(GetFileRequest(loc, offset=block_start, limit=limit))
+                        tail = getattr(res, "bytes", b"") or b""
+                        out[mid] = _valid_eocd(tail, size)
+                    except Exception as e:
+                        print(f"[integrity] msg {mid}: {e}", flush=True)
+                        out[mid] = None   # erreur → on ne flag pas à tort
+                done += 1
+                if on_progress:
+                    try:
+                        on_progress(done)
+                    except Exception:
+                        pass
             return out
 
         return self._submit(_do())

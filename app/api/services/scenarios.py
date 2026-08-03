@@ -90,6 +90,10 @@ def run_verification() -> dict:
     if is_running():
         return {"skipped": "déjà en cours"}
     db.kv_set(_KEY_RUNNING, "1")
+    from . import jobs as jobs_svc
+    job = jobs_svc.create_job(manga_name="Vérification d'intégrité", category="maintenance",
+                              start_chapter=0, end_chapter=0, source="maintenance")
+    jid = job["id"]
     try:
         conn = db._connect()
         try:
@@ -99,13 +103,18 @@ def run_verification() -> dict:
         finally:
             conn.close()
 
+        jobs_svc.update_job(jid, status="running", total=len(files))
         broken = []
         valid = {}
         try:
             from .telegram_client import get_client
-            valid = get_client().check_integrity([f["msg_id"] for f in files]) or {}
+            valid = get_client().check_integrity(
+                [f["msg_id"] for f in files],
+                on_progress=lambda n: jobs_svc.update_job(jid, progress=n),
+            ) or {}
         except Exception as e:
             print(f"[scenario] check_integrity: {e}", flush=True)
+            jobs_svc.update_job(jid, status="error", error=str(e))
 
         mangas = {m["id"]: m for m in library.list_mangas()}
         for f in files:
@@ -139,6 +148,8 @@ def run_verification() -> dict:
             "by_source": by_source,
         }
         db.kv_set(_KEY_RESULT, json.dumps(result))
+        jobs_svc.update_job(jid, status="done", progress=len(files),
+                            error=(f"{len(broken)} cassé(s)" if broken else None))
 
         conf = get_conf()
         conf["last_run"] = result["ts"]
