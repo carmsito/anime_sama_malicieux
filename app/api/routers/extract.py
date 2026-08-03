@@ -24,9 +24,24 @@ def repair(body: dict, user: dict = Depends(require_scraper)):
     source = meta.get("source", "anime-sama")
     name = m["name"]
     created = []
+    from ..services import storage
 
     for ch in chapters:
         chn = float(ch)
+        # kind du chapitre (pour supprimer proprement avant re-scrape)
+        rkind = "Chapitre"
+        for c in (m.get("chapters", []) or []):
+            if float(c.get("number", -1)) == chn:
+                rkind = c.get("kind") or meta.get("kind") or "Chapitre"
+                break
+        else:
+            rkind = meta.get("kind") or "Chapitre"
+        # 1) supprime l'ancien EPUB cassé (Telegram + DB + cache) — repart d'un état propre
+        try:
+            storage.delete_epub(manga_id, chn, rkind)
+        except Exception as e:
+            print(f"[repair] delete {chn}: {e}", flush=True)
+
         if source == "sushiscan":
             if not meta.get("manga_url"):
                 continue

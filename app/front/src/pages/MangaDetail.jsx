@@ -104,19 +104,28 @@ function ChapterCard({ manga, ch, onRead, onRestart, isLoading, isSelected, onTo
   )
 }
 
-function PendingChapterCard({ label, active }) {
+function PendingChapterCard({ label, active, repair }) {
   return (
-    <div className={`chapter-card pending-card ${active ? 'active' : ''}`} style={{ position: 'relative' }}>
+    <div className={`chapter-card pending-card ${active ? 'active' : ''} ${repair ? 'repair' : ''}`} style={{ position: 'relative' }}>
       <div className="chapter-card-img">
         <div className="pending-inner">
-          <div className="pending-dl-icon">
-            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-          </div>
-          <div className="pending-label">{active ? 'Téléchargement…' : 'En attente'}</div>
+          {repair ? (
+            <div className="pending-gear-icon">
+              <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </div>
+          ) : (
+            <div className="pending-dl-icon">
+              <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            </div>
+          )}
+          <div className="pending-label">{repair ? 'Réparation…' : (active ? 'Téléchargement…' : 'En attente')}</div>
         </div>
       </div>
       <div className="chapter-card-foot">
@@ -154,6 +163,7 @@ export default function MangaDetail() {
   const [downloading, setDownloading] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [repairing, setRepairing] = useState(false)
+  const [repairingSet, setRepairingSet] = useState(new Set())
   const [selectionMode, setSelectionMode] = useState(false)
   const [selAction, setSelAction] = useState('download')  // 'download' | 'delete'
   const [rangeInput, setRangeInput] = useState('')
@@ -180,6 +190,14 @@ export default function MangaDetail() {
   useEffect(() => {
     mangaRef.current = manga
   }, [manga])
+
+  // Fin de réparation : plus de job actif → on retire l'état "réparation" (le gear)
+  useEffect(() => {
+    if (!activeJob && repairingSet.size > 0) {
+      const t = setTimeout(() => setRepairingSet(new Set()), 1500)
+      return () => clearTimeout(t)
+    }
+  }, [activeJob, repairingSet.size])
 
   useEffect(() => {
     Promise.all([
@@ -354,10 +372,12 @@ export default function MangaDetail() {
 
   const onRepairSelected = async () => {
     if (selectedChaps.size === 0) return
-    if (!confirm(`Re-scraper ${selectedChaps.size} élément(s) depuis la source ?\nLes EPUB cassés seront recréés (jobs en arrière-plan).`)) return
+    if (!confirm(`Re-scraper ${selectedChaps.size} élément(s) depuis la source ?\nLes EPUB cassés seront supprimés puis recréés (jobs en arrière-plan).`)) return
     setRepairing(true)
+    const toRepair = new Set(selectedChaps)
     try {
       await api.repair(mangaId, Array.from(selectedChaps))
+      setRepairingSet((prev) => new Set([...prev, ...toRepair]))
       setSelectedChaps(new Set()); setSelectionMode(false)
     } catch (e) {
       alert(`Erreur: ${e.message}`)
@@ -673,7 +693,7 @@ export default function MangaDetail() {
             pendingLabels.length > 0 ? (
               <div className="chapter-gallery" ref={galleryRef}>
                 {pendingLabels.map((label, idx) => (
-                  <PendingChapterCard key={`pending-${idx}`} label={label} active={idx === 0} />
+                  <PendingChapterCard key={`pending-${idx}`} label={label} active={idx === 0} repair={repairingSet.size > 0} />
                 ))}
               </div>
             ) : (
@@ -698,7 +718,7 @@ export default function MangaDetail() {
                 />
               ))}
               {pendingLabels.map((label, idx) => (
-                <PendingChapterCard key={`pending-${idx}`} label={label} active={idx === 0} />
+                <PendingChapterCard key={`pending-${idx}`} label={label} active={idx === 0} repair={repairingSet.size > 0} />
               ))}
             </div>
           )}

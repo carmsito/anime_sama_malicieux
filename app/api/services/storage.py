@@ -84,6 +84,8 @@ class TelegramStorage:
             manga_id, chapter_number, kind,
             file_id=res["file_id"], msg_id=res["msg_id"], size=size, filename=epub_path.name,
         )
+        # Invalide un éventuel cache local (ré-upload/réparation) → prochain read = fichier frais.
+        purge_cache(manga_id, chapter_number, kind)
         # Libère le disque : le fichier vit désormais sur Telegram (indexé en DB).
         try:
             epub_path.unlink(missing_ok=True)
@@ -142,6 +144,22 @@ def fetch_epub(manga_id: str, chapter_number: float, kind: str) -> Optional[Path
     return get_backend().fetch_epub(manga_id, chapter_number, kind)
 
 
+def purge_cache(manga_id: str, chapter_number: float, kind: str) -> None:
+    """Supprime l'EPUB en cache local pour ce chapitre → force un re-download frais.
+    Indispensable après un ré-upload (réparation) : sinon on ressert l'ancien fichier cassé."""
+    try:
+        from ..config import DATA_DIR
+        cache = DATA_DIR / "epub_cache"
+        if not cache.exists():
+            return
+        prefix = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{manga_id}__{kind}__{chapter_number}")
+        for f in cache.glob("*.epub"):
+            if f.stem.startswith(prefix):
+                f.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def delete_epub(manga_id: str, chapter_number: float, kind: str) -> None:
     """Supprime le message Telegram (si offloadé) + l'entrée DB + le cache local."""
     rec = db.get_file(manga_id, chapter_number, kind)
@@ -152,13 +170,4 @@ def delete_epub(manga_id: str, chapter_number: float, kind: str) -> None:
         except Exception as e:
             print(f"[storage] delete Telegram msg échoué: {e}", flush=True)
     db.delete_file(manga_id, chapter_number, kind)
-    # purge du cache local éventuel
-    try:
-        from ..config import DATA_DIR
-        cache = DATA_DIR / "epub_cache"
-        if cache.exists():
-            for f in cache.glob("*.epub"):
-                if f.stem.startswith(re.sub(r"[^A-Za-z0-9._-]+", "-", f"{manga_id}__{kind}__{chapter_number}")):
-                    f.unlink(missing_ok=True)
-    except Exception:
-        pass
+    purge_cache(manga_id, chapter_number, kind)

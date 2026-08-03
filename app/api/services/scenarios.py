@@ -121,6 +121,12 @@ def run_verification() -> dict:
                     "db_size": f.get("size"),
                 })
 
+        n_true = sum(1 for v in valid.values() if v is True)
+        n_false = sum(1 for v in valid.values() if v is False)
+        n_none = sum(1 for v in valid.values() if v is None)
+        print(f"[scenario] vérif : {len(files)} fichiers → {n_true} sains, "
+              f"{n_false} cassés, {n_none} inconnus", flush=True)
+
         # groupé par source (pour réparer correctement)
         by_source: dict[str, int] = {}
         for b in broken:

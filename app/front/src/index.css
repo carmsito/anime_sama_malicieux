@@ -682,6 +682,12 @@ button { cursor: pointer; font: inherit; border: none; background: none; }
 .pending-card.active .pending-dl-icon { color: #e50914; animation: dlBounce 1.1s ease-in-out infinite; }
 .pending-card.active .pending-label { color: #ff6b6b; }
 .pending-card.active { animation: dlPulse 1.7s ease-in-out infinite; }
+/* Carte en cours de RÉPARATION : rouage qui tourne */
+.pending-gear-icon { color: #e50914; display: flex; animation: gearSpin 2.4s linear infinite; }
+.pending-card.repair .pending-inner { background: linear-gradient(145deg, #2a0d10, #171717); }
+.pending-card.repair .pending-label { color: #ff8a8a; }
+.pending-card.repair { animation: dlPulse 1.7s ease-in-out infinite; }
+@keyframes gearSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 @keyframes dlBounce { 0%,100% { transform: translateY(-4px); } 50% { transform: translateY(4px); } }
 @keyframes dlPulse {
   0%,100% { box-shadow: 0 0 0 1px rgba(229,9,20,.3); }
