@@ -32,9 +32,11 @@ export default function EpubReader() {
   const fitWidthRef = useRef(fitWidth)
   const scrollRef = useRef()        // conteneur scrollable (mode fit largeur)
   const fitScrollRef = useRef(0)    // position de scroll voulue après changement de page
+  const imgReadyRef = useRef(false)
   useEffect(() => { pageFlipRef.current = pageFlip }, [pageFlip])
   useEffect(() => { sensRef.current = panSens }, [panSens])
   useEffect(() => { fitWidthRef.current = fitWidth }, [fitWidth])
+  useEffect(() => { imgReadyRef.current = imgReady }, [imgReady])
 
   // Charge les préférences de CET utilisateur (isolées des autres comptes)
   useEffect(() => {
@@ -239,6 +241,7 @@ export default function EpubReader() {
       // Défilement natif dans la planche ; on ne change de page qu'en début/fin de planche,
       // et seulement si le mode molette est actif (cohabitation des deux mécaniques).
       if (!scrollNav) return
+      if (!imgReadyRef.current) return   // planche pas encore chargée → pas de saut de page
       const el = scrollRef.current
       if (!el) return
       const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 3
@@ -285,6 +288,7 @@ export default function EpubReader() {
       // qui tourne la page — aux extrémités de la planche, ou si elle tient à l'écran.
       // Seulement si le mode molette/scroll est actif (cohabitation).
       if (!scrollNav) return
+      if (!imgReadyRef.current) return   // planche pas encore chargée → pas de saut de page
       const el = scrollRef.current
       if (!el) return
       const dy = t.clientY - touchStartRef.current.y
@@ -465,23 +469,27 @@ export default function EpubReader() {
         {loaded && images.length > 0 && (
           fitWidth ? (
             /* Mode défilement : planche pleine largeur, on la parcourt verticalement */
-            <img
-              ref={imgRef}
-              key={images[current]}
-              src={images[current]}
-              alt={`Page ${current + 1}`}
-              onLoad={() => {
-                setImgReady(true)
-                if (fitScrollRef.current === 'bottom' && scrollRef.current) {
-                  scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-                  fitScrollRef.current = 0
-                }
-              }}
-              draggable={false}
-              /* margin auto : centré verticalement si la planche tient à l'écran,
-                 sinon marges à 0 → défilement normal depuis le haut */
-              style={{ width: '100%', height: 'auto', display: 'block', userSelect: 'none', margin: 'auto 0' }}
-            />
+            <>
+              {!imgReady && <div className="spin" style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }} />}
+              <img
+                ref={imgRef}
+                key={images[current]}
+                src={images[current]}
+                alt={`Page ${current + 1}`}
+                onLoad={() => {
+                  setImgReady(true)
+                  if (fitScrollRef.current === 'bottom' && scrollRef.current) {
+                    scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+                    fitScrollRef.current = 0
+                  }
+                }}
+                draggable={false}
+                /* margin auto : centré verticalement si la planche tient à l'écran,
+                   sinon marges à 0 → défilement normal depuis le haut.
+                   opacity : évite l'écran noir tant que l'image n'est pas prête */
+                style={{ width: '100%', height: 'auto', display: 'block', userSelect: 'none', margin: 'auto 0', opacity: imgReady ? 1 : 0, transition: 'opacity .12s' }}
+              />
+            </>
           ) : (
             <>
               {!imgReady && <div className="spin" style={{ position: 'absolute' }} />}
