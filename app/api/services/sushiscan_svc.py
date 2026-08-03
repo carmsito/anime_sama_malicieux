@@ -384,7 +384,8 @@ def _download_chapter_images(chapter_url: str, chapter_dir: Path) -> int:
 
 
 def download(job_id, manga_name, manga_url, start, end, kind_filter=None,
-             make_epub=True, keep_images=False, page_height=1878, batch_size=5):
+             make_epub=True, keep_images=False, page_height=1878, batch_size=5,
+             skip_existing=True):
     from . import jobs as jobs_svc
     if not _load_module():
         jobs_svc.update_job(job_id, status="error", error="Helpers EPUB indisponibles")
@@ -400,13 +401,25 @@ def download(job_id, manga_name, manga_url, start, end, kind_filter=None,
         if not targets:
             jobs_svc.update_job(job_id, status="error", error="Aucun chapitre dans cette plage")
             return
-        jobs_svc.update_job(job_id, total=len(targets))
 
         kind = kind_filter or targets[0]["kind"]
         safe_name = _sanitize(manga_name)
         base_dir = EXTRACTION_DIR / safe_name / "sushiscan"
         base_dir.mkdir(parents=True, exist_ok=True)
         manga_id = _make_manga_id(safe_name, "sushiscan")
+
+        # Extraction intelligente : on ignore ce qu'on possède déjà (sauf réparation).
+        if skip_existing:
+            from . import db
+            before = len(targets)
+            targets = [c for c in targets if not db.get_file(manga_id, c["number"], c["kind"])]
+            skipped = before - len(targets)
+            if skipped:
+                print(f"[download] {skipped} déjà possédé(s) → ignoré(s)", flush=True)
+            if not targets:
+                jobs_svc.update_job(job_id, status="done", total=0, progress=0)
+                return
+        jobs_svc.update_job(job_id, total=len(targets))
 
         meta = {"manga_name": manga_name, "manga_url": manga_url, "source": "sushiscan", "kind": kind}
         try:

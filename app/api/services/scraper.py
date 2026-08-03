@@ -355,6 +355,7 @@ def download_chapters(
     page_height: int = 1878,
     make_epub: bool = True,
     keep_images: bool = False,
+    skip_existing: bool = True,
 ) -> None:
     from . import jobs as jobs_svc
 
@@ -410,6 +411,16 @@ def download_chapters(
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
         chapters_to_do = [c for c in range(start_chapter, end_chapter + 1) if c in chapter_map]
+        # Extraction intelligente : ignore les chapitres déjà possédés (sauf réparation).
+        if skip_existing:
+            from . import db
+            before = len(chapters_to_do)
+            chapters_to_do = [c for c in chapters_to_do if not db.get_file(manga_id, float(c), "Chapitre")]
+            if before - len(chapters_to_do):
+                print(f"[anime-sama] {before - len(chapters_to_do)} déjà possédé(s) → ignoré(s)", flush=True)
+            if not chapters_to_do:
+                jobs_svc.update_job(job_id, status="done", total=0, progress=0)
+                return
         jobs_svc.update_job(job_id, total=len(chapters_to_do))
 
         for progress, chapter in enumerate(chapters_to_do, 1):

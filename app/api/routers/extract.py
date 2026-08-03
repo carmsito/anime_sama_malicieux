@@ -36,6 +36,7 @@ def repair(body: dict, user: dict = Depends(require_scraper)):
                 "job_id": job["id"], "manga_name": name, "manga_url": meta["manga_url"],
                 "start": chn, "end": chn, "kind_filter": meta.get("kind"),
                 "make_epub": True, "keep_images": False, "page_height": 1878, "batch_size": 5,
+                "skip_existing": False,   # réparation → on force le re-téléchargement
             })
         elif source == "mangadex":
             if not meta.get("manga_id"):
@@ -48,6 +49,7 @@ def repair(body: dict, user: dict = Depends(require_scraper)):
                 "job_id": job["id"], "manga_id": meta["manga_id"], "manga_name": name,
                 "lang": lang, "start": chs, "end": chs,
                 "make_epub": True, "keep_images": False, "page_height": 1878,
+                "skip_existing": False,   # réparation → on force le re-téléchargement
             })
         else:  # anime-sama
             if not meta.get("work_url"):
@@ -60,6 +62,7 @@ def repair(body: dict, user: dict = Depends(require_scraper)):
                 "category_label": m["category"], "scan_title": meta.get("scan_title", name),
                 "start_chapter": int(chn), "end_chapter": int(chn),
                 "page_height": 1878, "make_epub": True, "keep_images": False,
+                "skip_existing": False,   # réparation → on force le re-téléchargement
             })
         created.append(job)
 

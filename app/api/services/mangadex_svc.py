@@ -231,6 +231,7 @@ def download(
     make_epub: bool = True,
     keep_images: bool = False,
     page_height: int = 1878,
+    skip_existing: bool = True,
 ) -> None:
     """Background download function for MangaDex chapters."""
     import shutil
@@ -253,6 +254,25 @@ def download(
         if not to_download:
             jobs_svc.update_job(job_id, status="error", error="Aucun chapitre dans cette plage")
             return
+
+        # Extraction intelligente : ignore les chapitres déjà possédés (sauf réparation).
+        if skip_existing:
+            from . import db
+            from .library import _make_manga_id
+            mid = _make_manga_id(_sanitize(manga_name), lang)
+
+            def _owned(n):
+                try:
+                    return db.get_file(mid, float(n), "Chapitre") is not None
+                except ValueError:
+                    return False
+            before = len(to_download)
+            to_download = [n for n in to_download if not _owned(n)]
+            if before - len(to_download):
+                print(f"[mangadex] {before - len(to_download)} déjà possédé(s) → ignoré(s)", flush=True)
+            if not to_download:
+                jobs_svc.update_job(job_id, status="done", total=0, progress=0)
+                return
 
         jobs_svc.update_job(job_id, total=len(to_download))
 
