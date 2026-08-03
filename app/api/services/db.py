@@ -226,15 +226,30 @@ def get_progress(user_id: str, manga_id: str) -> list[dict]:
 
 
 def get_progress_all(user_id: str) -> list[dict]:
-    """Toutes les progressions de l'utilisateur (pour calculer le % par manga)."""
+    """Toutes les progressions de l'utilisateur (pour % par manga + stats)."""
     init()
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT manga_id, chapter_number, page, total_pages FROM reading_progress WHERE user_id=?",
+            "SELECT manga_id, chapter_number, page, total_pages, updated_at FROM reading_progress WHERE user_id=?",
             (user_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def reset_progress(user_id: str, manga_id: str) -> int:
+    """Efface toute la progression d'un manga pour cet utilisateur (→ 'jamais lu')."""
+    init()
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "DELETE FROM reading_progress WHERE user_id=? AND manga_id=?",
+            (user_id, manga_id),
+        )
+        conn.commit()
+        return cur.rowcount
     finally:
         conn.close()
 

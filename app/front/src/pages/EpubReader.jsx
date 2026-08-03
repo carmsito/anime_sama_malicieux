@@ -174,6 +174,8 @@ export default function EpubReader() {
   }, [mangaId, chapterNum, forcedPage]) // eslint-disable-line
 
   // Sauvegarde de la progression (marque-page), throttlée
+  const currentRef = useRef(current)
+  useEffect(() => { currentRef.current = current }, [current])
   useEffect(() => {
     if (!loaded || images.length === 0) return
     const t = setTimeout(() => {
@@ -181,6 +183,23 @@ export default function EpubReader() {
     }, 600)
     return () => clearTimeout(t)
   }, [current, loaded, images.length, mangaId, num])
+
+  // Sync cross-device : dès que l'app passe en arrière-plan (changement d'appareil/onglet)
+  // ou se ferme, on FLUSH immédiatement le marque-page → l'autre appareil le lit à jour.
+  useEffect(() => {
+    const flush = () => {
+      if (loaded && images.length > 0) {
+        api.saveProgress(mangaId, num, currentRef.current, images.length).catch(() => {})
+      }
+    }
+    const onVis = () => { if (document.visibilityState === 'hidden') flush() }
+    document.addEventListener('visibilitychange', onVis)
+    window.addEventListener('pagehide', flush)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('pagehide', flush)
+    }
+  }, [loaded, images.length, mangaId, num])
 
   // Direction de la prochaine transition (posée par goNext/goPrev), jouée APRÈS le montage
   // de la nouvelle image (sinon l'anim s'exécute sur l'ancienne planche → invisible).

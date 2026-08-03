@@ -411,8 +411,9 @@ def _resume_target(manga: dict, last: dict) -> tuple[float, int]:
 
 
 @router.get("/continue/reading", summary="Reprendre la lecture (derniers chapitres lus)")
-def continue_reading(user: dict = Depends(_require_user)):
+def continue_reading(response: Response, user: dict = Depends(_require_user)):
     from ..services import db
+    response.headers["Cache-Control"] = "no-store"
     # progressions groupées par manga → % global (pour filtrer/afficher)
     prog_by_manga: dict[str, list[dict]] = {}
     for r in db.get_progress_all(user["id"]):
@@ -463,8 +464,9 @@ def list_favorites(user: dict = Depends(_require_user)):
 
 
 @router.get("/states/all", summary="États utilisateur par manga (favori + % lu)")
-def user_states(user: dict = Depends(_require_user)):
+def user_states(response: Response, user: dict = Depends(_require_user)):
     from ..services import db
+    response.headers["Cache-Control"] = "no-store"
     favs = set(db.list_favorites(user["id"]))
     prog_by_manga: dict[str, list[dict]] = {}
     for r in db.get_progress_all(user["id"]):
@@ -485,9 +487,69 @@ def toggle_favorite(manga_id: str, body: dict, user: dict = Depends(_require_use
     return {"manga_id": manga_id, "favorite": on}
 
 
-@router.get("/{manga_id}/progress", summary="Progression de lecture de l'utilisateur")
-def get_progress(manga_id: str, user: dict = Depends(_require_user)):
+@router.get("/stats/overview", summary="Statistiques de lecture de l'utilisateur")
+def stats_overview(response: Response, user: dict = Depends(_require_user)):
     from ..services import db
+    from collections import defaultdict
+    response.headers["Cache-Control"] = "no-store"   # toujours frais (sync cross-device)
+
+    mangas = {m["id"]: m for m in library.list_mangas()}
+    by_manga: dict[str, list[dict]] = defaultdict(list)
+    for r in db.get_progress_all(user["id"]):
+        by_manga[r["manga_id"]].append(r)
+
+    works, total_completed, total_pages = [], 0, 0
+    by_source: dict[str, int] = defaultdict(int)
+    for mid, rs in by_manga.items():
+        m = mangas.get(mid)
+        if not m:
+            continue
+        pct = _manga_percent(rs, m.get("chapter_count", 0))
+        completed = sum(1 for r in rs if r.get("total_pages") and r.get("page", -1) >= 0 and (r["page"] + 1) >= r["total_pages"])
+        pages = sum(min(r["page"] + 1, r["total_pages"]) for r in rs if r.get("total_pages") and r.get("page", -1) >= 0)
+        total_completed += completed
+        total_pages += pages
+        src = m.get("meta", {}).get("source", "anime-sama")
+        by_source[src] += 1
+        works.append({
+            "id": mid, "name": m["name"], "category": m["category"], "cover_url": m["cover_url"],
+            "source": src, "percent": pct, "chapters_read": len(rs), "completed_chapters": completed,
+            "chapter_count": m.get("chapter_count", 0),
+            "updated_at": max((r.get("updated_at") or "" for r in rs), default=""),
+        })
+
+    started = len(works)
+    completed_works = sum(1 for w in works if w["percent"] >= 100)
+    recent = sorted(works, key=lambda w: w["updated_at"], reverse=True)
+    top = sorted(works, key=lambda w: (w["completed_chapters"], w["percent"]), reverse=True)[:6]
+    return {
+        "totals": {
+            "works_started": started,
+            "works_completed": completed_works,
+            "works_in_progress": started - completed_works,
+            "chapters_read": total_completed,
+            "pages_read": total_pages,
+            "favorites": len(db.list_favorites(user["id"])),
+            "library_size": len(mangas),
+        },
+        "by_source": dict(by_source),
+        "recent": recent[:8],
+        "top": top,
+        "works": recent,
+    }
+
+
+@router.delete("/{manga_id}/progress", summary="Réinitialiser la progression d'une œuvre (→ jamais lu)")
+def reset_manga_progress(manga_id: str, user: dict = Depends(_require_user)):
+    from ..services import db
+    n = db.reset_progress(user["id"], manga_id)
+    return {"reset": True, "removed": n}
+
+
+@router.get("/{manga_id}/progress", summary="Progression de lecture de l'utilisateur")
+def get_progress(manga_id: str, response: Response, user: dict = Depends(_require_user)):
+    from ..services import db
+    response.headers["Cache-Control"] = "no-store"   # jamais mis en cache → pas de reprise à un vieux marque-page
     return {"progress": db.get_progress(user["id"], manga_id)}
 
 

@@ -5,6 +5,7 @@ import Home from './pages/Home'
 import MangaDetail from './pages/MangaDetail'
 import EpubReader from './pages/EpubReader'
 import Users from './pages/Users'
+import Stats from './pages/Stats'
 import Navbar from './components/Navbar'
 import JobStatus from './components/JobStatus'
 import PageErrorBoundary from './components/PageErrorBoundary'
@@ -63,6 +64,7 @@ export default function App() {
                   <Routes>
                     <Route path="/" element={<Home />} />
                     <Route path="/manga/:mangaId" element={<MangaDetail />} />
+                    <Route path="/stats" element={<Stats />} />
                     <Route path="/admin/users" element={<Users />} />
                   </Routes>
                   <JobStatus />

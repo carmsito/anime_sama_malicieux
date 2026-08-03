@@ -47,7 +47,10 @@ export const api = {
 
   // Reading progress
   continueReading: () => req('/mangas/continue/reading'),
-  getProgress: (mangaId) => req(`/mangas/${mangaId}/progress`),
+  getProgress: (mangaId) => req(`/mangas/${mangaId}/progress`, { cache: 'no-store' }),
+  // Stats de lecture
+  getStats: () => req('/mangas/stats/overview', { cache: 'no-store' }),
+  resetProgress: (mangaId) => req(`/mangas/${mangaId}/progress`, { method: 'DELETE' }),
 
   // Favoris + états utilisateur (favori + % lu par manga)
   listFavorites: () => req('/mangas/favorites/list'),
