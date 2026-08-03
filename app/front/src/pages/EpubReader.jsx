@@ -7,6 +7,10 @@ import { AuthCtx } from '../contexts'
 const IS_TOUCH = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches
 const ZOOM_LEVEL = 2.5
 const DEFAULT_SENS = 1        // sensibilité de déplacement en zoom par défaut (= vitesse actuelle)
+// Auto-scroll (mode fit-largeur) : px/s par niveau — commence TRÈS lent
+const AUTO_SPEEDS = [8, 16, 28, 46, 72, 110]
+// Niveaux de zoom (double-tap) ajustables — 100% = pas de zoom (défaut)
+const ZOOM_PERCENTS = [100, 150, 200, 250, 300, 400]
 
 export default function EpubReader() {
   const { mangaId, chapterNum } = useParams()
@@ -27,9 +31,18 @@ export default function EpubReader() {
   const [pageFlip, setPageFlip] = useState(false)
   const [fitWidth, setFitWidth] = useState(false)       // mode lecture défilement (fit largeur)
   const [panSens, setPanSens] = useState(DEFAULT_SENS)   // sensibilité déplacement en zoom
+  const [autoScroll, setAutoScroll] = useState(false)    // défilement auto (fit largeur)
+  const [autoLevel, setAutoLevel] = useState(1)          // niveau de vitesse 1..6
+  const [zoomPct, setZoomPct] = useState(100)            // niveau de zoom double-tap (%)
   const pageFlipRef = useRef(pageFlip)
   const sensRef = useRef(panSens)
   const fitWidthRef = useRef(fitWidth)
+  const autoLevelRef = useRef(autoLevel)
+  const zoomPctRef = useRef(zoomPct)
+  const autoPausedRef = useRef(false)   // pause momentanée quand on touche l'écran
+  const wheelPauseTimer = useRef()
+  useEffect(() => { autoLevelRef.current = autoLevel }, [autoLevel])
+  useEffect(() => { zoomPctRef.current = zoomPct }, [zoomPct])
   const scrollRef = useRef()        // conteneur scrollable (mode fit largeur)
   const fitScrollRef = useRef(0)    // position de scroll voulue après changement de page
   const imgReadyRef = useRef(false)
@@ -45,7 +58,24 @@ export default function EpubReader() {
     setFitWidth(localStorage.getItem(prefKey('fitwidth')) === '1')
     const s = Number(localStorage.getItem(prefKey('pansens')))
     setPanSens(s > 0 ? s : DEFAULT_SENS)
+    const al = Number(localStorage.getItem(prefKey('autolevel')))
+    setAutoLevel(al >= 1 && al <= AUTO_SPEEDS.length ? al : 1)
+    const zp = Number(localStorage.getItem(prefKey('zoompct')))
+    setZoomPct(ZOOM_PERCENTS.includes(zp) ? zp : 100)
   }, [uid]) // eslint-disable-line
+
+  const cycleAutoSpeed = () => setAutoLevel((v) => {
+    const next = (v % AUTO_SPEEDS.length) + 1
+    localStorage.setItem(prefKey('autolevel'), String(next))
+    return next
+  })
+  const toggleAutoScroll = () => setAutoScroll((v) => !v)
+  const cycleZoom = () => setZoomPct((v) => {
+    const i = ZOOM_PERCENTS.indexOf(v)
+    const next = ZOOM_PERCENTS[(i + 1) % ZOOM_PERCENTS.length]
+    localStorage.setItem(prefKey('zoompct'), String(next))
+    return next
+  })
 
   const togglePageFlip = () => setPageFlip((v) => { localStorage.setItem(prefKey('pageflip'), v ? '0' : '1'); return !v })
   const toggleFitWidth = () => setFitWidth((v) => {
@@ -130,12 +160,14 @@ export default function EpubReader() {
 
   const toggleZoomAt = (clientX, clientY) => {
     if (zoomed) { setZoom(1); setPan({ x: 0, y: 0 }); return }
+    const z = (zoomPctRef.current || 100) / 100
+    if (z <= 1) return   // niveau 100% → pas de zoom
     const img = imgRef.current
     if (!img) return
     const r = img.getBoundingClientRect()
     setOrigin({ x: clientX - r.left, y: clientY - r.top })
     setPan({ x: 0, y: 0 })
-    setZoom(ZOOM_LEVEL)
+    setZoom(z)
   }
 
   const toggleScrollNav = () => {
@@ -285,6 +317,10 @@ export default function EpubReader() {
   const onWheel = useCallback((e) => {
     if (zoomed) return
     if (fitWidth) {
+      // molette manuelle → pause l'auto-scroll un instant, puis reprise
+      autoPausedRef.current = true
+      clearTimeout(wheelPauseTimer.current)
+      wheelPauseTimer.current = setTimeout(() => { autoPausedRef.current = false }, 700)
       // Défilement natif dans la planche ; on ne change de page qu'en début/fin de planche,
       // et seulement si le mode molette est actif (cohabitation des deux mécaniques).
       if (!scrollNav) return
@@ -311,6 +347,7 @@ export default function EpubReader() {
   const onTouchStart = useCallback((e) => {
     const t = e.touches[0]
     touchStartRef.current = { x: t.clientX, y: t.clientY }
+    autoPausedRef.current = true   // toucher l'écran → pause l'auto-scroll
     if (fitWidthRef.current) return   // mode défilement : scroll natif (on garde juste startY)
     touchMovedRef.current = false
     if (zoomed) panStartRef.current = { px: pan.x, py: pan.y, tx: t.clientX, ty: t.clientY }
@@ -330,6 +367,9 @@ export default function EpubReader() {
 
   const onTouchEnd = useCallback((e) => {
     const t = e.changedTouches[0]
+    // reprise de l'auto-scroll après un court délai (laisse retomber l'inertie iOS)
+    clearTimeout(wheelPauseTimer.current)
+    wheelPauseTimer.current = setTimeout(() => { autoPausedRef.current = false }, 350)
     if (fitWidthRef.current) {
       // Mode défilement : le tap est géré par onAreaClick. Ici on gère le SWIPE vertical
       // qui tourne la page — aux extrémités de la planche, ou si elle tient à l'écran.
@@ -401,6 +441,36 @@ export default function EpubReader() {
     if (IS_TOUCH || fitWidth) return   // pas de zoom double-clic en mode défilement
     toggleZoomAt(e.clientX, e.clientY)
   }, [zoomed, fitWidth]) // eslint-disable-line
+
+  // ── Auto-scroll (mode fit-largeur) : défilement doux, pause au toucher, avance de page ──
+  // On modifie scrollTop par pixels ENTIERS (source de vérité = scrollTop) → respecte les
+  // scrolls manuels, et le reste fractionnaire est reporté → fluide même très lent.
+  useEffect(() => {
+    if (!autoScroll || !fitWidth) return
+    let raf, acc = 0, last = performance.now(), cooldown = 0
+    const step = (now) => {
+      const dt = Math.min(0.05, (now - last) / 1000); last = now
+      const el = scrollRef.current
+      if (el && !autoPausedRef.current && imgReadyRef.current && now > cooldown) {
+        const remaining = el.scrollHeight - el.clientHeight - el.scrollTop
+        if (remaining <= 1) {
+          acc = 0; cooldown = now + 450        // évite de sauter plusieurs pages
+          if (current < images.length - 1 || nextChapNum != null) goNext()
+          else setAutoScroll(false)            // fin du chapitre sans suite → stop
+        } else {
+          acc += (AUTO_SPEEDS[autoLevelRef.current - 1] || 8) * dt
+          const px = Math.floor(acc)
+          if (px > 0) { el.scrollTop += Math.min(px, remaining); acc -= px }
+        }
+      }
+      raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf)
+  }, [autoScroll, fitWidth, current, images.length, nextChapNum, goNext])
+
+  // Désactive l'auto-scroll si on quitte le mode fit-largeur
+  useEffect(() => { if (!fitWidth) setAutoScroll(false) }, [fitWidth])
 
   const prevChap = prevChapNum != null ? { number: prevChapNum } : null
   const nextChap = nextChapNum != null ? { number: nextChapNum } : null
@@ -596,19 +666,46 @@ export default function EpubReader() {
         display: fullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.5rem',
         background: 'rgba(0,0,0,.9)', borderTop: '1px solid rgba(255,255,255,.08)',
       }}>
-        {/* Sensibilité du déplacement en zoom — bouton qui cycle ×1 → ×3 (tout à gauche) */}
-        <button onClick={cycleSens}
-          title={`Vitesse de déplacement en zoom : ×${panSens} (cliquer pour changer)`}
-          style={{ position: 'absolute', left: '.8rem', top: 22, transform: 'translateY(-50%)',
-            display: 'flex', alignItems: 'center', gap: '.3rem',
-            color: panSens > 1 ? '#e50914' : 'rgba(255,255,255,.6)',
-            background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
-            padding: '.28rem .5rem', cursor: 'pointer', fontSize: '.74rem', fontWeight: 700 }}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 20a8 8 0 1 0-8-8"/><path d="M12 12l4-2"/>
-          </svg>
-          ×{panSens}
-        </button>
+        {/* Contrôles gauche : selon le mode */}
+        <div style={{ position: 'absolute', left: '.6rem', top: 22, transform: 'translateY(-50%)',
+          display: 'flex', alignItems: 'center', gap: '.3rem' }}>
+          {fitWidth ? (
+            autoScroll && (
+              <button onClick={cycleAutoSpeed} title="Vitesse du défilement auto"
+                style={{ display: 'flex', alignItems: 'center', gap: '.25rem', color: '#e50914',
+                  background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
+                  padding: '.28rem .5rem', cursor: 'pointer', fontSize: '.74rem', fontWeight: 700 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="7 13 12 18 17 13" /><polyline points="7 6 12 11 17 6" />
+                </svg>
+                V{autoLevel}
+              </button>
+            )
+          ) : (
+            <>
+              <button onClick={cycleZoom} title={`Niveau de zoom (double-tap) : ${zoomPct}%`}
+                style={{ display: 'flex', alignItems: 'center', gap: '.25rem',
+                  color: zoomPct > 100 ? '#e50914' : 'rgba(255,255,255,.6)',
+                  background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
+                  padding: '.28rem .5rem', cursor: 'pointer', fontSize: '.72rem', fontWeight: 700 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
+                </svg>
+                {zoomPct}%
+              </button>
+              <button onClick={cycleSens} title={`Sensibilité de déplacement en zoom : ×${panSens}`}
+                style={{ display: 'flex', alignItems: 'center', gap: '.25rem',
+                  color: panSens > 1 ? '#e50914' : 'rgba(255,255,255,.6)',
+                  background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
+                  padding: '.28rem .5rem', cursor: 'pointer', fontSize: '.72rem', fontWeight: 700 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 20a8 8 0 1 0-8-8"/><path d="M12 12l4-2"/>
+                </svg>
+                ×{panSens}
+              </button>
+            </>
+          )}
+        </div>
         <button onClick={goPrev} disabled={current === 0}
           style={{ color: current === 0 ? 'rgba(255,255,255,.2)' : 'rgba(255,255,255,.7)',
             background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
@@ -620,18 +717,33 @@ export default function EpubReader() {
           style={{ color: current >= images.length - 1 ? 'rgba(255,255,255,.2)' : 'rgba(255,255,255,.7)',
             background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
             padding: '.3rem .7rem', cursor: 'pointer', fontSize: '1rem' }}>→</button>
-        {/* Toggle animation "page qui se tourne" — tout à droite */}
-        <button onClick={togglePageFlip}
-          title={pageFlip ? 'Animation page : ON' : 'Animation page : OFF'}
-          style={{ position: 'absolute', right: '.8rem', top: 22, transform: 'translateY(-50%)',
-            color: pageFlip ? '#e50914' : 'rgba(255,255,255,.55)',
-            background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
-            padding: '.32rem .42rem', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
-            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
-          </svg>
-        </button>
+        {/* Contrôle droite : auto-scroll (fit-largeur) ou animation de page (normal) */}
+        {fitWidth ? (
+          <button onClick={toggleAutoScroll}
+            title={autoScroll ? 'Défilement auto : ON (touche l\'écran pour mettre en pause)' : 'Défilement auto : OFF'}
+            style={{ position: 'absolute', right: '.8rem', top: 22, transform: 'translateY(-50%)',
+              color: autoScroll ? '#e50914' : 'rgba(255,255,255,.55)',
+              background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
+              padding: '.32rem .42rem', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+            {autoScroll ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7 6 12 11 17 6"/><polyline points="7 13 12 18 17 13"/></svg>
+            )}
+          </button>
+        ) : (
+          <button onClick={togglePageFlip}
+            title={pageFlip ? 'Animation page : ON' : 'Animation page : OFF'}
+            style={{ position: 'absolute', right: '.8rem', top: 22, transform: 'translateY(-50%)',
+              color: pageFlip ? '#e50914' : 'rgba(255,255,255,.55)',
+              background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
+              padding: '.32rem .42rem', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+              <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+            </svg>
+          </button>
+        )}
       </div>
     </div>
   )
