@@ -97,36 +97,53 @@ def _list_chapters(cat_dir: Path, manga_id: str | None = None) -> list[dict]:
     return sorted(chapters, key=lambda c: c["number"])
 
 
+import time as _time
+
+# Cache TTL de la liste (sans les chapitres, léger) : évite de re-scanner tout le disque
+# à CHAQUE appel (list_mangas + get_manga par item de l'accueil = des dizaines de scans).
+_LIST_CACHE: dict = {"data": None, "ts": 0.0}
+_LIST_TTL = 3.0
+
+
+def invalidate_list_cache() -> None:
+    _LIST_CACHE["data"] = None
+
+
 def list_mangas() -> list[dict]:
+    c = _LIST_CACHE
+    if c["data"] is not None and (_time.time() - c["ts"]) < _LIST_TTL:
+        return c["data"]
     mangas = []
-    if not EXTRACTION_DIR.exists():
-        return mangas
-    for manga_dir in sorted(EXTRACTION_DIR.iterdir()):
-        if not manga_dir.is_dir():
-            continue
-        for cat_dir in sorted(manga_dir.iterdir()):
-            if not cat_dir.is_dir():
+    if EXTRACTION_DIR.exists():
+        for manga_dir in sorted(EXTRACTION_DIR.iterdir()):
+            if not manga_dir.is_dir():
                 continue
-            manga_id = _make_manga_id(manga_dir.name, cat_dir.name)
-            chapters = _list_chapters(cat_dir, manga_id)
-            meta = _read_meta(cat_dir)
-            mangas.append({
-                "id": manga_id,
-                "name": manga_dir.name,
-                "category": cat_dir.name,
-                "cover_url": _cover_url(manga_id, meta),
-                "chapter_count": len(chapters),
-                "meta": meta,
-            })
+            for cat_dir in sorted(manga_dir.iterdir()):
+                if not cat_dir.is_dir():
+                    continue
+                manga_id = _make_manga_id(manga_dir.name, cat_dir.name)
+                chapters = _list_chapters(cat_dir, manga_id)
+                meta = _read_meta(cat_dir)
+                mangas.append({
+                    "id": manga_id,
+                    "name": manga_dir.name,
+                    "category": cat_dir.name,
+                    "cover_url": _cover_url(manga_id, meta),
+                    "chapter_count": len(chapters),
+                    "meta": meta,
+                })
+    c["data"] = mangas
+    c["ts"] = _time.time()
     return mangas
 
 
 def get_manga(manga_id: str) -> Optional[dict]:
     for manga in list_mangas():
         if manga["id"] == manga_id:
-            cat_dir = EXTRACTION_DIR / manga["name"] / manga["category"]
-            manga["chapters"] = _list_chapters(cat_dir, manga["id"])
-            return manga
+            m = dict(manga)   # copie → on ne mute pas le cache
+            cat_dir = EXTRACTION_DIR / m["name"] / m["category"]
+            m["chapters"] = _list_chapters(cat_dir, m["id"])
+            return m
     return None
 
 
@@ -150,6 +167,7 @@ def save_manga_info(manga_id: str, info: dict) -> None:
     meta.update({k: v for k, v in info.items() if v})
     try:
         meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+        invalidate_list_cache()
     except Exception:
         pass
 

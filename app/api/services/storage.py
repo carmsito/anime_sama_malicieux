@@ -86,6 +86,8 @@ class TelegramStorage:
         )
         # Invalide un éventuel cache local (ré-upload/réparation) → prochain read = fichier frais.
         purge_cache(manga_id, chapter_number, kind)
+        from . import library
+        library.invalidate_list_cache()   # nouveau chapitre → visible tout de suite
         # Libère le disque : le fichier vit désormais sur Telegram (indexé en DB).
         try:
             epub_path.unlink(missing_ok=True)
@@ -173,3 +175,5 @@ def delete_epub(manga_id: str, chapter_number: float, kind: str) -> None:
             print(f"[storage] delete Telegram msg échoué: {e}", flush=True)
     db.delete_file(manga_id, chapter_number, kind)
     purge_cache(manga_id, chapter_number, kind)
+    from . import library
+    library.invalidate_list_cache()
