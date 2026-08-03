@@ -101,18 +101,32 @@ export default function EpubReader() {
     }
   }, [current, images])
 
+  // Marque la planche comme prête : force le DÉCODAGE (sinon iOS peut afficher du noir
+  // tant qu'on ne scrolle pas — décodage paresseux) puis repositionne le scroll.
+  const markReady = useCallback(() => {
+    const finish = () => {
+      setImgReady(true)
+      const el = scrollRef.current
+      if (fitWidthRef.current && el) {
+        if (fitScrollRef.current === 'bottom') {
+          el.scrollTop = el.scrollHeight; fitScrollRef.current = 0
+        } else {
+          // nudge de 1px → force le rendu de la planche (contourne le décodage paresseux)
+          requestAnimationFrame(() => { el.scrollTop = 1; requestAnimationFrame(() => { el.scrollTop = 0 }) })
+        }
+      }
+    }
+    const im = imgRef.current
+    if (im && im.decode) im.decode().then(finish).catch(finish)
+    else finish()
+  }, [])
+
   // Image déjà en cache (préchargée) : onLoad ne se déclenche PAS → sans ça on resterait
   // bloqué en "non prêt" = écran noir. On vérifie .complete après montage.
   useEffect(() => {
     const im = imgRef.current
-    if (im && im.complete && im.naturalWidth > 0) {
-      setImgReady(true)
-      if (fitWidthRef.current && fitScrollRef.current === 'bottom' && scrollRef.current) {
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-        fitScrollRef.current = 0
-      }
-    }
-  }, [current, chapterNum, images, fitWidth])
+    if (im && im.complete && im.naturalWidth > 0) markReady()
+  }, [current, chapterNum, images, fitWidth, markReady])
 
   const toggleZoomAt = (clientX, clientY) => {
     if (zoomed) { setZoom(1); setPan({ x: 0, y: 0 }); return }
@@ -384,10 +398,10 @@ export default function EpubReader() {
           onClick={() => navigate(`/manga/${mangaId}`)}
           style={{ color: '#fff', fontSize: '1.1rem', padding: '.2rem .4rem', background: 'none', border: 'none', cursor: 'pointer' }}
         >←</button>
-        <span style={{ color: 'rgba(255,255,255,.5)', fontSize: '.82rem' }}>
+        <span className="reader-title" style={{ color: 'rgba(255,255,255,.5)', fontSize: '.82rem',
+          flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {manga?.name} — Chap. {chapterNum}
         </span>
-        <div style={{ flex: 1 }} />
         {loaded && images.length > 0 && current > 0 && (
           <button onClick={() => { setCurrent(0); setImgReady(false); slide(-1) }}
             title="Reprendre depuis le début"
@@ -426,7 +440,7 @@ export default function EpubReader() {
             <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>
           </svg>
         </button>
-        <span style={{ color: 'rgba(255,255,255,.35)', fontSize: '.78rem' }}>
+        <span className="reader-hcount" style={{ color: 'rgba(255,255,255,.35)', fontSize: '.78rem' }}>
           {loaded ? `${current + 1} / ${images.length}` : '…'}
         </span>
         <div style={{ display: 'flex', gap: '.3rem' }}>
@@ -498,13 +512,8 @@ export default function EpubReader() {
                 key="fit-page"
                 src={images[current]}
                 alt=""
-                onLoad={() => {
-                  setImgReady(true)
-                  if (fitScrollRef.current === 'bottom' && scrollRef.current) {
-                    scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-                    fitScrollRef.current = 0
-                  }
-                }}
+                decoding="sync"
+                onLoad={markReady}
                 onError={() => setImgReady(true)}
                 draggable={false}
                 style={{ width: '100%', height: 'auto', display: 'block', userSelect: 'none', margin: 'auto 0' }}

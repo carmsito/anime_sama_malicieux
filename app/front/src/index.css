@@ -40,6 +40,13 @@ a { color: inherit; text-decoration: none; }
   padding-bottom: env(safe-area-inset-bottom, 0px);
   box-sizing: content-box;
 }
+/* Header du lecteur : responsive mobile (web ET pwa) — trop de contrôles sinon */
+.reader-topbar { flex-wrap: nowrap; }
+@media (max-width: 640px) {
+  .reader-topbar { gap: .3rem !important; padding-left: .5rem !important; padding-right: .5rem !important; }
+  .reader-hcount { display: none; }   /* compteur déjà présent dans la barre du bas */
+  .reader-title { font-size: .74rem !important; }
+}
 /* Bouton flottant pour quitter le plein écran */
 .reader-fs-exit {
   position: fixed; z-index: 50;
