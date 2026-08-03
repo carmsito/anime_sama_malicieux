@@ -413,13 +413,19 @@ def _resume_target(manga: dict, last: dict) -> tuple[float, int]:
 @router.get("/continue/reading", summary="Reprendre la lecture (derniers chapitres lus)")
 def continue_reading(user: dict = Depends(_require_user)):
     from ..services import db
+    # progressions groupées par manga → % global (pour filtrer/afficher)
+    prog_by_manga: dict[str, list[dict]] = {}
+    for r in db.get_progress_all(user["id"]):
+        prog_by_manga.setdefault(r["manga_id"], []).append(r)
+
     out = []
     for p in db.get_continue(user["id"]):
         m = library.get_manga(p["manga_id"])  # avec chapitres (pour la reprise)
         if not m:
             continue  # manga supprimé
-        pct = (max(0, min(100, round(((p["page"] + 1) / p["total_pages"]) * 100)))
-               if p["total_pages"] and p["page"] >= 0 else 0)
+        pct = _manga_percent(prog_by_manga.get(p["manga_id"], []), m.get("chapter_count", 0))
+        if pct <= 0:
+            continue  # ouvert par erreur / rien lu de significatif → pas dans "Reprendre"
         target_ch, target_page = _resume_target(m, p)
         out.append({
             "id": m["id"], "name": m["name"], "category": m["category"],

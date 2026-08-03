@@ -53,6 +53,13 @@ a { color: inherit; text-decoration: none; }
 }
 .reader-fs-exit:hover { opacity: 1; transform: scale(1.08); }
 
+/* Barre de progression (plein écran) : rouge, en bas, toute la largeur */
+.reader-fs-progress {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 48;
+  height: 4px; background: rgba(255,255,255,.15);
+}
+.reader-fs-progress > div { height: 100%; background: #e50914; transition: width .25s ease; }
+
 /* Page qui se tourne : conteneur pivotant (façon turn.js) + ombre en dégradé */
 .reader-flip {
   position: absolute; inset: 0;

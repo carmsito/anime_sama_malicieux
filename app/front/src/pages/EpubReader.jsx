@@ -25,21 +25,32 @@ export default function EpubReader() {
   const [scrollNav, setScrollNav] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
   const [pageFlip, setPageFlip] = useState(false)
+  const [fitWidth, setFitWidth] = useState(false)       // mode lecture défilement (fit largeur)
   const [panSens, setPanSens] = useState(DEFAULT_SENS)   // sensibilité déplacement en zoom
   const pageFlipRef = useRef(pageFlip)
   const sensRef = useRef(panSens)
+  const fitWidthRef = useRef(fitWidth)
+  const scrollRef = useRef()        // conteneur scrollable (mode fit largeur)
+  const fitScrollRef = useRef(0)    // position de scroll voulue après changement de page
   useEffect(() => { pageFlipRef.current = pageFlip }, [pageFlip])
   useEffect(() => { sensRef.current = panSens }, [panSens])
+  useEffect(() => { fitWidthRef.current = fitWidth }, [fitWidth])
 
   // Charge les préférences de CET utilisateur (isolées des autres comptes)
   useEffect(() => {
     setScrollNav(localStorage.getItem(prefKey('scrollnav')) === '1')
     setPageFlip(localStorage.getItem(prefKey('pageflip')) === '1')
+    setFitWidth(localStorage.getItem(prefKey('fitwidth')) === '1')
     const s = Number(localStorage.getItem(prefKey('pansens')))
     setPanSens(s > 0 ? s : DEFAULT_SENS)
   }, [uid]) // eslint-disable-line
 
   const togglePageFlip = () => setPageFlip((v) => { localStorage.setItem(prefKey('pageflip'), v ? '0' : '1'); return !v })
+  const toggleFitWidth = () => setFitWidth((v) => {
+    localStorage.setItem(prefKey('fitwidth'), v ? '0' : '1')
+    if (!v) { setZoom(1); setPan({ x: 0, y: 0 }) }  // en entrant : on annule un éventuel zoom
+    return !v
+  })
   // Sensibilité : bouton qui cycle ×1 → ×1.5 → … → ×3 → ×1 (défaut ×1)
   const SENS_STEPS = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5]
   const cycleSens = () => {
@@ -47,6 +58,21 @@ export default function EpubReader() {
     const next = SENS_STEPS[(i + 1) % SENS_STEPS.length]
     setPanSens(next); localStorage.setItem(prefKey('pansens'), String(next))
   }
+  // Plein écran immersif : masque header/footer + plein écran natif (F11) sur desktop
+  const enterFullscreen = () => {
+    setFullscreen(true)
+    try { document.documentElement.requestFullscreen?.() } catch { /* iOS: non supporté */ }
+  }
+  const exitFullscreen = () => {
+    setFullscreen(false)
+    try { if (document.fullscreenElement) document.exitFullscreen?.() } catch { /* noop */ }
+  }
+  useEffect(() => {
+    const h = () => { if (!document.fullscreenElement) setFullscreen(false) }
+    document.addEventListener('fullscreenchange', h)
+    return () => document.removeEventListener('fullscreenchange', h)
+  }, [])
+
   // Zoom géré par l'app (pas le navigateur) : double-tap pour zoomer, glisser pour naviguer.
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -134,6 +160,15 @@ export default function EpubReader() {
   useLayoutEffect(() => {
     const dir = animateRef.current
     animateRef.current = null
+    // Mode fit-largeur : pas d'anim de flip, on repositionne le scroll (haut pour suivant,
+    // bas pour précédent — le bas est appliqué à la fin du chargement de l'image).
+    if (fitWidthRef.current) {
+      if (scrollRef.current) {
+        if (dir === -1 && current > 0) { fitScrollRef.current = 'bottom' }  // page précédente → bas
+        else { scrollRef.current.scrollTop = 0; fitScrollRef.current = 0 }  // sinon → haut
+      }
+      return
+    }
     const el = flipRef.current
     if (dir == null || !el) return
     if (pageFlipRef.current) {
@@ -199,16 +234,32 @@ export default function EpubReader() {
   // Navigation à la molette (liseuse/PC) : bas = suivant, haut = précédent. Sous toggle.
   const wheelLock = useRef(0)
   const onWheel = useCallback((e) => {
-    if (!scrollNav || zoomed) return
+    if (zoomed) return
+    if (fitWidth) {
+      // Défilement natif dans la planche ; on ne change de page qu'en début/fin de planche,
+      // et seulement si le mode molette est actif (cohabitation des deux mécaniques).
+      if (!scrollNav) return
+      const el = scrollRef.current
+      if (!el) return
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 3
+      const atTop = el.scrollTop <= 3
+      const now = Date.now()
+      if (now - wheelLock.current < 350) return
+      if (e.deltaY > 0 && atBottom) { wheelLock.current = now; goNext() }
+      else if (e.deltaY < 0 && atTop) { wheelLock.current = now; goPrev() }
+      return
+    }
+    if (!scrollNav) return
     const now = Date.now()
     if (now - wheelLock.current < 350) return       // 1 cran = 1 page
     if (Math.abs(e.deltaY) < 12) return
     wheelLock.current = now
     if (e.deltaY > 0) goNext(); else goPrev()
-  }, [scrollNav, zoomed, goNext, goPrev])
+  }, [scrollNav, zoomed, fitWidth, goNext, goPrev])
 
   // ── Gestes tactiles : tap latéral = page, double-tap = zoom, glisser = pan/swipe ──
   const onTouchStart = useCallback((e) => {
+    if (fitWidthRef.current) return   // mode défilement : scroll natif
     const t = e.touches[0]
     touchStartRef.current = { x: t.clientX, y: t.clientY }
     touchMovedRef.current = false
@@ -216,6 +267,7 @@ export default function EpubReader() {
   }, [zoomed, pan])
 
   const onTouchMove = useCallback((e) => {
+    if (fitWidthRef.current) return
     if (zoomed && panStartRef.current) {
       const t = e.touches[0]
       const dx = t.clientX - panStartRef.current.tx
@@ -227,6 +279,7 @@ export default function EpubReader() {
   }, [zoomed])
 
   const onTouchEnd = useCallback((e) => {
+    if (fitWidthRef.current) return   // mode défilement : tap géré par onAreaClick
     const t = e.changedTouches[0]
     const now = Date.now()
     // Fin d'un glissement pour paner (zoomé) → ne pas interpréter comme un tap
@@ -263,18 +316,24 @@ export default function EpubReader() {
     }
   }, [zoomed, scrollNav, goNext, goPrev, pan]) // eslint-disable-line
 
-  // Souris (desktop) : clic latéral = page, double-clic = zoom
+  // Clic latéral = changement de page
   const onAreaClick = useCallback((e) => {
-    if (IS_TOUCH || zoomed || scrollNav) return   // mode scroll actif → pas de nav au clic
+    if (zoomed) return
     const r = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - r.left
+    if (fitWidth) {   // mode défilement : tap latéral change de page (souris + tactile)
+      if (x < r.width * 0.30) goPrev()
+      else if (x > r.width * 0.70) goNext()
+      return
+    }
+    if (IS_TOUCH || scrollNav) return   // mode scroll actif → pas de nav au clic
     if (x < r.width * 0.33) goPrev()
     else if (x > r.width * 0.67) goNext()
-  }, [zoomed, scrollNav, goPrev, goNext])
+  }, [zoomed, scrollNav, fitWidth, goPrev, goNext])
   const onAreaDblClick = useCallback((e) => {
-    if (IS_TOUCH) return
+    if (IS_TOUCH || fitWidth) return   // pas de zoom double-clic en mode défilement
     toggleZoomAt(e.clientX, e.clientY)
-  }, [zoomed]) // eslint-disable-line
+  }, [zoomed, fitWidth]) // eslint-disable-line
 
   const prevChap = prevChapNum != null ? { number: prevChapNum } : null
   const nextChap = nextChapNum != null ? { number: nextChapNum } : null
@@ -316,7 +375,16 @@ export default function EpubReader() {
             <rect x="6" y="2" width="12" height="20" rx="6"/><line x1="12" y1="6" x2="12" y2="10"/>
           </svg>
         </button>
-        <button onClick={() => setFullscreen(true)} title="Plein écran"
+        <button onClick={toggleFitWidth}
+          title={fitWidth ? 'Lecture défilement (fit largeur) : ON' : 'Lecture défilement (fit largeur) : OFF'}
+          style={{ color: fitWidth ? '#e50914' : 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
+            background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
+            display: 'flex', alignItems: 'center' }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="4" y="3" width="16" height="18" rx="1"/><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/>
+          </svg>
+        </button>
+        <button onClick={enterFullscreen} title="Plein écran"
           style={{ color: 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
             background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
             display: 'flex', alignItems: 'center' }}>
@@ -347,6 +415,7 @@ export default function EpubReader() {
 
       {/* Image area */}
       <div
+        ref={scrollRef}
         onWheel={onWheel}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
@@ -354,63 +423,96 @@ export default function EpubReader() {
         onClick={onAreaClick}
         onDoubleClick={onAreaDblClick}
         style={{
-          flex: 1, overflow: 'hidden', position: 'relative',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          touchAction: 'none',   // on gère nous-mêmes zoom/scroll (pas le navigateur)
-          background: '#000',    // fond opaque → repaint propre en pannant (pas de traînée)
-          perspective: '2200px', // profondeur 3D pour la page qui se tourne
+          flex: 1, position: 'relative', background: '#000',
+          display: 'flex', justifyContent: 'center',
+          ...(fitWidth
+            ? {
+              // Mode défilement : image ajustée à la largeur, scroll vertical natif
+              overflowY: 'auto', overflowX: 'hidden', alignItems: 'flex-start',
+              touchAction: 'pan-y',
+            }
+            : {
+              overflow: 'hidden', alignItems: 'center',
+              touchAction: 'none',    // on gère nous-mêmes zoom/pan
+              perspective: '2200px',  // profondeur 3D pour la page qui se tourne
+            }),
         }}
       >
         {!loaded && (
-          <div style={{ color: 'rgba(255,255,255,.3)', fontSize: '.88rem', display: 'flex', gap: '.5rem', alignItems: 'center' }}>
+          <div style={{ color: 'rgba(255,255,255,.3)', fontSize: '.88rem', display: 'flex', gap: '.5rem', alignItems: 'center', margin: 'auto' }}>
             <div className="spin" /> Chargement…
           </div>
         )}
         {loaded && images.length === 0 && (
-          <div style={{ color: 'rgba(255,255,255,.3)' }}>Aucune image trouvée</div>
+          <div style={{ color: 'rgba(255,255,255,.3)', margin: 'auto' }}>Aucune image trouvée</div>
         )}
         {loaded && images.length > 0 && (
-          <>
-            {!imgReady && <div className="spin" style={{ position: 'absolute' }} />}
-            {/* Conteneur "page" qui pivote (flip) + ombre en dégradé par-dessus */}
-            <div ref={flipRef} className="reader-flip">
-              <img
-                ref={imgRef}
-                key={images[current]}
-                src={images[current]}
-                alt={`Page ${current + 1}`}
-                onLoad={() => setImgReady(true)}
-                draggable={false}
-                style={{
-                  maxHeight: '100%', maxWidth: '100%',
-                  objectFit: 'contain', display: 'block',
-                  opacity: imgReady ? 1 : 0,
-                  userSelect: 'none', cursor: zoomed ? 'grab' : 'default',
-                  backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
-                  ...(zoomed
-                    ? {
-                      // translate3d + will-change → couche GPU propre (pas de traînée)
-                      transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
-                      transformOrigin: `${origin.x}px ${origin.y}px`,
-                      transition: 'none',
-                      willChange: 'transform',
-                    }
-                    : { transition: 'opacity .12s' }),
-                }}
-              />
-              <div ref={shadeRef} className="reader-flip-shade" />
-            </div>
-          </>
+          fitWidth ? (
+            /* Mode défilement : planche pleine largeur, on la parcourt verticalement */
+            <img
+              ref={imgRef}
+              key={images[current]}
+              src={images[current]}
+              alt={`Page ${current + 1}`}
+              onLoad={() => {
+                setImgReady(true)
+                if (fitScrollRef.current === 'bottom' && scrollRef.current) {
+                  scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+                  fitScrollRef.current = 0
+                }
+              }}
+              draggable={false}
+              style={{ width: '100%', height: 'auto', display: 'block', userSelect: 'none' }}
+            />
+          ) : (
+            <>
+              {!imgReady && <div className="spin" style={{ position: 'absolute' }} />}
+              {/* Conteneur "page" qui pivote (flip) + ombre en dégradé par-dessus */}
+              <div ref={flipRef} className="reader-flip">
+                <img
+                  ref={imgRef}
+                  key={images[current]}
+                  src={images[current]}
+                  alt={`Page ${current + 1}`}
+                  onLoad={() => setImgReady(true)}
+                  draggable={false}
+                  style={{
+                    maxHeight: '100%', maxWidth: '100%',
+                    objectFit: 'contain', display: 'block',
+                    opacity: imgReady ? 1 : 0,
+                    userSelect: 'none', cursor: zoomed ? 'grab' : 'default',
+                    backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
+                    ...(zoomed
+                      ? {
+                        transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
+                        transformOrigin: `${origin.x}px ${origin.y}px`,
+                        transition: 'none',
+                        willChange: 'transform',
+                      }
+                      : { transition: 'opacity .12s' }),
+                  }}
+                />
+                <div ref={shadeRef} className="reader-flip-shade" />
+              </div>
+            </>
+          )
         )}
       </div>
 
       {/* Bouton flottant pour quitter le plein écran */}
       {fullscreen && (
-        <button onClick={() => setFullscreen(false)} className="reader-fs-exit" title="Quitter le plein écran">
+        <button onClick={exitFullscreen} className="reader-fs-exit" title="Quitter le plein écran">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>
           </svg>
         </button>
+      )}
+
+      {/* Plein écran : barre de progression rouge en bas, toute la largeur */}
+      {fullscreen && loaded && images.length > 0 && (
+        <div className="reader-fs-progress">
+          <div style={{ width: `${((current + 1) / images.length) * 100}%` }} />
+        </div>
       )}
 
       {/* Bottom bar */}
