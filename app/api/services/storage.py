@@ -145,17 +145,19 @@ def fetch_epub(manga_id: str, chapter_number: float, kind: str) -> Optional[Path
 
 
 def purge_cache(manga_id: str, chapter_number: float, kind: str) -> None:
-    """Supprime l'EPUB en cache local pour ce chapitre → force un re-download frais.
-    Indispensable après un ré-upload (réparation) : sinon on ressert l'ancien fichier cassé."""
+    """Supprime l'EPUB en cache local + la cover de chapitre en cache pour ce chapitre →
+    force un re-download/re-extraction frais. Indispensable après un ré-upload (réparation)."""
     try:
-        from ..config import DATA_DIR
+        from ..config import DATA_DIR, COVERS_DIR
         cache = DATA_DIR / "epub_cache"
-        if not cache.exists():
-            return
-        prefix = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{manga_id}__{kind}__{chapter_number}")
-        for f in cache.glob("*.epub"):
-            if f.stem.startswith(prefix):
-                f.unlink(missing_ok=True)
+        if cache.exists():
+            prefix = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{manga_id}__{kind}__{chapter_number}")
+            for f in cache.glob("*.epub"):
+                if f.stem.startswith(prefix):
+                    f.unlink(missing_ok=True)
+        # cover de chapitre en cache (COVERS_DIR/ch/{manga_id}__{chapter}.jpg)
+        cf = COVERS_DIR / "ch" / (re.sub(r"[^A-Za-z0-9._-]+", "-", f"{manga_id}__{chapter_number}") + ".jpg")
+        cf.unlink(missing_ok=True)
     except Exception:
         pass
 

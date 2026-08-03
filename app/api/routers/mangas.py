@@ -215,16 +215,34 @@ def get_chapter_image(manga_id: str, chapter_number: float, idx: int):
                     headers={"Cache-Control": "public, max-age=86400"})
 
 
+def _chapter_cover_path(manga_id: str, chapter_number: float):
+    import re
+    ccache = COVERS_DIR / "ch"
+    ccache.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{manga_id}__{chapter_number}")
+    return ccache / f"{safe}.jpg"
+
+
 @router.get("/{manga_id}/chapters/{chapter_number}/cover", summary="Cover du chapitre (1ère image)")
 def get_chapter_cover(manga_id: str, chapter_number: float):
+    # Cache dédié (JPEG) → on ne télécharge PLUS l'EPUB entier depuis Telegram à chaque
+    # affichage de la grille (gros gain perf pour les œuvres à beaucoup de chapitres).
+    cf = _chapter_cover_path(manga_id, chapter_number)
+    if cf.exists() and cf.stat().st_size > 0:
+        return FileResponse(str(cf), media_type="image/jpeg",
+                            headers={"Cache-Control": "public, max-age=604800"})
     path = _resolve_epub(manga_id, chapter_number)
     if not path:
         raise HTTPException(404)
     data, media_type = epub_reader.get_image_data(path, 0)
     if data is None:
         raise HTTPException(404)
+    try:
+        cf.write_bytes(data)   # met en cache pour les prochaines fois
+    except Exception:
+        pass
     return Response(content=data, media_type=media_type,
-                    headers={"Cache-Control": "public, max-age=86400"})
+                    headers={"Cache-Control": "public, max-age=604800"})
 
 
 def _refresh_info_sync(manga_id: str) -> dict:

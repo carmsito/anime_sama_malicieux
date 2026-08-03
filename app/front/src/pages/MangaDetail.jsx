@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useRef, useState } from 'react'
+import React, { useContext, useEffect, useRef, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { gsap } from 'gsap'
 import { api } from '../api/client'
@@ -164,6 +164,9 @@ export default function MangaDetail() {
   const [deleting, setDeleting] = useState(false)
   const [repairing, setRepairing] = useState(false)
   const [repairingSet, setRepairingSet] = useState(new Set())
+  const CHAP_BATCH = 24
+  const [visibleCount, setVisibleCount] = useState(CHAP_BATCH)  // pagination scroll infini
+  const sentinelRef = useRef()
   const [selectionMode, setSelectionMode] = useState(false)
   const [selAction, setSelAction] = useState('download')  // 'download' | 'delete'
   const [rangeInput, setRangeInput] = useState('')
@@ -190,6 +193,21 @@ export default function MangaDetail() {
   useEffect(() => {
     mangaRef.current = manga
   }, [manga])
+
+  // Pagination : réinitialise le nombre visible quand le tri/filtre/manga change
+  useEffect(() => { setVisibleCount(CHAP_BATCH) }, [sortAsc, chapFilter, mangaId]) // eslint-disable-line
+
+  // Observer de fin de liste → charge le batch suivant au scroll (pas de pagination footer)
+  const observerRef = useRef()
+  const sentinelCb = useCallback((node) => {
+    if (observerRef.current) observerRef.current.disconnect()
+    if (node) {
+      observerRef.current = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting) setVisibleCount((c) => c + CHAP_BATCH)
+      }, { rootMargin: '800px' })
+      observerRef.current.observe(node)
+    }
+  }, [])
 
   // Fin de réparation : plus de job actif → on retire l'état "réparation" (le gear)
   useEffect(() => {
@@ -702,25 +720,33 @@ export default function MangaDetail() {
               </div>
             )
           ) : (
-            <div className="chapter-gallery" ref={galleryRef}>
-              {sorted.map((ch) => (
-                <ChapterCard
-                  key={`${ch.title || 'chap'}-${ch.number}`}
-                  manga={manga}
-                  ch={ch}
-                  onRead={() => navigate(`/manga/${mangaId}/read/${ch.number}`)}
-                  onRestart={() => navigate(`/manga/${mangaId}/read/${ch.number}?p=0`)}
-                  isLoading={loadingChaps.has(ch.number)}
-                  isSelected={selectedChaps.has(ch.number)}
-                  onToggleSelect={() => toggleChapSelect(ch.number)}
-                  selectionMode={selectionMode}
-                  progress={progressMap[ch.number] || 0}
-                />
-              ))}
-              {pendingLabels.map((label, idx) => (
-                <PendingChapterCard key={`pending-${idx}`} label={label} active={idx === 0} repair={repairingSet.size > 0} />
-              ))}
-            </div>
+            <>
+              <div className="chapter-gallery" ref={galleryRef}>
+                {sorted.slice(0, visibleCount).map((ch) => (
+                  <ChapterCard
+                    key={`${ch.title || 'chap'}-${ch.number}`}
+                    manga={manga}
+                    ch={ch}
+                    onRead={() => navigate(`/manga/${mangaId}/read/${ch.number}`)}
+                    onRestart={() => navigate(`/manga/${mangaId}/read/${ch.number}?p=0`)}
+                    isLoading={loadingChaps.has(ch.number)}
+                    isSelected={selectedChaps.has(ch.number)}
+                    onToggleSelect={() => toggleChapSelect(ch.number)}
+                    selectionMode={selectionMode}
+                    progress={progressMap[ch.number] || 0}
+                  />
+                ))}
+                {pendingLabels.map((label, idx) => (
+                  <PendingChapterCard key={`pending-${idx}`} label={label} active={idx === 0} repair={repairingSet.size > 0} />
+                ))}
+              </div>
+              {/* Sentinelle : charge le batch suivant quand elle entre dans la vue */}
+              {visibleCount < sorted.length && (
+                <div ref={sentinelCb} style={{ display: 'flex', justifyContent: 'center', padding: '1.5rem 0' }}>
+                  <div className="spin" style={{ width: 24, height: 24 }} />
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
