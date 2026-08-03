@@ -100,6 +100,19 @@ export default function EpubReader() {
     }
   }, [current, images])
 
+  // Image déjà en cache (préchargée) : onLoad ne se déclenche PAS → sans ça on resterait
+  // bloqué en "non prêt" = écran noir. On vérifie .complete après montage.
+  useEffect(() => {
+    const im = imgRef.current
+    if (im && im.complete && im.naturalWidth > 0) {
+      setImgReady(true)
+      if (fitWidthRef.current && fitScrollRef.current === 'bottom' && scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+        fitScrollRef.current = 0
+      }
+    }
+  }, [current, chapterNum, images, fitWidth])
+
   const toggleZoomAt = (clientX, clientY) => {
     if (zoomed) { setZoom(1); setPan({ x: 0, y: 0 }); return }
     const img = imgRef.current
@@ -483,6 +496,7 @@ export default function EpubReader() {
                     fitScrollRef.current = 0
                   }
                 }}
+                onError={() => setImgReady(true)}
                 draggable={false}
                 /* margin auto : centré verticalement si la planche tient à l'écran,
                    sinon marges à 0 → défilement normal depuis le haut.
@@ -501,6 +515,7 @@ export default function EpubReader() {
                   src={images[current]}
                   alt={`Page ${current + 1}`}
                   onLoad={() => setImgReady(true)}
+                  onError={() => setImgReady(true)}
                   draggable={false}
                   style={{
                     maxHeight: '100%', maxWidth: '100%',
