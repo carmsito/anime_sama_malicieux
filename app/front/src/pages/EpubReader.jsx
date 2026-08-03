@@ -160,14 +160,12 @@ export default function EpubReader() {
 
   const toggleZoomAt = (clientX, clientY) => {
     if (zoomed) { setZoom(1); setPan({ x: 0, y: 0 }); return }
-    const z = (zoomPctRef.current || 100) / 100
-    if (z <= 1) return   // niveau 100% → pas de zoom
     const img = imgRef.current
     if (!img) return
     const r = img.getBoundingClientRect()
     setOrigin({ x: clientX - r.left, y: clientY - r.top })
     setPan({ x: 0, y: 0 })
-    setZoom(z)
+    setZoom(ZOOM_LEVEL)
   }
 
   const toggleScrollNav = () => {
@@ -454,9 +452,9 @@ export default function EpubReader() {
       if (el && !autoPausedRef.current && imgReadyRef.current && now > cooldown) {
         const remaining = el.scrollHeight - el.clientHeight - el.scrollTop
         if (remaining <= 1) {
-          acc = 0; cooldown = now + 450        // évite de sauter plusieurs pages
+          acc = 0; cooldown = now + 900         // micro-pause à chaque changement de planche
           if (current < images.length - 1 || nextChapNum != null) goNext()
-          else setAutoScroll(false)            // fin du chapitre sans suite → stop
+          else setAutoScroll(false)             // fin du chapitre sans suite → stop
         } else {
           acc += (AUTO_SPEEDS[autoLevelRef.current - 1] || 8) * dt
           const px = Math.floor(acc)
@@ -564,9 +562,11 @@ export default function EpubReader() {
           display: 'flex', justifyContent: 'center',
           ...(fitWidth
             ? {
-              // Mode défilement : image ajustée à la largeur, scroll vertical natif
-              overflowY: 'auto', overflowX: 'hidden', alignItems: 'flex-start',
-              touchAction: 'pan-y',
+              // Mode défilement : image ajustée à la largeur (× zoomPct), scroll vertical natif
+              // (+ horizontal si la planche est agrandie au-delà de 100%)
+              overflowY: 'auto', overflowX: zoomPct > 100 ? 'auto' : 'hidden',
+              alignItems: 'flex-start',
+              touchAction: zoomPct > 100 ? 'pan-x pan-y' : 'pan-y',
             }
             : {
               overflow: 'hidden', alignItems: 'center',
@@ -605,7 +605,7 @@ export default function EpubReader() {
                 onLoad={markReady}
                 onError={() => setImgReady(true)}
                 draggable={false}
-                style={{ width: '100%', height: 'auto', display: 'block', userSelect: 'none', margin: 'auto 0' }}
+                style={{ width: `${zoomPct}%`, height: 'auto', display: 'block', userSelect: 'none', margin: 'auto 0', flexShrink: 0 }}
               />
             </>
           ) : (
@@ -670,40 +670,41 @@ export default function EpubReader() {
         <div style={{ position: 'absolute', left: '.6rem', top: 22, transform: 'translateY(-50%)',
           display: 'flex', alignItems: 'center', gap: '.3rem' }}>
           {fitWidth ? (
-            autoScroll && (
-              <button onClick={cycleAutoSpeed} title="Vitesse du défilement auto"
-                style={{ display: 'flex', alignItems: 'center', gap: '.25rem', color: '#e50914',
-                  background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
-                  padding: '.28rem .5rem', cursor: 'pointer', fontSize: '.74rem', fontWeight: 700 }}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="7 13 12 18 17 13" /><polyline points="7 6 12 11 17 6" />
-                </svg>
-                V{autoLevel}
-              </button>
-            )
-          ) : (
             <>
-              <button onClick={cycleZoom} title={`Niveau de zoom (double-tap) : ${zoomPct}%`}
+              {/* Mise à l'échelle : taille de la planche en mode fit-largeur */}
+              <button onClick={cycleZoom} title={`Taille de la planche : ${zoomPct}%`}
                 style={{ display: 'flex', alignItems: 'center', gap: '.25rem',
                   color: zoomPct > 100 ? '#e50914' : 'rgba(255,255,255,.6)',
                   background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
                   padding: '.28rem .5rem', cursor: 'pointer', fontSize: '.72rem', fontWeight: 700 }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
+                  <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
                 </svg>
                 {zoomPct}%
               </button>
-              <button onClick={cycleSens} title={`Sensibilité de déplacement en zoom : ×${panSens}`}
-                style={{ display: 'flex', alignItems: 'center', gap: '.25rem',
-                  color: panSens > 1 ? '#e50914' : 'rgba(255,255,255,.6)',
-                  background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
-                  padding: '.28rem .5rem', cursor: 'pointer', fontSize: '.72rem', fontWeight: 700 }}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 20a8 8 0 1 0-8-8"/><path d="M12 12l4-2"/>
-                </svg>
-                ×{panSens}
-              </button>
+              {autoScroll && (
+                <button onClick={cycleAutoSpeed} title="Vitesse du défilement auto"
+                  style={{ display: 'flex', alignItems: 'center', gap: '.25rem', color: '#e50914',
+                    background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
+                    padding: '.28rem .5rem', cursor: 'pointer', fontSize: '.74rem', fontWeight: 700 }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="7 13 12 18 17 13" /><polyline points="7 6 12 11 17 6" />
+                  </svg>
+                  V{autoLevel}
+                </button>
+              )}
             </>
+          ) : (
+            <button onClick={cycleSens} title={`Sensibilité de déplacement en zoom : ×${panSens}`}
+              style={{ display: 'flex', alignItems: 'center', gap: '.25rem',
+                color: panSens > 1 ? '#e50914' : 'rgba(255,255,255,.6)',
+                background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
+                padding: '.28rem .5rem', cursor: 'pointer', fontSize: '.72rem', fontWeight: 700 }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20a8 8 0 1 0-8-8"/><path d="M12 12l4-2"/>
+              </svg>
+              ×{panSens}
+            </button>
           )}
         </div>
         <button onClick={goPrev} disabled={current === 0}
