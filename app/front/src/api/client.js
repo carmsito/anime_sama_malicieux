@@ -111,6 +111,9 @@ export const api = {
   // Extract
   extract: (body) =>
     req('/extract', { method: 'POST', body: JSON.stringify(body) }),
+  // Réparer / re-scraper des chapitres (scrapper+admin)
+  repair: (mangaId, chapNums) =>
+    req('/extract/repair', { method: 'POST', body: JSON.stringify({ manga_id: mangaId, chapter_numbers: chapNums }) }),
 
   // Jobs
   listJobs: () => req('/jobs'),

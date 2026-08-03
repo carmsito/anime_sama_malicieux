@@ -137,6 +137,7 @@ export default function MangaDetail() {
   const { jobs } = useContext(JobsCtx)
   const { user } = useContext(AuthCtx)
   const isAdmin = user?.role === 'admin'
+  const canScrape = user?.role === 'admin' || user?.role === 'scrapper'
   const [manga, setManga] = useState(null)
   const [progressMap, setProgressMap] = useState({})
   const [lastProgress, setLastProgress] = useState(null)  // {chapter_number, page, total_pages}
@@ -152,6 +153,7 @@ export default function MangaDetail() {
   const [selectedChaps, setSelectedChaps] = useState(new Set())
   const [downloading, setDownloading] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [repairing, setRepairing] = useState(false)
   const [selectionMode, setSelectionMode] = useState(false)
   const [selAction, setSelAction] = useState('download')  // 'download' | 'delete'
   const [rangeInput, setRangeInput] = useState('')
@@ -350,6 +352,18 @@ export default function MangaDetail() {
     }
   }
 
+  const onRepairSelected = async () => {
+    if (selectedChaps.size === 0) return
+    if (!confirm(`Re-scraper ${selectedChaps.size} élément(s) depuis la source ?\nLes EPUB cassés seront recréés (jobs en arrière-plan).`)) return
+    setRepairing(true)
+    try {
+      await api.repair(mangaId, Array.from(selectedChaps))
+      setSelectedChaps(new Set()); setSelectionMode(false)
+    } catch (e) {
+      alert(`Erreur: ${e.message}`)
+    } finally { setRepairing(false) }
+  }
+
   const selectAll = () => {
     setSelectedChaps(new Set(manga.chapters?.map(c => c.number) || []))
   }
@@ -511,6 +525,25 @@ export default function MangaDetail() {
                 <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
             </button>
+            {canScrape && (
+              <button
+                onClick={() => {
+                  const active = selectionMode && selAction === 'repair'
+                  if (active) { setSelectionMode(false); return }
+                  setSelAction('repair'); setSelectionMode(true); deselectAll()
+                }}
+                style={{
+                  background: 'none', border: 'none', color: '#fff', cursor: 'pointer',
+                  padding: '.4rem', display: 'flex', alignItems: 'center',
+                  opacity: (selectionMode && selAction === 'repair') ? 1 : 0.6, transition: 'opacity .2s',
+                }}
+                title="Réparer / re-scraper des chapitres"
+              >
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                </svg>
+              </button>
+            )}
             <button className={`detail-fav-inline ${isFav ? 'on' : ''}`} onClick={toggleFav}
               title={isFav ? 'Retirer des favoris' : 'Ajouter aux favoris'}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill={isFav ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -586,6 +619,13 @@ export default function MangaDetail() {
                     {downloading
                       ? <><span className="spin" style={{ width: 13, height: 13 }} /> Téléchargement…</>
                       : <><DlIcon /> Télécharger {selectedChaps.size}</>}
+                  </button>
+                )}
+                {selAction === 'repair' && selectedChaps.size > 0 && (
+                  <button className="btn btn-primary btn-sm" onClick={onRepairSelected} disabled={repairing}>
+                    {repairing
+                      ? <><span className="spin" style={{ width: 13, height: 13 }} /> Lancement…</>
+                      : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg> Réparer {selectedChaps.size}</>}
                   </button>
                 )}
                 {selAction === 'delete' && (
