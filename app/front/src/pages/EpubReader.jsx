@@ -92,10 +92,11 @@ export default function EpubReader() {
   // Réinitialise le zoom à chaque changement de page / chapitre
   useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }) }, [current, chapterNum])
 
-  // Précharge les planches voisines → la page qui se tourne s'anime sur une image déjà chargée
+  // Précharge plusieurs planches en avant (+ une en arrière) → moins d'attente au changement
+  // de page, surtout sur mobile où le serveur extrait la planche de l'EPUB.
   useEffect(() => {
     if (!images.length) return
-    for (const i of [current + 1, current - 1, current + 2]) {
+    for (const i of [current + 1, current + 2, current + 3, current + 4, current - 1]) {
       if (i >= 0 && i < images.length) { const im = new Image(); im.src = images[i] }
     }
   }, [current, images])
@@ -483,12 +484,20 @@ export default function EpubReader() {
           fitWidth ? (
             /* Mode défilement : planche pleine largeur, on la parcourt verticalement */
             <>
-              {!imgReady && <div className="spin" style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }} />}
+              {!imgReady && (
+                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+                  display: 'flex', alignItems: 'center', gap: '.5rem', color: 'rgba(255,255,255,.55)', fontSize: '.82rem',
+                  background: 'rgba(0,0,0,.5)', padding: '.5rem .8rem', borderRadius: 6, zIndex: 5 }}>
+                  <div className="spin" /> Chargement…
+                </div>
+              )}
+              {/* key STABLE : l'élément persiste → le navigateur garde la planche précédente
+                  affichée pendant que la nouvelle charge (jamais d'écran noir). */}
               <img
                 ref={imgRef}
-                key={images[current]}
+                key="fit-page"
                 src={images[current]}
-                alt={`Page ${current + 1}`}
+                alt=""
                 onLoad={() => {
                   setImgReady(true)
                   if (fitScrollRef.current === 'bottom' && scrollRef.current) {
@@ -498,10 +507,7 @@ export default function EpubReader() {
                 }}
                 onError={() => setImgReady(true)}
                 draggable={false}
-                /* margin auto : centré verticalement si la planche tient à l'écran,
-                   sinon marges à 0 → défilement normal depuis le haut.
-                   opacity : évite l'écran noir tant que l'image n'est pas prête */
-                style={{ width: '100%', height: 'auto', display: 'block', userSelect: 'none', margin: 'auto 0', opacity: imgReady ? 1 : 0, transition: 'opacity .12s' }}
+                style={{ width: '100%', height: 'auto', display: 'block', userSelect: 'none', margin: 'auto 0' }}
               />
             </>
           ) : (
