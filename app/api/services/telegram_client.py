@@ -191,6 +191,42 @@ class TelegramMTProto:
 
         return self._submit(_do())
 
+    def check_integrity(self, msg_ids: list) -> dict:
+        """Vrai test d'intégrité ZIP : télécharge SEULEMENT la fin de chaque EPUB (256 Ko)
+        et cherche la signature de fin de ZIP (EOCD 'PK\\x05\\x06'). Absente = tronqué/cassé.
+        Retourne {msg_id: True(sain) | False(cassé) | None(inconnu)}. ~256 Ko/fichier."""
+        channel = _channel()
+
+        async def _do():
+            from telethon import utils
+            from telethon.tl.functions.upload import GetFileRequest
+            ids = [int(i) for i in msg_ids if i is not None]
+            msgs = {}
+            for i in range(0, len(ids), 100):
+                for m in (await self._client.get_messages(channel, ids=ids[i:i + 100]) or []):
+                    if m is not None:
+                        msgs[int(m.id)] = m
+            PART = 256 * 1024
+            out = {}
+            for mid in ids:
+                m = msgs.get(mid)
+                if m is None:
+                    out[mid] = False   # message disparu → cassé
+                    continue
+                try:
+                    size = m.file.size
+                    _dc, loc = utils.get_input_location(m.media)
+                    off = ((size - 1) // PART) * PART if size > PART else 0
+                    res = await self._client(GetFileRequest(loc, offset=off, limit=PART))
+                    tail = getattr(res, "bytes", b"") or b""
+                    out[mid] = (b"PK\x05\x06" in tail)
+                except Exception as e:
+                    print(f"[integrity] msg {mid}: {e}", flush=True)
+                    out[mid] = None   # erreur → on ne flag pas à tort
+            return out
+
+        return self._submit(_do())
+
     def delete(self, msg_id: int) -> None:
         channel = _channel()
 

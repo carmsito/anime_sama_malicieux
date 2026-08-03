@@ -1,4 +1,4 @@
-import React, { useContext, useState, useEffect } from 'react'
+import React, { useContext, useState, useEffect, useRef } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import Login from './pages/Login'
 import Home from './pages/Home'
@@ -34,9 +34,50 @@ function useAuth() {
 
 function useJobs() {
   const [jobs, setJobs] = useState([])
+  const dismissedRef = useRef(new Set())
+
+  // Récupère les jobs du SERVEUR (source de vérité) → survit au F5 + suivi réel.
+  // Sans ça, un F5 vidait la liste et on ne voyait plus le job (qui tourne pourtant côté serveur).
+  useEffect(() => {
+    if (!localStorage.getItem('token')) return
+    let stop = false
+    const poll = async () => {
+      try {
+        const server = await api.listJobs()
+        if (stop) return
+        setJobs((prev) => {
+          const dismissed = dismissedRef.current
+          const byId = Object.fromEntries(server.map((j) => [j.id, j]))
+          const result = []
+          const seen = new Set()
+          // 1) jobs actifs côté serveur (garde la progression locale si + avancée)
+          for (const j of server) {
+            if (dismissed.has(j.id)) continue
+            if (['pending', 'running'].includes(j.status)) {
+              const l = prev.find((p) => p.id === j.id)
+              result.push(l && (l.progress || 0) > (j.progress || 0) ? { ...j, progress: l.progress } : j)
+              seen.add(j.id)
+            }
+          }
+          // 2) jobs qu'on suivait et qui viennent de finir → garde l'état final jusqu'au dismiss
+          for (const p of prev) {
+            if (seen.has(p.id) || dismissed.has(p.id)) continue
+            const s = byId[p.id]
+            if (s && ['done', 'error'].includes(s.status)) { result.push(s); seen.add(p.id) }
+            else if (['done', 'error'].includes(p.status)) { result.push(p); seen.add(p.id) }
+          }
+          return result
+        })
+      } catch { /* réseau : on garde l'état courant */ }
+    }
+    poll()
+    const t = setInterval(poll, 2500)
+    return () => { stop = true; clearInterval(t) }
+  }, [])
+
   const addJob = (j) => setJobs((p) => [j, ...p.filter((x) => x.id !== j.id)])
   const updateJob = (id, u) => setJobs((p) => p.map((j) => (j.id === id ? { ...j, ...u } : j)))
-  const dismissJob = (id) => setJobs((p) => p.filter((j) => j.id !== id))
+  const dismissJob = (id) => { dismissedRef.current.add(id); setJobs((p) => p.filter((j) => j.id !== id)) }
   return { jobs, addJob, updateJob, dismissJob }
 }
 

@@ -84,8 +84,9 @@ def is_running() -> bool:
 # ── Scénario : vérification d'intégrité ───────────────────────────────────────
 
 def run_verification() -> dict:
-    """Compare la taille enregistrée (DB, taille locale à l'upload) à la taille réelle
-    sur Telegram. Différence → EPUB tronqué/cassé. Aucun téléchargement (léger)."""
+    """Vrai test d'intégrité : télécharge la FIN de chaque EPUB et vérifie la présence du
+    marqueur de fin de ZIP (EOCD). Absent → EPUB tronqué/cassé (détecte aussi les
+    troncatures à la CRÉATION, que la comparaison de tailles ne voyait pas)."""
     if is_running():
         return {"skipped": "déjà en cours"}
     db.kv_set(_KEY_RUNNING, "1")
@@ -99,19 +100,17 @@ def run_verification() -> dict:
             conn.close()
 
         broken = []
-        sizes = {}
+        valid = {}
         try:
             from .telegram_client import get_client
-            sizes = get_client().get_sizes([f["msg_id"] for f in files]) or {}
+            valid = get_client().check_integrity([f["msg_id"] for f in files]) or {}
         except Exception as e:
-            print(f"[scenario] get_sizes: {e}", flush=True)
+            print(f"[scenario] check_integrity: {e}", flush=True)
 
         mangas = {m["id"]: m for m in library.list_mangas()}
         for f in files:
-            tg = sizes.get(int(f["msg_id"])) if f.get("msg_id") is not None else None
-            dbsz = f.get("size")
-            ok = tg is not None and (not dbsz or tg == dbsz)
-            if not ok:
+            v = valid.get(int(f["msg_id"])) if f.get("msg_id") is not None else False
+            if v is False:   # explicitement cassé (None = inconnu → on ne flag pas)
                 m = mangas.get(f["manga_id"]) or {}
                 broken.append({
                     "manga_id": f["manga_id"],
@@ -119,8 +118,7 @@ def run_verification() -> dict:
                     "chapter_number": f["chapter_number"],
                     "kind": f.get("kind"),
                     "source": (m.get("meta", {}) or {}).get("source", "?"),
-                    "db_size": dbsz,
-                    "tg_size": tg,
+                    "db_size": f.get("size"),
                 })
 
         # groupé par source (pour réparer correctement)
