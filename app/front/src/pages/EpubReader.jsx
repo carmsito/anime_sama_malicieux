@@ -259,9 +259,9 @@ export default function EpubReader() {
 
   // ── Gestes tactiles : tap latéral = page, double-tap = zoom, glisser = pan/swipe ──
   const onTouchStart = useCallback((e) => {
-    if (fitWidthRef.current) return   // mode défilement : scroll natif
     const t = e.touches[0]
     touchStartRef.current = { x: t.clientX, y: t.clientY }
+    if (fitWidthRef.current) return   // mode défilement : scroll natif (on garde juste startY)
     touchMovedRef.current = false
     if (zoomed) panStartRef.current = { px: pan.x, py: pan.y, tx: t.clientX, ty: t.clientY }
   }, [zoomed, pan])
@@ -279,8 +279,23 @@ export default function EpubReader() {
   }, [zoomed])
 
   const onTouchEnd = useCallback((e) => {
-    if (fitWidthRef.current) return   // mode défilement : tap géré par onAreaClick
     const t = e.changedTouches[0]
+    if (fitWidthRef.current) {
+      // Mode défilement : le tap est géré par onAreaClick. Ici on gère le SWIPE vertical
+      // qui tourne la page — aux extrémités de la planche, ou si elle tient à l'écran.
+      // Seulement si le mode molette/scroll est actif (cohabitation).
+      if (!scrollNav) return
+      const el = scrollRef.current
+      if (!el) return
+      const dy = t.clientY - touchStartRef.current.y
+      if (Math.abs(dy) < 40) return   // tap → onAreaClick
+      const fits = el.scrollHeight <= el.clientHeight + 3
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 3
+      const atTop = el.scrollTop <= 3
+      if (dy < 0 && (fits || atBottom)) goNext()        // swipe vers le haut → suivant
+      else if (dy > 0 && (fits || atTop)) goPrev()      // swipe vers le bas → précédent
+      return
+    }
     const now = Date.now()
     // Fin d'un glissement pour paner (zoomé) → ne pas interpréter comme un tap
     if (zoomed && touchMovedRef.current) { panStartRef.current = null; return }
@@ -462,7 +477,9 @@ export default function EpubReader() {
                 }
               }}
               draggable={false}
-              style={{ width: '100%', height: 'auto', display: 'block', userSelect: 'none' }}
+              /* margin auto : centré verticalement si la planche tient à l'écran,
+                 sinon marges à 0 → défilement normal depuis le haut */
+              style={{ width: '100%', height: 'auto', display: 'block', userSelect: 'none', margin: 'auto 0' }}
             />
           ) : (
             <>
