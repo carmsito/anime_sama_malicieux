@@ -1186,6 +1186,32 @@ input::placeholder { color: rgba(255,255,255,.3); }
 }
 .stat-work-reset:hover { color: #ff6b6b; transform: rotate(-30deg); }
 
+/* ── RÉGLAGES LECTEUR ── */
+.settings-page { padding: 88px 4% 5rem; max-width: 780px; margin: 0 auto; }
+.set-panel {
+  background: #171717; border: 1px solid rgba(255,255,255,.07); border-radius: 10px;
+  padding: 1.1rem 1.2rem; margin-bottom: 1.1rem;
+}
+.set-title { font-size: 1rem; font-weight: 800; margin-bottom: .9rem; }
+.set-hint { font-size: .78rem; color: var(--text2); margin-bottom: .7rem; }
+.set-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem .9rem; }
+@media (max-width: 560px) { .set-toggles { grid-template-columns: 1fr; } }
+.set-toggle { display: flex; align-items: center; gap: .5rem; font-size: .86rem; cursor: pointer; }
+.set-toggle input { width: auto; }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: .5rem 0; }
+.set-label { font-size: .86rem; color: var(--text); }
+.set-inline { display: flex; align-items: center; gap: .4rem; }
+.set-inline input { width: 70px; text-align: center; padding: .4rem; }
+.set-unit { color: var(--text2); font-size: .82rem; }
+.set-chips { display: flex; flex-wrap: wrap; gap: .45rem; }
+.set-chip {
+  padding: .32rem .75rem; border-radius: 20px; font-size: .8rem; font-weight: 700;
+  background: rgba(255,255,255,.06); color: var(--text2);
+  border: 1px solid rgba(255,255,255,.12); cursor: pointer; transition: all .15s;
+}
+.set-chip.on { background: var(--accent); color: #fff; border-color: transparent; }
+.set-actions { display: flex; justify-content: flex-end; gap: .6rem; margin-top: 1.2rem; }
+
 /* ── MAINTENANCE (scénarios admin) ── */
 .maint-panel {
   background: linear-gradient(150deg, #1b1b1b, #151515);

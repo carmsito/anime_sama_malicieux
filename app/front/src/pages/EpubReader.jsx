@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { gsap } from 'gsap'
 import { api } from '../api/client'
 import { AuthCtx } from '../contexts'
+import { loadReaderSettings } from '../readerSettings'
 
 const IS_TOUCH = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches
 const ZOOM_LEVEL = 2.5
@@ -43,6 +44,16 @@ export default function EpubReader() {
   const wheelPauseTimer = useRef()
   useEffect(() => { autoLevelRef.current = autoLevel }, [autoLevel])
   useEffect(() => { zoomPctRef.current = zoomPct }, [zoomPct])
+
+  // Réglages du lecteur (par utilisateur) : boutons visibles, plages, pause auto-scroll
+  const [settings, setSettings] = useState(() => loadReaderSettings(uid))
+  const speedLevelsRef = useRef(settings.speedLevels)
+  const autoEdgePauseRef = useRef(settings.autoEdgePause)
+  useEffect(() => { setSettings(loadReaderSettings(uid)) }, [uid])
+  useEffect(() => {
+    speedLevelsRef.current = settings.speedLevels
+    autoEdgePauseRef.current = settings.autoEdgePause
+  }, [settings])
   const scrollRef = useRef()        // conteneur scrollable (mode fit largeur)
   const fitScrollRef = useRef(0)    // position de scroll voulue après changement de page
   const imgReadyRef = useRef(false)
@@ -59,20 +70,22 @@ export default function EpubReader() {
     const s = Number(localStorage.getItem(prefKey('pansens')))
     setPanSens(s > 0 ? s : DEFAULT_SENS)
     const al = Number(localStorage.getItem(prefKey('autolevel')))
-    setAutoLevel(al >= 1 && al <= AUTO_SPEEDS.length ? al : 1)
+    setAutoLevel(al >= 1 ? al : 1)
     const zp = Number(localStorage.getItem(prefKey('zoompct')))
-    setZoomPct(ZOOM_PERCENTS.includes(zp) ? zp : 100)
+    setZoomPct(zp >= 40 && zp <= 100 ? zp : 100)
   }, [uid]) // eslint-disable-line
 
   const cycleAutoSpeed = () => setAutoLevel((v) => {
-    const next = (v % AUTO_SPEEDS.length) + 1
+    const len = settings.speedLevels.length
+    const next = (v % len) + 1
     localStorage.setItem(prefKey('autolevel'), String(next))
     return next
   })
   const toggleAutoScroll = () => setAutoScroll((v) => !v)
   const cycleZoom = () => setZoomPct((v) => {
-    const i = ZOOM_PERCENTS.indexOf(v)
-    const next = ZOOM_PERCENTS[(i + 1) % ZOOM_PERCENTS.length]
+    const levels = settings.scaleLevels
+    const i = levels.indexOf(v)
+    const next = levels[(i + 1) % levels.length]
     localStorage.setItem(prefKey('zoompct'), String(next))
     return next
   })
@@ -83,11 +96,11 @@ export default function EpubReader() {
     if (!v) { setZoom(1); setPan({ x: 0, y: 0 }) }  // en entrant : on annule un éventuel zoom
     return !v
   })
-  // Sensibilité : bouton qui cycle ×1 → ×1.5 → … → ×3 → ×1 (défaut ×1)
-  const SENS_STEPS = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5]
+  // Sensibilité : bouton qui cycle selon la plage choisie dans les réglages
   const cycleSens = () => {
-    const i = SENS_STEPS.findIndex((v) => Math.abs(v - panSens) < 0.001)
-    const next = SENS_STEPS[(i + 1) % SENS_STEPS.length]
+    const steps = settings.sensLevels
+    const i = steps.findIndex((v) => Math.abs(v - panSens) < 0.001)
+    const next = steps[(i + 1) % steps.length]
     setPanSens(next); localStorage.setItem(prefKey('pansens'), String(next))
   }
   // Plein écran immersif : masque header/footer + plein écran natif (F11) sur desktop
@@ -452,11 +465,14 @@ export default function EpubReader() {
       if (el && !autoPausedRef.current && imgReadyRef.current && now > cooldown) {
         const remaining = el.scrollHeight - el.clientHeight - el.scrollTop
         if (remaining <= 1) {
-          acc = 0; cooldown = now + 900         // micro-pause à chaque changement de planche
+          // pause en début/fin de planche : réglable (0 → micro-pause de 0,9s par défaut)
+          const pauseMs = autoEdgePauseRef.current > 0 ? autoEdgePauseRef.current * 1000 : 900
+          acc = 0; cooldown = now + pauseMs
           if (current < images.length - 1 || nextChapNum != null) goNext()
           else setAutoScroll(false)             // fin du chapitre sans suite → stop
         } else {
-          acc += (AUTO_SPEEDS[autoLevelRef.current - 1] || 8) * dt
+          const speeds = speedLevelsRef.current
+          acc += (speeds[autoLevelRef.current - 1] || speeds[0] || 8) * dt
           const px = Math.floor(acc)
           if (px > 0) { el.scrollTop += Math.min(px, remaining); acc -= px }
         }
@@ -501,32 +517,38 @@ export default function EpubReader() {
             Début
           </button>
         )}
-        <button onClick={toggleScrollNav}
-          title={scrollNav ? 'Navigation au scroll : ON' : 'Navigation au scroll : OFF'}
-          style={{ color: scrollNav ? '#e50914' : 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
-            background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
-            display: 'flex', alignItems: 'center' }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="6" y="2" width="12" height="20" rx="6"/><line x1="12" y1="6" x2="12" y2="10"/>
-          </svg>
-        </button>
-        <button onClick={toggleFitWidth}
-          title={fitWidth ? 'Lecture défilement (fit largeur) : ON' : 'Lecture défilement (fit largeur) : OFF'}
-          style={{ color: fitWidth ? '#e50914' : 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
-            background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
-            display: 'flex', alignItems: 'center' }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="4" y="3" width="16" height="18" rx="1"/><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/>
-          </svg>
-        </button>
-        <button onClick={enterFullscreen} title="Plein écran"
-          style={{ color: 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
-            background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
-            display: 'flex', alignItems: 'center' }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>
-          </svg>
-        </button>
+        {settings.buttons.scrollnav && (
+          <button onClick={toggleScrollNav}
+            title={scrollNav ? 'Navigation au scroll : ON' : 'Navigation au scroll : OFF'}
+            style={{ color: scrollNav ? '#e50914' : 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
+              background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
+              display: 'flex', alignItems: 'center' }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="6" y="2" width="12" height="20" rx="6"/><line x1="12" y1="6" x2="12" y2="10"/>
+            </svg>
+          </button>
+        )}
+        {settings.buttons.fitwidth && (
+          <button onClick={toggleFitWidth}
+            title={fitWidth ? 'Lecture défilement (fit largeur) : ON' : 'Lecture défilement (fit largeur) : OFF'}
+            style={{ color: fitWidth ? '#e50914' : 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
+              background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
+              display: 'flex', alignItems: 'center' }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="4" y="3" width="16" height="18" rx="1"/><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/>
+            </svg>
+          </button>
+        )}
+        {settings.buttons.fullscreen && (
+          <button onClick={enterFullscreen} title="Plein écran"
+            style={{ color: 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
+              background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
+              display: 'flex', alignItems: 'center' }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>
+            </svg>
+          </button>
+        )}
         <span className="reader-hcount" style={{ color: 'rgba(255,255,255,.35)', fontSize: '.78rem' }}>
           {loaded ? `${current + 1} / ${images.length}` : '…'}
         </span>
@@ -672,6 +694,7 @@ export default function EpubReader() {
           {fitWidth ? (
             <>
               {/* Mise à l'échelle : taille de la planche en mode fit-largeur */}
+              {settings.buttons.scale && (
               <button onClick={cycleZoom} title={`Taille de la planche : ${zoomPct}%`}
                 style={{ display: 'flex', alignItems: 'center', gap: '.25rem',
                   color: zoomPct < 100 ? '#e50914' : 'rgba(255,255,255,.6)',
@@ -682,6 +705,7 @@ export default function EpubReader() {
                 </svg>
                 {zoomPct}%
               </button>
+              )}
               {autoScroll && (
                 <button onClick={cycleAutoSpeed} title="Vitesse du défilement auto"
                   style={{ display: 'flex', alignItems: 'center', gap: '.25rem', color: '#e50914',
@@ -695,6 +719,7 @@ export default function EpubReader() {
               )}
             </>
           ) : (
+            settings.buttons.sensitivity && (
             <button onClick={cycleSens} title={`Sensibilité de déplacement en zoom : ×${panSens}`}
               style={{ display: 'flex', alignItems: 'center', gap: '.25rem',
                 color: panSens > 1 ? '#e50914' : 'rgba(255,255,255,.6)',
@@ -705,6 +730,7 @@ export default function EpubReader() {
               </svg>
               ×{panSens}
             </button>
+            )
           )}
         </div>
         <button onClick={goPrev} disabled={current === 0}
@@ -719,7 +745,7 @@ export default function EpubReader() {
             background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
             padding: '.3rem .7rem', cursor: 'pointer', fontSize: '1rem' }}>→</button>
         {/* Contrôle droite : auto-scroll (fit-largeur) ou animation de page (normal) */}
-        {fitWidth ? (
+        {fitWidth ? (settings.buttons.autoscroll && (
           <button onClick={toggleAutoScroll}
             title={autoScroll ? 'Défilement auto : ON (touche l\'écran pour mettre en pause)' : 'Défilement auto : OFF'}
             style={{ position: 'absolute', right: '.8rem', top: 22, transform: 'translateY(-50%)',
@@ -732,7 +758,7 @@ export default function EpubReader() {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7 6 12 11 17 6"/><polyline points="7 13 12 18 17 13"/></svg>
             )}
           </button>
-        ) : (
+        )) : (settings.buttons.flip && (
           <button onClick={togglePageFlip}
             title={pageFlip ? 'Animation page : ON' : 'Animation page : OFF'}
             style={{ position: 'absolute', right: '.8rem', top: 22, transform: 'translateY(-50%)',
@@ -744,7 +770,7 @@ export default function EpubReader() {
               <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
             </svg>
           </button>
-        )}
+        ))}
       </div>
     </div>
   )
