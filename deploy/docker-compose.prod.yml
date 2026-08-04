@@ -17,6 +17,10 @@ services:
       FLARESOLVERR_URL: http://flaresolverr:8191/v1
     depends_on:
       - flaresolverr
+    # Permet à la console admin de joindre l'HÔTE (SSH root) de façon fiable
+    # depuis le conteneur : host.docker.internal → passerelle de l'hôte.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
     volumes:
