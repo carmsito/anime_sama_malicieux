@@ -108,9 +108,19 @@ class TelegramStorage:
         import re as _re
         safe = _re.sub(r"[^A-Za-z0-9._-]+", "-", f"{manga_id}__{kind}__{chapter_number}")
         out = cache / f"{safe}.epub"
+        expected = rec.get("size")
+        # Cache valide UNIQUEMENT si la taille correspond à celle indexée en DB.
+        # Un cache tronqué (download interrompu « à l'époque ») serait sinon resservi
+        # indéfiniment → EPUB sans EOCD → couverture/lecture en 500.
         if out.exists() and out.stat().st_size > 0:
-            return out
+            if not expected or out.stat().st_size == expected:
+                return out
+            out.unlink(missing_ok=True)   # cache tronqué → on re-télécharge
         get_client().download(rec["msg_id"], str(out))
+        # Ne JAMAIS cacher un download tronqué : mieux vaut échouer que persister un fichier cassé.
+        if out.exists() and expected and out.stat().st_size != expected:
+            out.unlink(missing_ok=True)
+            return None
         return out if out.exists() else None
 
 

@@ -14,13 +14,13 @@ export const BUTTON_KEYS = [
 
 export const SCALE_CHOICES = [100, 90, 80, 70, 60, 50, 40]
 export const SENS_CHOICES = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5]
-export const SPEED_CHOICES = [8, 16, 28, 46, 72, 110, 160]
+export const SPEED_CHOICES = [8, 20, 40, 70, 110, 160, 240, 340]
 
 export const DEFAULTS = {
   buttons: { scrollnav: true, fitwidth: true, fullscreen: true, flip: true, autoscroll: true, scale: true, sensitivity: true },
   scaleLevels: [100, 90, 80, 70, 60, 50],
   sensLevels: [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5],
-  speedLevels: [8, 16, 28, 46, 72, 110],
+  speedLevels: [8, 20, 40, 70, 110, 160, 240, 340],
   autoEdgePause: 0,   // secondes de pause en début/fin de planche (auto-scroll)
 }
 

@@ -232,7 +232,12 @@ class TelegramMTProto:
             ids = [int(i) for i in msg_ids if i is not None]
             msgs = {}
             for i in range(0, len(ids), 100):
-                for m in (await self._client.get_messages(channel, ids=ids[i:i + 100]) or []):
+                try:
+                    got = await self._client.get_messages(channel, ids=ids[i:i + 100])
+                except Exception as e:
+                    print(f"[integrity] get_messages batch {i}: {type(e).__name__} {e}", flush=True)
+                    got = []
+                for m in (got or []):
                     if m is not None:
                         msgs[int(m.id)] = m
             out = {}
@@ -245,12 +250,12 @@ class TelegramMTProto:
                     try:
                         size = m.file.size
                         _dc, loc = utils.get_input_location(m.media)
-                        # dernier bloc ≤ 1 Mo, aligné 1 Mo (ne croise pas de frontière) → contient l'EOCD
-                        block_start = ((size - 1) // 1048576) * 1048576 if size else 0
-                        limit = size - block_start
-                        limit = ((limit + 4095) // 4096) * 4096  # multiple de 4096
-                        limit = min(limit, 1048576) or 4096
-                        res = await self._client(GetFileRequest(loc, offset=block_start, limit=limit))
+                        # Dernier bloc de 512 Ko aligné : 512 Ko est un DIVISEUR de 1 Mo (limite
+                        # valide côté Telegram) et l'alignement 512 Ko ne croise jamais une
+                        # frontière de 1 Mo. Contient la fin du fichier → l'EOCD s'il existe.
+                        PART = 524288
+                        block_start = ((size - 1) // PART) * PART if size else 0
+                        res = await self._client(GetFileRequest(loc, offset=block_start, limit=PART))
                         tail = getattr(res, "bytes", b"") or b""
                         out[mid] = _valid_eocd(tail, size)
                     except Exception as e:
