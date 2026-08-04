@@ -42,6 +42,7 @@ export default function EpubReader() {
   const zoomPctRef = useRef(zoomPct)
   const autoPausedRef = useRef(false)   // pause momentanée quand on touche l'écran
   const autoCooldownRef = useRef(0)     // pause de bord de planche (survit au redémarrage d'effet)
+  const autoAdvancePendingRef = useRef(false)  // en pause "fin de planche", avant d'avancer
   const wheelPauseTimer = useRef()
   useEffect(() => { autoLevelRef.current = autoLevel }, [autoLevel])
   useEffect(() => { zoomPctRef.current = zoomPct }, [zoomPct])
@@ -467,11 +468,18 @@ export default function EpubReader() {
       if (el && !autoPausedRef.current && imgReadyRef.current && now > autoCooldownRef.current) {
         const remaining = el.scrollHeight - el.clientHeight - el.scrollTop
         if (remaining <= 1) {
-          // pause en fin/début de planche : réglable (0 → micro-pause de 0,9s par défaut)
           const pauseMs = autoEdgePauseRef.current > 0 ? autoEdgePauseRef.current * 1000 : 900
-          acc = 0; autoCooldownRef.current = now + pauseMs
-          if (current < images.length - 1 || nextChapNum != null) goNext()
-          else setAutoScroll(false)             // fin du chapitre sans suite → stop
+          if (!autoAdvancePendingRef.current) {
+            // 1) arrivé en bas → PAUSE de FIN de planche (on reste en bas)
+            autoAdvancePendingRef.current = true
+            autoCooldownRef.current = now + pauseMs
+          } else {
+            // 2) pause de fin écoulée → on avance (+ pause de DÉBUT sur la nouvelle planche)
+            autoAdvancePendingRef.current = false
+            acc = 0; autoCooldownRef.current = now + pauseMs
+            if (current < images.length - 1 || nextChapNum != null) goNext()
+            else setAutoScroll(false)           // fin du chapitre sans suite → stop
+          }
         } else {
           const speeds = speedLevelsRef.current
           acc += (speeds[autoLevelRef.current - 1] || speeds[0] || 8) * dt
@@ -490,6 +498,7 @@ export default function EpubReader() {
 
   // Pause en DÉBUT de planche quand on active l'auto-scroll (avant de commencer à défiler)
   useEffect(() => {
+    autoAdvancePendingRef.current = false
     if (autoScroll) {
       const p = autoEdgePauseRef.current > 0 ? autoEdgePauseRef.current * 1000 : 400
       autoCooldownRef.current = performance.now() + p
