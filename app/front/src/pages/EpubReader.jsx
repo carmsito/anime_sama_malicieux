@@ -12,6 +12,8 @@ const DEFAULT_SENS = 1        // sensibilité de déplacement en zoom par défau
 const AUTO_SPEEDS = [8, 16, 28, 46, 72, 110]
 // Mise à l'échelle (mode fit-largeur) — 100% = max (ajusté largeur), on réduit pour adapter
 const ZOOM_PERCENTS = [100, 90, 80, 70, 60, 50]
+// Préchargement des planches : taille de batch (on garde ~1 batch d'avance en permanence)
+const PREFETCH_BATCH = 8
 
 export default function EpubReader() {
   const { mangaId, chapterNum } = useParams()
@@ -43,6 +45,7 @@ export default function EpubReader() {
   const autoPausedRef = useRef(false)   // pause momentanée quand on touche l'écran
   const autoCooldownRef = useRef(0)     // pause de bord de planche (survit au redémarrage d'effet)
   const autoAdvancePendingRef = useRef(false)  // en pause "fin de planche", avant d'avancer
+  const autoStartPauseRef = useRef(false)      // pause de DÉBUT à armer quand la planche devient visible
   const wheelPauseTimer = useRef()
   useEffect(() => { autoLevelRef.current = autoLevel }, [autoLevel])
   useEffect(() => { zoomPctRef.current = zoomPct }, [zoomPct])
@@ -137,13 +140,33 @@ export default function EpubReader() {
   // Réinitialise le zoom à chaque changement de page / chapitre
   useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }) }, [current, chapterNum])
 
-  // Précharge plusieurs planches en avant (+ une en arrière) → moins d'attente au changement
-  // de page, surtout sur mobile où le serveur extrait la planche de l'EPUB.
+  // Préchargement PAR BATCH avec RÉTENTION des Image() en vol. Un `new Image()` non
+  // référencé peut voir son téléchargement ANNULÉ par le GC → on retombe sur "Chargement"
+  // en arrivant sur la planche. On garde donc la réf tant que l'image n'est pas chargée,
+  // et on lance le batch SUIVANT dès qu'on atteint la moitié du batch courant (mi-batch).
+  const prefetchRef = useRef(new Map())     // index → HTMLImageElement (gardé tant qu'en vol)
+  const prefetchFrontierRef = useRef(-1)    // plus haut index déjà lancé en préchargement
+  useEffect(() => { prefetchRef.current.clear(); prefetchFrontierRef.current = -1 }, [images])
   useEffect(() => {
     if (!images.length) return
-    for (const i of [current + 1, current + 2, current + 3, current + 4, current - 1]) {
-      if (i >= 0 && i < images.length) { const im = new Image(); im.src = images[i] }
+    const map = prefetchRef.current
+    const load = (i) => {
+      if (i < 0 || i >= images.length || map.has(i)) return
+      const im = new Image()
+      im.decoding = 'async'
+      im.onload = im.onerror = () => map.delete(i)   // chargé → reste en cache navigateur, on libère la réf
+      im.src = images[i]
+      map.set(i, im)                                  // rétention anti-annulation tant qu'en vol
     }
+    // mi-batch atteint → on précharge le batch d'après
+    if (current + Math.ceil(PREFETCH_BATCH / 2) >= prefetchFrontierRef.current) {
+      const from = Math.max(prefetchFrontierRef.current + 1, current)
+      const to = Math.min(images.length - 1, Math.max(prefetchFrontierRef.current, current) + PREFETCH_BATCH)
+      for (let i = from; i <= to; i++) load(i)
+      prefetchFrontierRef.current = Math.max(prefetchFrontierRef.current, to)
+    }
+    load(current)          // filet de sécurité : la planche courante
+    load(current - 1)      // 1 en arrière pour la nav retour
   }, [current, images])
 
   // Marque la planche comme prête : force le DÉCODAGE (sinon iOS peut afficher du noir
@@ -474,9 +497,14 @@ export default function EpubReader() {
             autoAdvancePendingRef.current = true
             autoCooldownRef.current = now + pauseMs
           } else {
-            // 2) pause de fin écoulée → on avance (+ pause de DÉBUT sur la nouvelle planche)
+            // 2) pause de fin écoulée → on avance. La pause de DÉBUT n'est PAS armée ici :
+            //    la planche n'est pas encore chargée, donc son temps de chargement
+            //    consommerait la pause (→ pause de début zappée). On GÈLE le défilement et
+            //    on (ré)arme la pause quand la planche devient VISIBLE (effet imgReady ci-dessous).
             autoAdvancePendingRef.current = false
-            acc = 0; autoCooldownRef.current = now + pauseMs
+            acc = 0
+            autoStartPauseRef.current = true
+            autoCooldownRef.current = now + 3600000   // gel jusqu'à ce que la planche soit prête
             if (current < images.length - 1 || nextChapNum != null) goNext()
             else setAutoScroll(false)           // fin du chapitre sans suite → stop
           }
@@ -496,12 +524,28 @@ export default function EpubReader() {
   // Désactive l'auto-scroll si on quitte le mode fit-largeur
   useEffect(() => { if (!fitWidth) setAutoScroll(false) }, [fitWidth])
 
-  // Pause en DÉBUT de planche quand on active l'auto-scroll (avant de commencer à défiler)
+  // Pause de DÉBUT de planche ARMÉE quand la planche devient VISIBLE (imgReady false→true),
+  // pas au moment du goNext : une planche lente à charger ne "mange" plus la pause de début.
+  useEffect(() => {
+    if (!autoScroll || !fitWidth || !imgReady) return
+    if (!autoStartPauseRef.current) return
+    autoStartPauseRef.current = false
+    const p = autoEdgePauseRef.current > 0 ? autoEdgePauseRef.current * 1000 : 900
+    autoCooldownRef.current = performance.now() + p
+  }, [imgReady, autoScroll, fitWidth])
+
+  // Activation de l'auto-scroll : pause de début. Si la planche est encore en chargement,
+  // on diffère (l'effet ci-dessus l'armera quand elle sera visible → jamais zappée).
   useEffect(() => {
     autoAdvancePendingRef.current = false
-    if (autoScroll) {
-      const p = autoEdgePauseRef.current > 0 ? autoEdgePauseRef.current * 1000 : 400
+    if (!autoScroll) return
+    const p = autoEdgePauseRef.current > 0 ? autoEdgePauseRef.current * 1000 : 400
+    if (imgReadyRef.current) {
+      autoStartPauseRef.current = false
       autoCooldownRef.current = performance.now() + p
+    } else {
+      autoStartPauseRef.current = true                 // planche en chargement → pause différée
+      autoCooldownRef.current = performance.now() + 3600000
     }
   }, [autoScroll])
 
