@@ -20,5 +20,8 @@ app/api/data/epub_cache/
 .env
 # Contexte Claude local/sensible (par machine) — ne pas committer
 CLAUDE.local.md
+# Outil de sync de session (perso, chemins locaux) + settings de perms locaux
+claude-sync.sh
+.claude/settings.local.json
 deploy/.env
 .claude/worktrees/
