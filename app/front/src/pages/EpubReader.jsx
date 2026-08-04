@@ -738,6 +738,19 @@ export default function EpubReader() {
         </button>
       )}
 
+      {/* Plein écran : bouton flottant de défilement auto (lecture/pause) — juste celui-ci */}
+      {fullscreen && fitWidth && settings.buttons.autoscroll && (
+        <button onClick={toggleAutoScroll} className="reader-fs-play"
+          title={autoScroll ? 'Défilement auto : ON (touche l\'écran pour mettre en pause)' : 'Défilement auto : OFF'}
+          style={{ color: autoScroll ? '#e50914' : '#fff' }}>
+          {autoScroll ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7 6 12 11 17 6"/><polyline points="7 13 12 18 17 13"/></svg>
+          )}
+        </button>
+      )}
+
       {/* Plein écran : barre de progression rouge en bas, toute la largeur */}
       {fullscreen && loaded && images.length > 0 && (
         <div className="reader-fs-progress">
