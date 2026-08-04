@@ -747,27 +747,39 @@ export default function EpubReader() {
         </button>
       )}
 
-      {/* Plein écran : bouton flottant de défilement auto (lecture/pause) — juste celui-ci */}
-      {fullscreen && fitWidth && settings.buttons.autoscroll && (
-        <button onClick={toggleAutoScroll} className="reader-fs-play"
-          title={autoScroll ? 'Défilement auto : ON (touche l\'écran pour mettre en pause)' : 'Défilement auto : OFF'}
-          style={{ color: autoScroll ? '#e50914' : '#fff' }}>
-          {autoScroll ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
-          ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7 6 12 11 17 6"/><polyline points="7 13 12 18 17 13"/></svg>
+      {/* Plein écran : barre flottante de contrôles (mode fit-largeur) — échelle, vitesse, lecture */}
+      {fullscreen && fitWidth && (
+        <div className="reader-fs-controls">
+          {settings.buttons.scale && (
+            <button onClick={cycleZoom} className="reader-fs-chip" title={`Taille de la planche : ${zoomPct}%`}
+              style={{ color: zoomPct < 100 ? '#e50914' : '#fff' }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+              </svg>
+              {zoomPct}%
+            </button>
           )}
-        </button>
-      )}
-
-      {/* Plein écran : bouton flottant de vitesse — seulement quand l'auto-scroll est actif */}
-      {fullscreen && fitWidth && autoScroll && settings.buttons.autoscroll && (
-        <button onClick={cycleAutoSpeed} className="reader-fs-speed" title="Vitesse du défilement auto">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="7 13 12 18 17 13" /><polyline points="7 6 12 11 17 6" />
-          </svg>
-          V{autoLevel}
-        </button>
+          {autoScroll && settings.buttons.autoscroll && (
+            <button onClick={cycleAutoSpeed} className="reader-fs-chip" title="Vitesse du défilement auto"
+              style={{ color: '#e50914' }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="7 13 12 18 17 13" /><polyline points="7 6 12 11 17 6" />
+              </svg>
+              V{autoLevel}
+            </button>
+          )}
+          {settings.buttons.autoscroll && (
+            <button onClick={toggleAutoScroll} className="reader-fs-round"
+              title={autoScroll ? 'Défilement auto : ON (touche l\'écran pour mettre en pause)' : 'Défilement auto : OFF'}
+              style={{ color: autoScroll ? '#e50914' : '#fff' }}>
+              {autoScroll ? (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7 6 12 11 17 6"/><polyline points="7 13 12 18 17 13"/></svg>
+              )}
+            </button>
+          )}
+        </div>
       )}
 
       {/* Plein écran : barre de progression rouge en bas, toute la largeur */}

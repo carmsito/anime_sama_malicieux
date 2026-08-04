@@ -47,10 +47,14 @@ function ChapterCard({ manga, ch, onRead, onRestart, isLoading, isSelected, onTo
   }
 
   return (
-    <div className={`chapter-card ${done ? 'done' : ''}`} style={{ position: 'relative' }}>
+    <div
+      className={`chapter-card ${done ? 'done' : ''} ${selectionMode ? 'selecting' : ''} ${selectionMode && isSelected ? 'is-selected' : ''}`}
+      style={{ position: 'relative' }}
+      onClick={selectionMode ? onToggleSelect : undefined}
+    >
       {selectionMode && (
         <button
-          onClick={onToggleSelect}
+          onClick={(e) => { e.stopPropagation(); onToggleSelect() }}
           className={`chapter-card-select ${isSelected ? 'selected' : ''}`}
           title={isSelected ? 'Désélectionner' : 'Sélectionner'}
         />
@@ -69,8 +73,8 @@ function ChapterCard({ manga, ch, onRead, onRestart, isLoading, isSelected, onTo
         ) : (
           <div className="chapter-card-ph">📄</div>
         )}
-        <div className="chapter-card-overlay" onClick={onRead}>
-          {!done && <span className="chapter-card-read">Lire</span>}
+        <div className="chapter-card-overlay" onClick={selectionMode ? undefined : onRead}>
+          {!done && !selectionMode && <span className="chapter-card-read">Lire</span>}
         </div>
         {/* Chapitre terminé : icône reload centrée pour le recommencer (1ʳᵉ planche) */}
         {done && !selectionMode && (
