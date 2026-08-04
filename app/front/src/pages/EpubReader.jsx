@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useContext } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useContext, useMemo } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { gsap } from 'gsap'
 import { api } from '../api/client'
 import { AuthCtx } from '../contexts'
 import { loadReaderSettings } from '../readerSettings'
+import { createAmbienceEngine } from '../ambienceAudio'
 
 const IS_TOUCH = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches
 const ZOOM_LEVEL = 2.5
@@ -68,6 +69,34 @@ export default function EpubReader() {
   useEffect(() => { sensRef.current = panSens }, [panSens])
   useEffect(() => { fitWidthRef.current = fitWidth }, [fitWidth])
   useEffect(() => { imgReadyRef.current = imgReady }, [imgReady])
+
+  // ── Ambiance sonore : segments détectés + moteur audio synthétisé (Web Audio) ──
+  const [ambSegments, setAmbSegments] = useState(null)   // [{from,to,ambience,action}] | null
+  const [ambOn, setAmbOn] = useState(false)
+  const ambEngineRef = useRef(null)
+  // récupère les segments du chapitre (silencieux si non analysé)
+  useEffect(() => {
+    setAmbSegments(null)
+    api.getAmbience(mangaId, chapterNum).then((d) => setAmbSegments(d?.segments || null)).catch(() => setAmbSegments(null))
+  }, [mangaId, chapterNum])
+  // ambiance de la planche courante (segment qui contient `current`)
+  const currentAmb = useMemo(() => {
+    if (!ambSegments) return null
+    const s = ambSegments.find((x) => current >= x.from && current <= x.to)
+    return s ? s.ambience : null
+  }, [ambSegments, current])
+  // pilote le moteur : (ré)active + change d'ambiance au fil des planches (crossfade)
+  useEffect(() => {
+    if (!ambOn) return
+    if (!ambEngineRef.current) ambEngineRef.current = createAmbienceEngine()
+    let cancelled = false
+    ambEngineRef.current.enable().then(() => { if (!cancelled) ambEngineRef.current.set(currentAmb || 'interieur') })
+    return () => { cancelled = true }
+  }, [ambOn, currentAmb])
+  useEffect(() => { if (!ambOn) ambEngineRef.current?.stop() }, [ambOn])
+  useEffect(() => () => { ambEngineRef.current?.stop() }, [])
+  // Activation par session (le tap = geste utilisateur requis pour démarrer l'audio).
+  const toggleAmbience = () => setAmbOn((v) => !v)
 
   // Charge les préférences de CET utilisateur (isolées des autres comptes)
   useEffect(() => {
@@ -619,6 +648,20 @@ export default function EpubReader() {
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>
             </svg>
+          </button>
+        )}
+        {ambSegments && (
+          <button onClick={toggleAmbience}
+            title={ambOn ? 'Ambiance sonore : ON — clique pour couper' : 'Ambiance sonore détectée — clique pour activer le son'}
+            style={{ display: 'flex', alignItems: 'center', gap: '.3rem',
+              color: ambOn ? '#e50914' : 'rgba(255,255,255,.55)',
+              background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
+              padding: '.22rem .5rem', cursor: 'pointer', fontSize: '.72rem', fontWeight: 700 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
+              <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>
+            </svg>
+            {currentAmb || '—'}
           </button>
         )}
         <span className="reader-hcount" style={{ color: 'rgba(255,255,255,.35)', fontSize: '.78rem' }}>
