@@ -1302,6 +1302,25 @@ input::placeholder { color: rgba(255,255,255,.3); }
   height: 62vh; min-height: 320px; border: 1px solid rgba(255,255,255,.12);
   border-radius: 8px; background: #0b0b0f; padding: 6px; overflow: hidden;
 }
+.console-host { width: 100%; height: 100%; }
+.console-actions { display: flex; align-items: center; gap: .8rem; margin-top: .6rem; flex-wrap: wrap; }
+.console-live { color: var(--success, #3ddc84); font-size: .78rem; }
+
+/* Toast "session console active" (quand on navigue ailleurs) — en bas à GAUCHE
+   pour ne pas chevaucher les toasts de jobs (bas à droite). */
+.console-toast {
+  position: fixed; bottom: 1.5rem; left: 1.5rem; z-index: 400; max-width: 280px;
+  background: rgba(20,20,20,.97); border: 1px solid rgba(255,255,255,.12);
+  border-radius: 6px; padding: .9rem 1rem; box-shadow: 0 8px 32px rgba(0,0,0,.6);
+}
+.ct-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .4rem; }
+.ct-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s infinite; flex-shrink: 0; }
+.ct-name { flex: 1; font-size: .8rem; font-weight: 700; }
+.ct-txt { font-size: .72rem; color: var(--text2); margin-bottom: .55rem; }
+.ct-btn { width: 100%; justify-content: center; }
+@media (max-width: 640px) {
+  .console-toast { left: 1rem; right: 1rem; bottom: 1rem; max-width: none; }
+}
 .user-create {
   display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: 1.75rem;
   background: #1a1a1a; padding: 1rem; border-radius: 8px;

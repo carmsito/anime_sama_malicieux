@@ -30,6 +30,7 @@ from ..auth import require_admin, _get_user_by_id
 from ..config import (
     ALGORITHM, DATA_DIR, SECRET_KEY,
     CONSOLE_ENABLED, CONSOLE_PASSPHRASE, CONSOLE_SSH_KEY, CONSOLE_SSH_TARGET,
+    CONSOLE_TMUX_SESSION,
 )
 
 router = APIRouter(prefix="/admin/console", tags=["admin-console"])
@@ -102,6 +103,16 @@ async def ws_console(ws: WebSocket):
 
     # 3) PTY + SSH root vers l'hôte
     master, slave = os.openpty()
+    # On s'attache à une session tmux PERSISTANTE sur l'hôte (créée au besoin) :
+    # le shell vit côté serveur, pas dans l'onglet. Donc F5, changement d'appareil
+    # ou coupure réseau ne tuent rien — on se ré-attache à la MÊME instance, et les
+    # commandes continuent de tourner même sans client connecté.
+    # (Repli sur un shell simple si tmux n'est pas installé.)
+    remote = (
+        "command -v tmux >/dev/null 2>&1 "
+        f"&& exec tmux new-session -A -s {CONSOLE_TMUX_SESSION} "
+        "|| exec ${SHELL:-/bin/bash} -l"
+    )
     cmd = [
         "ssh", "-tt",
         "-o", "StrictHostKeyChecking=no",
@@ -109,6 +120,7 @@ async def ws_console(ws: WebSocket):
         "-o", "LogLevel=ERROR",
         "-o", "ServerAliveInterval=20",
         "-i", CONSOLE_SSH_KEY, CONSOLE_SSH_TARGET,
+        remote,
     ]
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdin=slave, stdout=slave, stderr=slave, start_new_session=True,

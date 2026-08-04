@@ -1,92 +1,37 @@
 import React, { useEffect, useRef, useState, useContext } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
-import { AuthCtx } from '../contexts'
+import { AuthCtx, ConsoleCtx } from '../contexts'
 
-// Console admin : terminal web (xterm chargé en LAZY → n'alourdit pas le bundle principal)
-// relié par WebSocket à un shell ROOT sur l'hôte. Réservé admin + passphrase dédiée.
+// Console admin : terminal web relié par WebSocket à un shell ROOT sur l'hôte.
+// La SESSION vit au niveau de l'App (ConsoleCtx) : quitter cette page ne la coupe
+// plus — un toast propose de revenir tant qu'elle est ouverte.
 export default function Console() {
   const { user } = useContext(AuthCtx)
+  const { phase, errMsg, hostEl, parkHost, fit, focus, connect, close } = useContext(ConsoleCtx)
   const navigate = useNavigate()
   const [status, setStatus] = useState(null)   // {ready, reason, target}
   const [passphrase, setPassphrase] = useState('')
-  const [phase, setPhase] = useState('idle')    // idle | connecting | open | closed | error
-  const [errMsg, setErrMsg] = useState('')
-  const termElRef = useRef(null)
-  const termRef = useRef(null)
-  const wsRef = useRef(null)
-  const fitRef = useRef(null)
+  const boxRef = useRef(null)
 
   useEffect(() => {
     if (user && user.role !== 'admin') { navigate('/'); return }
     api.consoleStatus().then(setStatus).catch((e) => setStatus({ ready: false, reason: e.message }))
   }, [user]) // eslint-disable-line
 
-  const cleanup = () => {
-    try { wsRef.current?.close() } catch { /* noop */ }
-    try { termRef.current?.dispose() } catch { /* noop */ }
-    wsRef.current = null; termRef.current = null; fitRef.current = null
-  }
-  useEffect(() => () => cleanup(), [])
+  // Ré-attache le terminal persistant dans la page ; au démontage on le "gare"
+  // dans le holder caché (la session continue de tourner).
+  useEffect(() => {
+    const box = boxRef.current
+    const host = hostEl()
+    if (!box || !host) return undefined
+    box.appendChild(host)
+    fit()
+    focus()
+    return () => { parkHost() }
+  }, [phase, hostEl, parkHost, fit, focus])
 
-  const connect = async () => {
-    if (!passphrase) { setErrMsg('Entre la passphrase de la console.'); return }
-    setErrMsg(''); setPhase('connecting')
-    // Lazy-load xterm + son CSS uniquement maintenant
-    const [{ Terminal }, { FitAddon }] = await Promise.all([
-      import('@xterm/xterm'),
-      import('@xterm/addon-fit'),
-    ])
-    await import('@xterm/xterm/css/xterm.css')
-
-    const term = new Terminal({
-      cursorBlink: true, fontSize: 13, fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
-      theme: { background: '#0b0b0f', foreground: '#e6e6e6' },
-    })
-    const fit = new FitAddon()
-    term.loadAddon(fit)
-    term.open(termElRef.current)
-    fit.fit()
-    termRef.current = term; fitRef.current = fit
-
-    const token = localStorage.getItem('token')
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${proto}://${location.host}/api/admin/console/ws?token=${encodeURIComponent(token)}`)
-    ws.binaryType = 'arraybuffer'
-    wsRef.current = ws
-
-    const sendResize = () => {
-      try {
-        fit.fit()
-        ws.readyState === 1 && ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
-      } catch { /* noop */ }
-    }
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'auth', passphrase }))
-      term.onData((d) => ws.readyState === 1 && ws.send(JSON.stringify({ type: 'data', data: d })))
-      window.addEventListener('resize', sendResize)
-    }
-    ws.onmessage = (ev) => {
-      if (typeof ev.data === 'string') {
-        try {
-          const m = JSON.parse(ev.data)
-          if (m.type === 'error') { setErrMsg(m.message); setPhase('error'); ws.close() }
-          else if (m.type === 'ready') { setPhase('open'); setTimeout(sendResize, 50); term.focus() }
-        } catch { /* ignore */ }
-      } else {
-        term.write(new Uint8Array(ev.data))
-      }
-    }
-    ws.onclose = () => {
-      window.removeEventListener('resize', sendResize)
-      setPhase((p) => (p === 'error' ? p : 'closed'))
-      try { term.write('\r\n\x1b[31m— session terminée —\x1b[0m\r\n') } catch { /* noop */ }
-    }
-    ws.onerror = () => { setErrMsg('Erreur de connexion WebSocket.'); setPhase('error') }
-  }
-
-  const disconnect = () => { cleanup(); setPhase('closed') }
+  const live = phase === 'open' || phase === 'connecting' || phase === 'closed' || phase === 'error'
 
   return (
     <div className="page console-page">
@@ -100,7 +45,7 @@ export default function Console() {
         commandes sont journalisées (audit). À utiliser en connaissance de cause.
       </div>
 
-      {status && !status.ready && (
+      {status && !status.ready && phase === 'idle' && (
         <div className="console-notready">
           <b>Console non disponible :</b> {status.reason}
           <div className="console-hint">
@@ -111,14 +56,14 @@ export default function Console() {
         </div>
       )}
 
-      {status && status.ready && phase !== 'open' && phase !== 'connecting' && (
+      {status && status.ready && phase === 'idle' && (
         <div className="console-connect">
           <input
             type="password" placeholder="Passphrase console" value={passphrase}
             onChange={(e) => setPassphrase(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && connect()}
+            onKeyDown={(e) => e.key === 'Enter' && connect(passphrase)}
           />
-          <button className="btn btn-primary btn-sm" onClick={connect}>Connecter</button>
+          <button className="btn btn-primary btn-sm" onClick={() => connect(passphrase)}>Connecter</button>
           <span className="console-target">cible : {status.target}</span>
         </div>
       )}
@@ -126,14 +71,17 @@ export default function Console() {
       {errMsg && <div className="err-msg" style={{ margin: '.75rem 0' }}>{errMsg}</div>}
       {phase === 'connecting' && <div className="console-hint">Connexion…</div>}
 
-      {(phase === 'open' || phase === 'closed' || phase === 'connecting') && (
+      {live && (
         <>
-          <div ref={termElRef} className="console-term" />
-          {phase === 'open' && (
-            <button className="btn btn-ghost btn-sm" style={{ marginTop: '.6rem' }} onClick={disconnect}>
-              Fermer la session
+          <div ref={boxRef} className="console-term" />
+          <div className="console-actions">
+            {phase === 'open' && (
+              <span className="console-live">● session active — elle reste ouverte si tu navigues ailleurs</span>
+            )}
+            <button className="btn btn-ghost btn-sm" onClick={close}>
+              {phase === 'open' ? 'Fermer la session' : 'Réinitialiser'}
             </button>
-          )}
+          </div>
         </>
       )}
     </div>

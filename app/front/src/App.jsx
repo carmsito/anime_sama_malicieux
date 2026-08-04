@@ -10,8 +10,10 @@ import Settings from './pages/Settings'
 import Console from './pages/Console'
 import Navbar from './components/Navbar'
 import JobStatus from './components/JobStatus'
+import ConsoleStatus from './components/ConsoleStatus'
 import PageErrorBoundary from './components/PageErrorBoundary'
-import { AuthCtx, JobsCtx, SearchCtx } from './contexts'
+import { AuthCtx, JobsCtx, SearchCtx, ConsoleCtx } from './contexts'
+import { useConsoleSession } from './consoleSession'
 import { api } from './api/client'
 
 function useAuth() {
@@ -91,11 +93,13 @@ function Guard({ children }) {
 export default function App() {
   const auth = useAuth()
   const jobs = useJobs()
+  const consoleSession = useConsoleSession()   // vit au niveau App → survit à la navigation
   const [searchQuery, setSearchQuery] = useState('')
 
   return (
     <AuthCtx.Provider value={auth}>
       <JobsCtx.Provider value={jobs}>
+        <ConsoleCtx.Provider value={consoleSession}>
         <SearchCtx.Provider value={{ query: searchQuery, set: setSearchQuery }}>
           <Routes>
             <Route path="/login" element={<Login />} />
@@ -113,11 +117,13 @@ export default function App() {
                     <Route path="/admin/console" element={<Console />} />
                   </Routes>
                   <JobStatus />
+                  <ConsoleStatus />
                 </PageErrorBoundary>
               </Guard>
             } />
           </Routes>
         </SearchCtx.Provider>
+        </ConsoleCtx.Provider>
       </JobsCtx.Provider>
     </AuthCtx.Provider>
   )

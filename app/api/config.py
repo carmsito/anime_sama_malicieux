@@ -65,6 +65,9 @@ CONSOLE_ENABLED = os.environ.get("CONSOLE_ENABLED", "0").lower() in ("1", "true"
 CONSOLE_PASSPHRASE = os.environ.get("CONSOLE_PASSPHRASE", "")
 CONSOLE_SSH_TARGET = os.environ.get("CONSOLE_SSH_TARGET", "")     # ex: root@62.238.63.117
 CONSOLE_SSH_KEY = os.environ.get("CONSOLE_SSH_KEY", str(DATA_DIR / "console_host_key"))
+# Session tmux persistante sur l'hôte : on s'y ré-attache depuis n'importe quel
+# appareil → même shell, mêmes commandes en cours.
+CONSOLE_TMUX_SESSION = os.environ.get("CONSOLE_TMUX_SESSION", "mangalib")
 
 COVERS_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)

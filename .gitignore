@@ -18,6 +18,11 @@ app/api/data/*.db-shm
 app/api/data/*.session
 app/api/data/epub_cache/
 .env
+# Données runtime de PROD (bind-mounts hôte) — DB, session Telegram, clés, cache,
+# covers, logs WARP… NE JAMAIS committer (contient des secrets et des Go de binaires).
+srv-data/
+srv-extraction/
+srv-warp/
 # Contexte Claude local/sensible (par machine) — ne pas committer
 CLAUDE.local.md
 # Outil de sync de session (perso, chemins locaux) + settings de perms locaux
