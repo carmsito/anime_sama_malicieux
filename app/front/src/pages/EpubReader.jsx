@@ -41,6 +41,7 @@ export default function EpubReader() {
   const autoLevelRef = useRef(autoLevel)
   const zoomPctRef = useRef(zoomPct)
   const autoPausedRef = useRef(false)   // pause momentanée quand on touche l'écran
+  const autoCooldownRef = useRef(0)     // pause de bord de planche (survit au redémarrage d'effet)
   const wheelPauseTimer = useRef()
   useEffect(() => { autoLevelRef.current = autoLevel }, [autoLevel])
   useEffect(() => { zoomPctRef.current = zoomPct }, [zoomPct])
@@ -458,16 +459,17 @@ export default function EpubReader() {
   // scrolls manuels, et le reste fractionnaire est reporté → fluide même très lent.
   useEffect(() => {
     if (!autoScroll || !fitWidth) return
-    let raf, acc = 0, last = performance.now(), cooldown = 0
+    let raf, acc = 0, last = performance.now()
     const step = (now) => {
       const dt = Math.min(0.05, (now - last) / 1000); last = now
       const el = scrollRef.current
-      if (el && !autoPausedRef.current && imgReadyRef.current && now > cooldown) {
+      // autoCooldownRef survit au redémarrage de l'effet (goNext change `current` → restart)
+      if (el && !autoPausedRef.current && imgReadyRef.current && now > autoCooldownRef.current) {
         const remaining = el.scrollHeight - el.clientHeight - el.scrollTop
         if (remaining <= 1) {
-          // pause en début/fin de planche : réglable (0 → micro-pause de 0,9s par défaut)
+          // pause en fin/début de planche : réglable (0 → micro-pause de 0,9s par défaut)
           const pauseMs = autoEdgePauseRef.current > 0 ? autoEdgePauseRef.current * 1000 : 900
-          acc = 0; cooldown = now + pauseMs
+          acc = 0; autoCooldownRef.current = now + pauseMs
           if (current < images.length - 1 || nextChapNum != null) goNext()
           else setAutoScroll(false)             // fin du chapitre sans suite → stop
         } else {
@@ -485,6 +487,14 @@ export default function EpubReader() {
 
   // Désactive l'auto-scroll si on quitte le mode fit-largeur
   useEffect(() => { if (!fitWidth) setAutoScroll(false) }, [fitWidth])
+
+  // Pause en DÉBUT de planche quand on active l'auto-scroll (avant de commencer à défiler)
+  useEffect(() => {
+    if (autoScroll) {
+      const p = autoEdgePauseRef.current > 0 ? autoEdgePauseRef.current * 1000 : 400
+      autoCooldownRef.current = performance.now() + p
+    }
+  }, [autoScroll])
 
   const prevChap = prevChapNum != null ? { number: prevChapNum } : null
   const nextChap = nextChapNum != null ? { number: nextChapNum } : null
