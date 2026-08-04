@@ -18,5 +18,7 @@ app/api/data/*.db-shm
 app/api/data/*.session
 app/api/data/epub_cache/
 .env
+# Contexte Claude local/sensible (par machine) — ne pas committer
+CLAUDE.local.md
 deploy/.env
 .claude/worktrees/
