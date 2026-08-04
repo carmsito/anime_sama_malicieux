@@ -1258,8 +1258,11 @@ input::placeholder { color: rgba(255,255,255,.3); }
 
 /* ── USERS (admin) ── */
 .users-page { max-width: 820px; margin: 0 auto; padding: 5.5rem 1.25rem 3rem; }
-.users-head { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.75rem; }
-.users-head h1 { font-size: 1.7rem; font-weight: 800; }
+.users-head { display: flex; align-items: center; gap: .75rem; margin-bottom: 1.75rem; }
+.users-head h1 { font-size: 1.7rem; font-weight: 800; margin: 0; }
+/* La flèche fait partie du header (flux flex) et non en absolu — sinon elle chevauche
+   le titre (positionnement absolu hérité de la page MangaDetail). */
+.users-head .detail-back { position: static; top: auto; left: auto; font-size: 1.9rem; line-height: 1; padding: 0; }
 .user-create {
   display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: 1.75rem;
   background: #1a1a1a; padding: 1rem; border-radius: 8px;
