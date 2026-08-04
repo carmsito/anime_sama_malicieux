@@ -108,7 +108,10 @@ async def ws_console(ws: WebSocket):
     # ou coupure réseau ne tuent rien — on se ré-attache à la MÊME instance, et les
     # commandes continuent de tourner même sans client connecté.
     # (Repli sur un shell simple si tmux n'est pas installé.)
+    # TERM doit être défini côté hôte : sans lui, tmux refuse ("terminal does not
+    # support clear"). xterm.js émule xterm-256color.
     remote = (
+        "export TERM=xterm-256color; "
         "command -v tmux >/dev/null 2>&1 "
         f"&& exec tmux new-session -A -s {CONSOLE_TMUX_SESSION} "
         "|| exec ${SHELL:-/bin/bash} -l"
