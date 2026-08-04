@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pathlib import Path
 
-from .routers import auth, mangas, search, extract, jobs, admin, console
+from .routers import auth, mangas, search, extract, jobs, admin, console, ambience
 from .services.scraper import warm_base_url
 from .services import job_queue, db
 
@@ -51,6 +51,7 @@ app.include_router(extract.router, prefix="/api")
 app.include_router(jobs.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(console.router, prefix="/api")
+app.include_router(ambience.router, prefix="/api")
 
 # Healthcheck (déploiement / CI-CD) — léger, sans auth, ne touche à rien.
 @app.get("/api/health", tags=["ops"])

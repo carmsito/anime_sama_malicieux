@@ -69,5 +69,10 @@ CONSOLE_SSH_KEY = os.environ.get("CONSOLE_SSH_KEY", str(DATA_DIR / "console_host
 # appareil → même shell, mêmes commandes en cours.
 CONSOLE_TMUX_SESSION = os.environ.get("CONSOLE_TMUX_SESSION", "mangalib")
 
+# Ambiance sonore : le classifieur (torch/open_clip) vit dans un venv HORS conteneur.
+# Le job délègue la classif à l'hôte via SSH (réutilise CONSOLE_SSH_KEY / CONSOLE_SSH_TARGET).
+AMBIENCE_PYTHON = os.environ.get("AMBIENCE_PYTHON", "/home/emmanuel/ambience-proto/venv/bin/python")
+AMBIENCE_SCRIPT = os.environ.get("AMBIENCE_SCRIPT", "/root/anime_sama_malicieux/scripts/ambience_analyze.py")
+
 COVERS_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)

@@ -167,6 +167,7 @@ export default function MangaDetail() {
   const [downloading, setDownloading] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [repairing, setRepairing] = useState(false)
+  const [analyzing, setAnalyzing] = useState(false)
   const [repairingSet, setRepairingSet] = useState(new Set())
   const CHAP_BATCH = 24
   const [visibleCount, setVisibleCount] = useState(CHAP_BATCH)  // pagination scroll infini
@@ -406,6 +407,17 @@ export default function MangaDetail() {
     } finally { setRepairing(false) }
   }
 
+  const onAnalyzeSelected = async () => {
+    if (selectedChaps.size === 0) return
+    setAnalyzing(true)
+    try {
+      await api.analyzeAmbience(mangaId, Array.from(selectedChaps))
+      setSelectedChaps(new Set()); setSelectionMode(false)
+    } catch (e) {
+      alert(`Erreur: ${e.message}`)
+    } finally { setAnalyzing(false) }
+  }
+
   const selectAll = () => {
     setSelectedChaps(new Set(manga.chapters?.map(c => c.number) || []))
   }
@@ -586,6 +598,26 @@ export default function MangaDetail() {
                 </svg>
               </button>
             )}
+            {canScrape && (
+              <button
+                onClick={() => {
+                  const active = selectionMode && selAction === 'ambience'
+                  if (active) { setSelectionMode(false); return }
+                  setSelAction('ambience'); setSelectionMode(true); deselectAll()
+                }}
+                style={{
+                  background: 'none', border: 'none', color: '#fff', cursor: 'pointer',
+                  padding: '.4rem', display: 'flex', alignItems: 'center',
+                  opacity: (selectionMode && selAction === 'ambience') ? 1 : 0.6, transition: 'opacity .2s',
+                }}
+                title="Analyser l'ambiance sonore des planches"
+              >
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
+                  <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>
+                </svg>
+              </button>
+            )}
             <button className={`detail-fav-inline ${isFav ? 'on' : ''}`} onClick={toggleFav}
               title={isFav ? 'Retirer des favoris' : 'Ajouter aux favoris'}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill={isFav ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -668,6 +700,13 @@ export default function MangaDetail() {
                     {repairing
                       ? <><span className="spin" style={{ width: 13, height: 13 }} /> Lancement…</>
                       : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg> Réparer {selectedChaps.size}</>}
+                  </button>
+                )}
+                {selAction === 'ambience' && selectedChaps.size > 0 && (
+                  <button className="btn btn-primary btn-sm" onClick={onAnalyzeSelected} disabled={analyzing}>
+                    {analyzing
+                      ? <><span className="spin" style={{ width: 13, height: 13 }} /> Lancement…</>
+                      : <>🎧 Analyser {selectedChaps.size}</>}
                   </button>
                 )}
                 {selAction === 'delete' && (

@@ -124,6 +124,13 @@ export const api = {
   repair: (mangaId, chapNums) =>
     req('/extract/repair', { method: 'POST', body: JSON.stringify({ manga_id: mangaId, chapter_numbers: chapNums }) }),
 
+  // Ambiance sonore : analyse (job) + lecture des segments + liste des chapitres analysés
+  analyzeAmbience: (mangaId, chapNums) =>
+    req(`/mangas/${mangaId}/ambience/analyze`, { method: 'POST', body: JSON.stringify({ chapter_numbers: chapNums }) }),
+  getAmbience: (mangaId, ch, kind) =>
+    req(`/mangas/${mangaId}/chapters/${ch}/ambience${kind ? `?kind=${encodeURIComponent(kind)}` : ''}`),
+  listAmbience: (mangaId) => req(`/mangas/${mangaId}/ambience`),
+
   // Jobs
   listJobs: () => req('/jobs'),
   getJob: (id) => req(`/jobs/${id}`),
