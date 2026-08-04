@@ -46,9 +46,11 @@ export default function EpubReader() {
   const autoCooldownRef = useRef(0)     // pause de bord de planche (survit au redémarrage d'effet)
   const autoAdvancePendingRef = useRef(false)  // en pause "fin de planche", avant d'avancer
   const autoStartPauseRef = useRef(false)      // pause de DÉBUT à armer quand la planche devient visible
+  const autoScrollRef = useRef(false)          // lecture de autoScroll sans re-déclencher les effets
   const wheelPauseTimer = useRef()
   useEffect(() => { autoLevelRef.current = autoLevel }, [autoLevel])
   useEffect(() => { zoomPctRef.current = zoomPct }, [zoomPct])
+  useEffect(() => { autoScrollRef.current = autoScroll }, [autoScroll])
 
   // Réglages du lecteur (par utilisateur) : boutons visibles, plages, pause auto-scroll
   const [settings, setSettings] = useState(() => loadReaderSettings(uid))
@@ -497,14 +499,11 @@ export default function EpubReader() {
             autoAdvancePendingRef.current = true
             autoCooldownRef.current = now + pauseMs
           } else {
-            // 2) pause de fin écoulée → on avance. La pause de DÉBUT n'est PAS armée ici :
-            //    la planche n'est pas encore chargée, donc son temps de chargement
-            //    consommerait la pause (→ pause de début zappée). On GÈLE le défilement et
-            //    on (ré)arme la pause quand la planche devient VISIBLE (effet imgReady ci-dessous).
+            // 2) pause de fin écoulée → on avance. La pause de DÉBUT de la nouvelle planche
+            //    est (ré)armée par l'effet de CHANGEMENT DE PLANCHE ci-dessous (manuel OU auto),
+            //    quand la planche devient visible → jamais zappée par le temps de chargement.
             autoAdvancePendingRef.current = false
             acc = 0
-            autoStartPauseRef.current = true
-            autoCooldownRef.current = now + 3600000   // gel jusqu'à ce que la planche soit prête
             if (current < images.length - 1 || nextChapNum != null) goNext()
             else setAutoScroll(false)           // fin du chapitre sans suite → stop
           }
@@ -523,6 +522,16 @@ export default function EpubReader() {
 
   // Désactive l'auto-scroll si on quitte le mode fit-largeur
   useEffect(() => { if (!fitWidth) setAutoScroll(false) }, [fitWidth])
+
+  // CHANGEMENT DE PLANCHE (manuel souris/tactile OU auto) pendant l'auto-scroll : on remet le
+  // compteur d'attente à ZÉRO → la pause de début s'applique aussi sur les changements manuels.
+  // Un simple déplacement DANS la même planche ne change pas `current` → pas de remise à zéro,
+  // l'auto reprend normalement sans attente. useLayoutEffect : posé avant la 1ʳᵉ frame de scroll.
+  useLayoutEffect(() => {
+    if (!autoScrollRef.current || !fitWidthRef.current) return
+    autoStartPauseRef.current = true
+    autoCooldownRef.current = performance.now() + 3600000   // gel jusqu'à ce que la planche soit prête
+  }, [current])
 
   // Pause de DÉBUT de planche ARMÉE quand la planche devient VISIBLE (imgReady false→true),
   // pas au moment du goNext : une planche lente à charger ne "mange" plus la pause de début.
@@ -748,6 +757,16 @@ export default function EpubReader() {
           ) : (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7 6 12 11 17 6"/><polyline points="7 13 12 18 17 13"/></svg>
           )}
+        </button>
+      )}
+
+      {/* Plein écran : bouton flottant de vitesse — seulement quand l'auto-scroll est actif */}
+      {fullscreen && fitWidth && autoScroll && settings.buttons.autoscroll && (
+        <button onClick={cycleAutoSpeed} className="reader-fs-speed" title="Vitesse du défilement auto">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="7 13 12 18 17 13" /><polyline points="7 6 12 11 17 6" />
+          </svg>
+          V{autoLevel}
         </button>
       )}
 
