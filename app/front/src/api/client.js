@@ -35,6 +35,9 @@ export const api = {
     req('/admin/scenarios/verification', { method: 'PUT', body: JSON.stringify({ enabled, unit, count }) }),
   runVerification: () => req('/admin/scenarios/verification/run', { method: 'POST' }),
 
+  // Console admin (terminal web)
+  consoleStatus: () => req('/admin/console/status', { cache: 'no-store' }),
+
   // Users (admin)
   listUsers: () => req('/auth/users'),
   createUser: (username, password, role) =>

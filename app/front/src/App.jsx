@@ -7,6 +7,7 @@ import EpubReader from './pages/EpubReader'
 import Users from './pages/Users'
 import Stats from './pages/Stats'
 import Settings from './pages/Settings'
+import Console from './pages/Console'
 import Navbar from './components/Navbar'
 import JobStatus from './components/JobStatus'
 import PageErrorBoundary from './components/PageErrorBoundary'
@@ -109,6 +110,7 @@ export default function App() {
                     <Route path="/stats" element={<Stats />} />
                     <Route path="/settings" element={<Settings />} />
                     <Route path="/admin/users" element={<Users />} />
+                    <Route path="/admin/console" element={<Console />} />
                   </Routes>
                   <JobStatus />
                 </PageErrorBoundary>

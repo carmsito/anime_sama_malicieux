@@ -58,5 +58,13 @@ TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION", str(DATA_DIR / "tg.session
 # Durée de vie du cache EPUB local après upload (secondes). 0 = supprime tout de suite.
 LOCAL_CACHE_TTL = int(os.environ.get("LOCAL_CACHE_TTL", "86400"))
 
+# ── Console admin (terminal web → shell ROOT sur l'hôte via SSH) ───────────────
+# RCE volontaire, réservé admin + passphrase dédiée + audit. DÉSACTIVÉE par défaut :
+# il faut CONSOLE_ENABLED=1 ET une CONSOLE_PASSPHRASE non vide pour l'allumer.
+CONSOLE_ENABLED = os.environ.get("CONSOLE_ENABLED", "0").lower() in ("1", "true", "yes", "on")
+CONSOLE_PASSPHRASE = os.environ.get("CONSOLE_PASSPHRASE", "")
+CONSOLE_SSH_TARGET = os.environ.get("CONSOLE_SSH_TARGET", "")     # ex: root@62.238.63.117
+CONSOLE_SSH_KEY = os.environ.get("CONSOLE_SSH_KEY", str(DATA_DIR / "console_host_key"))
+
 COVERS_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)

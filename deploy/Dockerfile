@@ -20,7 +20,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Sushiscan passe par FlareSolverr (conteneur séparé) + curl_cffi → PAS de navigateur
 # dans cette image. On garde imagemagick (make_epub/split_manga) + tini.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      imagemagick fonts-liberation ca-certificates tini \
+      imagemagick fonts-liberation ca-certificates tini openssh-client \
  && rm -rf /var/lib/apt/lists/*
 
 # Autorise webp/coalesce dans ImageMagick (certaines policies bloquent par défaut)
