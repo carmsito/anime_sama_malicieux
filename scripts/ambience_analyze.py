@@ -35,6 +35,9 @@ PRIORITY = [
 ]
 ACTION_TAGS = {"fighting", "battle", "war", "sword", "weapon", "blood", "explosion",
                "motion_lines", "emphasis_lines", "speed_lines", "smoke"}
+# L'ACTION n'est pas un décor mais un AXE orthogonal (mouvement/combat) : on la superpose
+# en COUCHE au décor (interieur+action, foret+action…) dès que le segment bouge assez.
+ACTION_ON = 0.45   # score d'action moyen d'un segment à partir duquel on ajoute la couche
 
 
 def cache_epub(manga_id, chapter, kind):
@@ -162,8 +165,14 @@ def smooth_rle(preds, min_seg=2):
     out = []
     for s in merged:
         rng = acts[s["from"]:s["to"] + 1]
+        avg_act = round(sum(rng) / len(rng), 2)
+        # layers = décor de base (+ "action" en surcouche si ça bouge). Le lecteur mixe
+        # toutes les couches simultanément ; "ambience" reste le décor pour compat.
+        layers = [s["amb"]]
+        if avg_act >= ACTION_ON and s["amb"] != "action":
+            layers.append("action")
         out.append({"from": s["from"], "to": s["to"], "ambience": s["amb"],
-                    "action": round(sum(rng) / len(rng), 2)})
+                    "layers": layers, "action": avg_act})
     return out
 
 
@@ -193,7 +202,7 @@ def main():
     store(manga_id, chapter, kind, segs, len(preds))
     print(f"[{manga_id} {kind} {chapter}] {len(preds)} planches → {len(segs)} segments en {time.time() - t0:.0f}s")
     for s in segs:
-        print(f"  p{s['from']:>3}-{s['to']:<3}  {s['ambience']:10s} (action {s['action'] * 100:.0f}%)")
+        print(f"  p{s['from']:>3}-{s['to']:<3}  {'+'.join(s['layers']):18s} (action {s['action'] * 100:.0f}%)")
 
 
 if __name__ == "__main__":

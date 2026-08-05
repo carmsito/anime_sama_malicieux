@@ -1,9 +1,10 @@
 // Moteur d'ambiance sonore SYNTHÉTISÉ en Web Audio — aucun fichier audio (léger).
-// Chaque ambiance = un petit graphe de bruit filtré / drones. Changement de segment →
-// crossfade (rampe de gain) doux. Le son ne démarre qu'après un geste utilisateur
-// (contrainte navigateur) : on appelle resume() sur le 1er toggle.
+// Chaque ambiance = un petit graphe de bruit filtré / drones. Le moteur MIXE plusieurs
+// couches simultanément (ex. « foret » + « action », « nuit » + « pluie ») et fait un
+// crossfade (rampe de gain) doux quand une couche apparaît/disparaît. Le son ne démarre
+// qu'après un geste utilisateur (contrainte navigateur) : on appelle resume() au 1er toggle.
 
-const FADE = 1.6 // s de fondu enchaîné entre ambiances
+const FADE = 1.6 // s de fondu enchaîné entre couches
 
 function noiseBuffer(ctx, kind = 'white', seconds = 4) {
   const n = ctx.sampleRate * seconds
@@ -76,6 +77,18 @@ function build(ctx, label) {
     s.connect(lp); lp.connect(soft); soft.connect(out)
     const drone = add(ctx.createOscillator()); drone.type = 'sine'; drone.frequency.value = 55
     const dg = ctx.createGain(); dg.gain.value = 0.06; drone.connect(dg); dg.connect(out); drone.start()
+  } else if (label === 'action') {
+    // COUCHE de tension (combat / mouvement) : grondement bas + pulsation rythmique.
+    // Pensée pour se SUPERPOSER à un décor (foret+action, exterieur+action…).
+    const r = add(source(ctx, noiseBuffer(ctx, 'brown')))
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 180
+    const rg = ctx.createGain(); rg.gain.value = 0.3
+    r.connect(lp); lp.connect(rg); rg.connect(out)          // grondement sourd
+    const p = add(source(ctx, noiseBuffer(ctx, 'white')))
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 320; bp.Q.value = 1.2
+    const pg = ctx.createGain(); pg.gain.value = 0.06
+    p.connect(bp); bp.connect(pg); pg.connect(out)
+    lfo(2.2, 0.16, pg.gain, 0.06)                           // battement ~130 bpm
   } else { // interieur / défaut : room tone très discret
     const s = add(source(ctx, noiseBuffer(ctx, 'pink')))
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 400
@@ -90,7 +103,8 @@ function build(ctx, label) {
 }
 
 export function createAmbienceEngine() {
-  let ctx = null, master = null, cur = null, curLabel = null, vol = 0.5
+  let ctx = null, master = null, vol = 0.5
+  const layers = new Map() // label -> { out, stop }
 
   const ensure = () => {
     if (ctx) return
@@ -98,28 +112,41 @@ export function createAmbienceEngine() {
     master = ctx.createGain(); master.gain.value = vol; master.connect(ctx.destination)
   }
 
+  const fadeIn = (node) => {
+    const t = ctx.currentTime
+    node.out.connect(master)
+    node.out.gain.setValueAtTime(0.0001, t)
+    node.out.gain.exponentialRampToValueAtTime(1, t + FADE)
+  }
+  const fadeOut = (node) => {
+    const t = ctx.currentTime
+    try {
+      node.out.gain.setValueAtTime(node.out.gain.value || 1, t)
+      node.out.gain.exponentialRampToValueAtTime(0.0001, t + FADE)
+    } catch { /* noop */ }
+    setTimeout(() => { try { node.stop(); node.out.disconnect() } catch { /* noop */ } }, (FADE + 0.3) * 1000)
+  }
+
+  // Applique l'ENSEMBLE de couches voulu : ajoute les nouvelles, retire les disparues,
+  // laisse en place celles qui persistent (pas de re-fondu inutile → mix stable).
+  const apply = (arr) => {
+    if (!ctx) return
+    const want = new Set(arr && arr.length ? arr : ['interieur'])
+    for (const [label, node] of layers) {
+      if (!want.has(label)) { fadeOut(node); layers.delete(label) }
+    }
+    for (const label of want) {
+      if (!layers.has(label)) { const n = build(ctx, label); fadeIn(n); layers.set(label, n) }
+    }
+  }
+
   return {
     async enable() { ensure(); if (ctx.state === 'suspended') await ctx.resume() },
     setVolume(v) { vol = v; if (master) master.gain.setTargetAtTime(v, ctx.currentTime, 0.1) },
-    set(label) {
-      if (!ctx || label === curLabel) return
-      curLabel = label
-      const t = ctx.currentTime
-      const next = build(ctx, label || 'interieur')
-      next.out.connect(master)
-      next.out.gain.setValueAtTime(0.0001, t)
-      next.out.gain.exponentialRampToValueAtTime(1, t + FADE)
-      const prev = cur
-      if (prev) {
-        prev.out.gain.setValueAtTime(prev.out.gain.value || 1, t)
-        prev.out.gain.exponentialRampToValueAtTime(0.0001, t + FADE)
-        setTimeout(() => { try { prev.stop(); prev.out.disconnect() } catch { /* noop */ } }, (FADE + 0.3) * 1000)
-      }
-      cur = next
-    },
+    setLayers(arr) { apply(arr) },
+    set(label) { apply([label || 'interieur']) }, // compat : une seule ambiance
     stop() {
-      curLabel = null
-      if (cur) { const p = cur; cur = null; try { p.out.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.3); setTimeout(() => { p.stop(); p.out.disconnect() }, 600) } catch { /* noop */ } }
+      for (const [label, node] of layers) { fadeOut(node); layers.delete(label) }
       if (ctx && ctx.state === 'running') ctx.suspend()
     },
   }
