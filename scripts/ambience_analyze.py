@@ -1,41 +1,40 @@
 #!/usr/bin/env python
 """
-Analyse d'AMBIANCE des planches d'un chapitre → segments RLE en DB.
+Analyse d'AMBIANCE des planches → segments RLE en DB.
 
-À lancer avec le venv qui a torch/open_clip (PAS le python du conteneur) :
+Classifieur = TAGGER ANIME/MANGA (SmilingWolf/wd-vit-tagger-v3, ONNX) : entraîné sur
+7,2M images Danbooru → DOMAINE manga (ne confond pas l'encre avec la pluie, contrairement
+à CLIP). Léger : onnxruntime CPU, pas de torch. Sort des tags de scène (rain, night,
+forest, ocean, indoors…) et d'action (fighting, blood, weapon…).
+
+Lancer avec le venv qui a onnxruntime/pillow (pas le python du conteneur) :
   /home/emmanuel/ambience-proto/venv/bin/python scripts/ambience_analyze.py <manga_id> <chapter> <kind>
-
-Pour chaque planche : ambiance de fond (zero-shot CLIP, depuis l'IMAGE) + score
-d'action séparé. Lissage temporel → segments stables (RLE), stockés dans la table
-`ambience_segments` de srv-data/app.db. Borné RAM : modèle chargé une fois, 1 image
-à la fois, le process sort à la fin (RAM libérée).
 """
-import sys, os, io, re, json, zipfile, sqlite3, time
-from collections import Counter
+import sys, os, io, re, csv, json, zipfile, sqlite3, time
+import numpy as np
 
 REPO = "/root/anime_sama_malicieux"
 DB = f"{REPO}/srv-data/app.db"
 CACHE = f"{REPO}/srv-data/epub_cache"
 IMG_EXT = (".jpg", ".jpeg", ".png", ".webp")
-MODEL = ("ViT-B-32", "laion2b_s34b_b79k")
+TAGGER = "SmilingWolf/wd-vit-tagger-v3"
+THRESH = 0.35   # seuil pour retenir un tag de scène
 
-# AMBIANCE = décor de fond (→ boucle sonore). L'action est un signal SÉPARÉ (→ musique).
-CLASSES = {
-    "pluie":     "a manga panel of a rainy scene, rain falling, storm",
-    "foret":     "a manga panel of a forest with trees and nature outdoors",
-    "ville":     "a manga panel of a city street with buildings",
-    "ocean":     "a manga panel of the ocean, the sea or a ship on water",
-    "nuit":      "a manga panel of a dark scene at night",
-    "interieur": "a manga panel of a calm indoor room, quiet interior",
-    "foule":     "a manga panel of a crowd of people, a village or a market",
-    "neige":     "a manga panel of snow, a cold winter landscape",
-    "montagne":  "a manga panel of mountains, cliffs or wide open fields",
-    "ciel":      "a manga panel of the open sky with clouds",
-}
-ACTION = [
-    "a manga panel of intense action, fighting, explosion, motion and speed lines",
-    "a calm, quiet, still manga panel with little motion",
+# tag Danbooru (au-dessus du seuil) → ambiance, par PRIORITÉ (1er trouvé gagne).
+PRIORITY = [
+    (["rain"], "pluie"),
+    (["snow", "snowing", "snowscape"], "neige"),
+    (["fire"], "feu"),
+    (["ocean", "beach", "water", "river", "waterfall"], "ocean"),
+    (["forest", "bamboo_forest"], "foret"),
+    (["crowd", "market"], "foule"),
+    (["city", "cityscape", "ruins"], "ville"),
+    (["indoors"], "interieur"),
+    (["night", "moon", "night_sky", "starry_sky", "darkness"], "nuit"),
+    (["outdoors", "field", "mountain", "nature", "tree", "sky", "cloud", "road", "day", "sunlight"], "exterieur"),
 ]
+ACTION_TAGS = {"fighting", "battle", "war", "sword", "weapon", "blood", "explosion",
+               "motion_lines", "emphasis_lines", "speed_lines", "smoke"}
 
 
 def cache_epub(manga_id, chapter, kind):
@@ -43,72 +42,88 @@ def cache_epub(manga_id, chapter, kind):
     return f"{CACHE}/{safe}.epub"
 
 
-def load_model():
-    os.environ.setdefault("OMP_NUM_THREADS", "2")
-    import torch
-    torch.set_num_threads(2)
-    import open_clip
-    m, _, prep = open_clip.create_model_and_transforms(MODEL[0], pretrained=MODEL[1])
-    return torch, m.eval(), prep, open_clip.get_tokenizer(MODEL[0])
+def load_tagger():
+    import onnxruntime as ort
+    from huggingface_hub import hf_hub_download
+    mp = hf_hub_download(TAGGER, "model.onnx")
+    tp = hf_hub_download(TAGGER, "selected_tags.csv")
+    names, cats = [], []
+    with open(tp) as f:
+        for row in csv.DictReader(f):
+            names.append(row["name"]); cats.append(int(row["category"]))
+    sess = ort.InferenceSession(mp, providers=["CPUExecutionProvider"])
+    _, H, W, _ = sess.get_inputs()[0].shape
+    return sess, sess.get_inputs()[0].name, H, W, names, cats
+
+
+def prep(im, W, H):
+    from PIL import Image
+    im = im.convert("RGBA"); bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+    bg.alpha_composite(im); im = bg.convert("RGB")
+    w, h = im.size; m = max(w, h)
+    sq = Image.new("RGB", (m, m), (255, 255, 255)); sq.paste(im, ((m - w) // 2, (m - h) // 2))
+    sq = sq.resize((W, H), Image.BICUBIC)
+    return np.expand_dims(np.asarray(sq, dtype=np.float32)[:, :, ::-1], 0)  # RGB->BGR
 
 
 def classify(epub_path):
     from PIL import Image
-    torch, model, preprocess, tok = load_model()
-    labels = list(CLASSES)
-    with torch.no_grad():
-        tfeat = model.encode_text(tok([CLASSES[k] for k in labels])); tfeat /= tfeat.norm(dim=-1, keepdim=True)
-        afeat = model.encode_text(tok(ACTION)); afeat /= afeat.norm(dim=-1, keepdim=True)
+    sess, inp, H, W, names, cats = load_tagger()
+    gen = {i for i in range(len(names)) if cats[i] == 0}   # tags "general"
     z = zipfile.ZipFile(epub_path)
-    names = sorted(n for n in z.namelist() if n.lower().endswith(IMG_EXT))
+    files = sorted(n for n in z.namelist() if n.lower().endswith(IMG_EXT))
     preds = []
-    for n in names:
+    for n in files:
         try:
-            im = Image.open(io.BytesIO(z.read(n))).convert("RGB")
-            im.thumbnail((320, 480))
-            x = preprocess(im).unsqueeze(0)
-            with torch.no_grad():
-                f = model.encode_image(x); f /= f.norm(dim=-1, keepdim=True)
-                amb = (100 * f @ tfeat.T).softmax(dim=-1)[0]
-                act = (100 * f @ afeat.T).softmax(dim=-1)[0][0].item()
-            i = int(amb.argmax())
-            preds.append((labels[i], float(amb[i]), float(act)))
-        except Exception as e:
-            preds.append(("interieur", 0.0, 0.0))  # planche illisible → neutre
+            im = Image.open(io.BytesIO(z.read(n)))
+            p = sess.run(None, {inp: prep(im, W, H)})[0][0]
+            tags = {names[i]: float(p[i]) for i in gen if p[i] > THRESH}
+            amb = None
+            for keys, label in PRIORITY:
+                if any(tags.get(t, 0) > THRESH for t in keys):
+                    amb = label; break
+            action = max([float(p[i]) for i in gen if names[i] in ACTION_TAGS] + [0.0])
+            preds.append((amb, action))
+        except Exception:
+            preds.append((None, 0.0))
     return preds
 
 
-def smooth_rle(preds, window=3, min_seg=2):
-    """Mode-filter (fenêtre) puis fusion en segments, avec longueur mini."""
-    labs = [p[0] for p in preds]
-    n = len(labs)
-    sm = []
+def fill(preds):
+    """Les planches sans décor (None) héritent de l'ambiance connue la plus proche."""
+    amb = [p[0] for p in preds]
+    n = len(amb)
+    last = None
     for i in range(n):
-        w = labs[max(0, i - window // 2):i + window // 2 + 1]
-        sm.append(Counter(w).most_common(1)[0][0])
-    # segments consécutifs
+        if amb[i] is not None: last = amb[i]
+        elif last is not None: amb[i] = last
+    nxt = None                              # back-fill des None de tête
+    for i in range(n - 1, -1, -1):
+        if amb[i] is not None: nxt = amb[i]
+        elif nxt is not None: amb[i] = nxt
+    return [a if a is not None else "exterieur" for a in amb]
+
+
+def smooth_rle(preds, min_seg=2):
+    amb = fill(preds)
+    acts = [p[1] for p in preds]
     segs = []
-    for i, lab in enumerate(sm):
-        if segs and segs[-1]["amb"] == lab:
+    for i, a in enumerate(amb):
+        if segs and segs[-1]["amb"] == a:
             segs[-1]["to"] = i
         else:
-            segs.append({"amb": lab, "from": i, "to": i})
-    # fusion des segments trop courts dans le voisin précédent
+            segs.append({"amb": a, "from": i, "to": i})
     merged = []
     for s in segs:
-        length = s["to"] - s["from"] + 1
-        if merged and length < min_seg:
+        if merged and (s["to"] - s["from"] + 1) < min_seg:
             merged[-1]["to"] = s["to"]
         else:
             merged.append(s)
-    # enrichit : confiance moyenne + action moyenne par segment
     out = []
     for s in merged:
-        rng = preds[s["from"]:s["to"] + 1]
-        conf = sum(p[1] for p in rng) / len(rng)
-        act = sum(p[2] for p in rng) / len(rng)
+        rng = acts[s["from"]:s["to"] + 1]
         out.append({"from": s["from"], "to": s["to"], "ambience": s["amb"],
-                    "conf": round(conf, 2), "action": round(act, 2)})
+                    "action": round(sum(rng) / len(rng), 2)})
     return out
 
 
@@ -116,12 +131,12 @@ def store(manga_id, chapter, kind, segments, n_pages):
     con = sqlite3.connect(DB, timeout=30)
     con.execute("PRAGMA busy_timeout=30000")
     con.execute("""CREATE TABLE IF NOT EXISTS ambience_segments (
-        manga_id TEXT, chapter_number REAL, kind TEXT,
-        data TEXT, created_at TEXT,
+        manga_id TEXT, chapter_number REAL, kind TEXT, data TEXT, created_at TEXT,
         PRIMARY KEY (manga_id, chapter_number, kind))""")
-    payload = json.dumps({"model": MODEL[0], "pages": n_pages, "segments": segments})
+    payload = json.dumps({"model": "wd-vit-tagger-v3", "pages": n_pages, "segments": segments})
     con.execute("INSERT OR REPLACE INTO ambience_segments VALUES (?,?,?,?,?)",
-                (manga_id, float(chapter), kind, payload, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
+                (manga_id, float(chapter), kind, payload,
+                 time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
     con.commit(); con.close()
 
 
@@ -136,11 +151,9 @@ def main():
     preds = classify(epub)
     segs = smooth_rle(preds)
     store(manga_id, chapter, kind, segs, len(preds))
-    print(f"[{manga_id} {kind} {chapter}] {len(preds)} planches → {len(segs)} segments "
-          f"en {time.time() - t0:.0f}s")
+    print(f"[{manga_id} {kind} {chapter}] {len(preds)} planches → {len(segs)} segments en {time.time() - t0:.0f}s")
     for s in segs:
-        print(f"  p{s['from']:>3}-{s['to']:<3}  {s['ambience']:10s} "
-              f"(conf {s['conf'] * 100:.0f}%, action {s['action'] * 100:.0f}%)")
+        print(f"  p{s['from']:>3}-{s['to']:<3}  {s['ambience']:10s} (action {s['action'] * 100:.0f}%)")
 
 
 if __name__ == "__main__":

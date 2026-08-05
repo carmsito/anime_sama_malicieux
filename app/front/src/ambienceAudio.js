@@ -46,11 +46,20 @@ function build(ctx, label) {
     const swell = ctx.createGain(); swell.gain.value = 0.5
     s.connect(lp); lp.connect(swell); swell.connect(out)
     lfo(0.1, 0.4, swell.gain, 0.5) // vagues
-  } else if (label === 'foret' || label === 'montagne' || label === 'ciel') {
+  } else if (label === 'foret' || label === 'exterieur' || label === 'montagne' || label === 'ciel') {
     const s = add(source(ctx, noiseBuffer(ctx, 'brown')))
     const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 500; bp.Q.value = 0.7
     s.connect(bp); bp.connect(out)
-    lfo(0.08, 300, bp.frequency, 500) // vent qui module
+    lfo(0.08, 300, bp.frequency, 500) // vent qui module (forêt / plein air)
+  } else if (label === 'feu') {
+    const s = add(source(ctx, noiseBuffer(ctx, 'brown')))
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900
+    s.connect(lp); lp.connect(out)              // grondement du feu
+    const cr = add(source(ctx, noiseBuffer(ctx, 'white')))  // crépitements
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3000
+    const cg = ctx.createGain(); cg.gain.value = 0.15
+    cr.connect(hp); hp.connect(cg); cg.connect(out)
+    lfo(7, 0.14, cg.gain, 0.15)                 // pétillement irrégulier
   } else if (label === 'ville') {
     const s = add(source(ctx, noiseBuffer(ctx, 'brown')))
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 220
