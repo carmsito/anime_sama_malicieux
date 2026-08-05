@@ -66,10 +66,47 @@ def prep(im, W, H):
     return np.expand_dims(np.asarray(sq, dtype=np.float32)[:, :, ::-1], 0)  # RGB->BGR
 
 
+HEAD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ambience_head.npz")
+
+
+def load_head():
+    """Tête entraînée (distillation de mes labels vérifiés) : régression logistique sur
+    le vecteur de tags. None si absente → repli sur la règle de priorité."""
+    try:
+        z = np.load(HEAD_PATH, allow_pickle=True)
+        return (z["coef"].astype("float32"), z["intercept"].astype("float32"),
+                [str(c) for c in z["classes"]])
+    except Exception:
+        return None
+
+
+def predict(p, gen, name2i, head):
+    """HYBRIDE : classes distinctives via tags fiables (la règle marche bien pour elles),
+    sinon la tête LR tranche ext/int/forêt (les confusions que la règle ratait)."""
+    def tg(name):
+        i = name2i.get(name); return float(p[i]) if i is not None else 0.0
+    if tg("rain") > 0.5: return "pluie"
+    if max(tg("snow"), tg("snowing"), tg("snowscape")) > 0.5: return "neige"
+    if tg("fire") > 0.55: return "feu"
+    if max(tg("ocean"), tg("beach")) > 0.5: return "ocean"
+    if max(tg("city"), tg("cityscape")) > 0.5: return "ville"
+    if max(tg("night"), tg("moon"), tg("night_sky")) > 0.5: return "nuit"
+    if head is not None:
+        coef, intercept, classes = head
+        gvec = np.array([p[i] for i in gen], dtype="float32")
+        return classes[int(np.argmax(coef @ gvec + intercept))]
+    tags = {n: p[i] for n, i in name2i.items() if p[i] > THRESH}   # repli règle
+    for keys, label in PRIORITY:
+        if any(tags.get(t, 0) > THRESH for t in keys): return label
+    return None
+
+
 def classify(epub_path):
     from PIL import Image
     sess, inp, H, W, names, cats = load_tagger()
-    gen = {i for i in range(len(names)) if cats[i] == 0}   # tags "general"
+    gen = [i for i in range(len(names)) if cats[i] == 0]   # tags "general" (liste ORDONNÉE)
+    name2i = {names[i]: i for i in gen}
+    head = load_head()
     z = zipfile.ZipFile(epub_path)
     files = sorted(n for n in z.namelist() if n.lower().endswith(IMG_EXT))
     preds = []
@@ -77,12 +114,8 @@ def classify(epub_path):
         try:
             im = Image.open(io.BytesIO(z.read(n)))
             p = sess.run(None, {inp: prep(im, W, H)})[0][0]
-            tags = {names[i]: float(p[i]) for i in gen if p[i] > THRESH}
-            amb = None
-            for keys, label in PRIORITY:
-                if any(tags.get(t, 0) > THRESH for t in keys):
-                    amb = label; break
-            action = max([float(p[i]) for i in gen if names[i] in ACTION_TAGS] + [0.0])
+            amb = predict(p, gen, name2i, head)
+            action = max([float(p[name2i[t]]) for t in ACTION_TAGS if t in name2i] + [0.0])
             preds.append((amb, action))
         except Exception:
             preds.append((None, 0.0))
