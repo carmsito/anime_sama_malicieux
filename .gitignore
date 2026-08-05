@@ -27,6 +27,8 @@ srv-warp/
 CLAUDE.local.md
 # Outil de sync de session (perso, chemins locaux) + settings de perms locaux
 claude-sync.sh
+# Listener de reprise auto du chat (perso, à lancer soi-même) + ses logs
+claude-resume.sh
 .claude/settings.local.json
 deploy/.env
 .claude/worktrees/

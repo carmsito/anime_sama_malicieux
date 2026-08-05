@@ -85,7 +85,14 @@ def predict(p, gen, name2i, head):
     sinon la tête LR tranche ext/int/forêt (les confusions que la règle ratait)."""
     def tg(name):
         i = name2i.get(name); return float(p[i]) if i is not None else 0.0
-    if tg("rain") > 0.5: return "pluie"
+    # PLUIE : le tag "rain" seul déclenche BEAUCOUP de faux positifs (hachures
+    # verticales, lignes de vitesse, trames sombres d'action). On ne garde la pluie
+    # que si le tagger voit AUSSI de l'eau / du mouillé (gouttes, vêtements/cheveux
+    # mouillés, flaque, parapluie…) ET que ce n'est pas une planche d'action.
+    wet = max(tg("wet"), tg("wet_clothes"), tg("wet_hair"), tg("water_drop"),
+              tg("puddle"), tg("water"), tg("umbrella"), tg("raincoat"), tg("rain_boots"))
+    speed = max(tg("speed_lines"), tg("motion_lines"), tg("emphasis_lines"))
+    if tg("rain") > 0.5 and wet > 0.30 and speed < 0.60: return "pluie"
     if max(tg("snow"), tg("snowing"), tg("snowscape")) > 0.5: return "neige"
     if tg("fire") > 0.55: return "feu"
     if max(tg("ocean"), tg("beach")) > 0.5: return "ocean"
