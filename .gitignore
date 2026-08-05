@@ -30,3 +30,4 @@ claude-sync.sh
 .claude/settings.local.json
 deploy/.env
 .claude/worktrees/
+deploy.log
