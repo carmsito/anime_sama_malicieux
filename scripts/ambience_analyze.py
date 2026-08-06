@@ -43,7 +43,7 @@ ACTION_TAGS = {"motion_lines", "emphasis_lines", "speed_lines", "action",
                "explosion", "fighting", "battle"}
 # L'ACTION n'est pas un décor mais un AXE orthogonal (mouvement) : on la superpose en
 # COUCHE au décor (interieur+action, foret+action…) SEULEMENT si ça bouge vraiment fort.
-ACTION_ON = 0.62   # seuil HAUT (gros mouvement) à partir duquel on ajoute la couche
+ACTION_ON = 0.50   # seuil (gros mouvement) sur le PIC par planche du segment (repli layers)
 
 
 def cache_epub(manga_id, chapter, kind):
@@ -113,7 +113,8 @@ def predict(p, gen, name2i, head):
                 tg("street"), tg("alley"), tg("building"), tg("neon_lights"),
                 tg("storefront"), tg("shop"), tg("power_lines"), tg("lamppost"))
     if urban > 0.5: return "ville"
-    if max(tg("night"), tg("moon"), tg("night_sky")) > 0.5: return "nuit"
+    if max(tg("night"), tg("moon"), tg("full_moon"), tg("crescent_moon"),
+           tg("moonlight"), tg("night_sky")) > 0.5: return "nuit"
     if head is not None:
         coef, intercept, classes = head
         gvec = np.array([p[i] for i in gen], dtype="float32")
@@ -162,7 +163,11 @@ def fill(preds):
 
 def smooth_rle(preds, min_seg=2):
     amb = fill(preds)
-    acts = [p[1] for p in preds]
+    # ACTION = score PAR PLANCHE (le pic de mouvement de la planche). On NE moyenne PAS :
+    # un décor (foret sur 8 planches) contient souvent des planches calmes ET des planches
+    # d'action ; moyenner diluait le pic → la couche « action » ne se déclenchait jamais.
+    # Le lecteur décide la surcouche action planche par planche depuis ce tableau `actions`.
+    acts = [round(p[1], 2) for p in preds]
     segs = []
     for i, a in enumerate(amb):
         if segs and segs[-1]["amb"] == a:
@@ -178,24 +183,27 @@ def smooth_rle(preds, min_seg=2):
     out = []
     for s in merged:
         rng = acts[s["from"]:s["to"] + 1]
-        avg_act = round(sum(rng) / len(rng), 2)
-        # layers = décor de base (+ "action" en surcouche si ça bouge). Le lecteur mixe
-        # toutes les couches simultanément ; "ambience" reste le décor pour compat.
+        seg_max = max(rng) if rng else 0.0   # PIC d'action du segment (pas la moyenne)
+        # layers = décor de base (+ "action" en surcouche si le segment a un pic de mouvement).
+        # Le lecteur re-décide finement par planche via `actions` ; layers reste un repli.
         layers = [s["amb"]]
-        if avg_act >= ACTION_ON and s["amb"] != "action":
+        if seg_max >= ACTION_ON and s["amb"] != "action":
             layers.append("action")
         out.append({"from": s["from"], "to": s["to"], "ambience": s["amb"],
-                    "layers": layers, "action": avg_act})
-    return out
+                    "layers": layers, "action": seg_max})
+    return out, acts
 
 
-def store(manga_id, chapter, kind, segments, n_pages):
+def store(manga_id, chapter, kind, segments, n_pages, actions):
     con = sqlite3.connect(DB, timeout=30)
     con.execute("PRAGMA busy_timeout=30000")
     con.execute("""CREATE TABLE IF NOT EXISTS ambience_segments (
         manga_id TEXT, chapter_number REAL, kind TEXT, data TEXT, created_at TEXT,
         PRIMARY KEY (manga_id, chapter_number, kind))""")
-    payload = json.dumps({"model": "wd-vit-tagger-v3", "pages": n_pages, "segments": segments})
+    # `actions` = score d'action PAR PLANCHE (len == pages) → le lecteur superpose la
+    # couche « action » planche par planche (le décor, lui, reste en segments RLE).
+    payload = json.dumps({"model": "wd-vit-tagger-v3", "pages": n_pages,
+                          "segments": segments, "actions": actions})
     con.execute("INSERT OR REPLACE INTO ambience_segments VALUES (?,?,?,?,?)",
                 (manga_id, float(chapter), kind, payload,
                  time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
@@ -211,11 +219,13 @@ def main():
         print("EPUB non trouvé en cache:", epub); sys.exit(2)
     t0 = time.time()
     preds = classify(epub)
-    segs = smooth_rle(preds)
-    store(manga_id, chapter, kind, segs, len(preds))
+    segs, actions = smooth_rle(preds)
+    store(manga_id, chapter, kind, segs, len(preds), actions)
     print(f"[{manga_id} {kind} {chapter}] {len(preds)} planches → {len(segs)} segments en {time.time() - t0:.0f}s")
     for s in segs:
-        print(f"  p{s['from']:>3}-{s['to']:<3}  {'+'.join(s['layers']):18s} (action {s['action'] * 100:.0f}%)")
+        rng = actions[s['from']:s['to'] + 1]
+        pics = "".join("#" if a >= ACTION_ON else ("." if a >= ACTION_ON * 0.6 else " ") for a in rng)
+        print(f"  p{s['from']:>3}-{s['to']:<3}  {'+'.join(s['layers']):18s} (pic {s['action'] * 100:.0f}%)  [{pics}]")
 
 
 if __name__ == "__main__":

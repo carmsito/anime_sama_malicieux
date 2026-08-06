@@ -72,28 +72,37 @@ export default function EpubReader() {
 
   // ── Ambiance sonore : segments détectés + moteur audio synthétisé (Web Audio) ──
   const [ambSegments, setAmbSegments] = useState(null)   // [{from,to,ambience,layers,action}] | null
+  const [ambActions, setAmbActions] = useState(null)     // score d'action PAR planche (len==pages)
   const [ambOn, setAmbOn] = useState(false)
   const ambEngineRef = useRef(null)
   // récupère les segments du chapitre (silencieux si non analysé)
   useEffect(() => {
-    setAmbSegments(null)
-    api.getAmbience(mangaId, chapterNum).then((d) => setAmbSegments(d?.segments || null)).catch(() => setAmbSegments(null))
+    setAmbSegments(null); setAmbActions(null)
+    api.getAmbience(mangaId, chapterNum)
+      .then((d) => { setAmbSegments(d?.segments || null); setAmbActions(Array.isArray(d?.actions) ? d.actions : null) })
+      .catch(() => { setAmbSegments(null); setAmbActions(null) })
   }, [mangaId, chapterNum])
-  // couches d'ambiance de la planche courante (décor + éventuelle surcouche « action »).
-  // La couche « action » = TRÈS GROS MOUVEMENT : on la (re)décide ICI depuis le score
-  // stocké `action`, donc relever la barre profite aussi aux chapitres déjà analysés
-  // (dont le `layers` a été figé avec l'ancien seuil, plus bas).
-  const ACTION_GATE = 0.62
+  // Couches de la planche courante : le DÉCOR vient du segment RLE ; la surcouche « ACTION »
+  // se décide PLANCHE PAR PLANCHE depuis `actions` (le décor peut contenir des planches calmes
+  // ET des planches d'action). Dilatation ±1 planche pour attraper le pic sans clignoter.
+  // Repli sur les vieux `layers` si le chapitre n'a pas encore le tableau `actions`.
+  const ACTION_GATE = 0.45
   const currentLayers = useMemo(() => {
     if (!ambSegments) return null
     const s = ambSegments.find((x) => current >= x.from && current <= x.to)
     if (!s) return null
     const decor = s.ambience || (s.layers || []).find((l) => l !== 'action') || 'interieur'
     const out = [decor]
-    const bigMove = typeof s.action === 'number' ? s.action >= ACTION_GATE : (s.layers || []).includes('action')
-    if (bigMove) out.push('action')
+    let bigMove
+    if (ambActions && ambActions.length) {
+      const a = (k) => (k >= 0 && k < ambActions.length ? (ambActions[k] || 0) : 0)
+      bigMove = Math.max(a(current - 1), a(current), a(current + 1)) >= ACTION_GATE
+    } else {
+      bigMove = (s.layers || []).includes('action')   // vieux chapitres : comportement d'avant
+    }
+    if (bigMove && decor !== 'action') out.push('action')
     return out
-  }, [ambSegments, current])
+  }, [ambSegments, ambActions, current])
   // clé stable pour ne (re)piloter le moteur qu'au vrai changement de couches
   const layerKey = currentLayers ? currentLayers.join('+') : ''
   // pilote le moteur : (ré)active + mixe les couches au fil des planches (crossfade)
