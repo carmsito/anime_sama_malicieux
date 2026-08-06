@@ -1,10 +1,20 @@
-// Moteur d'ambiance sonore SYNTHÉTISÉ en Web Audio — aucun fichier audio (léger).
-// Chaque ambiance = un petit graphe de bruit filtré / drones. Le moteur MIXE plusieurs
-// couches simultanément (ex. « foret » + « action », « nuit » + « pluie ») et fait un
-// crossfade (rampe de gain) doux quand une couche apparaît/disparaît. Le son ne démarre
-// qu'après un geste utilisateur (contrainte navigateur) : on appelle resume() au 1er toggle.
+// Moteur d'ambiance sonore. Les DÉCORS jouent de vraies boucles audio (extraits ~3 min
+// découpés de vidéos d'ambiance, encodés en Opus → /ambience/<label>.opus). Ce qui n'a
+// pas de piste reste SYNTHÉTISÉ en Web Audio : « feu » (crépitement) et la couche de
+// tension « action » (bruit brun « focus »). Si un fichier manque (piste absente ou
+// hors-ligne avant mise en cache), la couche RETOMBE sur la synthèse plutôt que le silence.
+// Le moteur MIXE plusieurs couches en même temps (ex. « foret » + « action ») avec un
+// crossfade (rampe de gain) doux. Le son ne démarre qu'après un geste utilisateur
+// (contrainte navigateur) : on appelle resume() au 1er toggle.
 
 const FADE = 1.6 // s de fondu enchaîné entre couches
+
+// Décors qui disposent d'un extrait audio réel dans /ambience/<label>.opus.
+// Tout le reste (feu, action, inconnu) est synthétisé ci-dessous.
+const FILE_LAYERS = new Set([
+  'pluie', 'neige', 'ocean', 'foret', 'foule', 'ville', 'interieur', 'nuit', 'exterieur',
+])
+const fileUrl = (label) => `/ambience/${label}.opus`
 
 function noiseBuffer(ctx, kind = 'white', seconds = 4) {
   const n = ctx.sampleRate * seconds
@@ -20,39 +30,21 @@ function noiseBuffer(ctx, kind = 'white', seconds = 4) {
   return buf
 }
 
-function source(ctx, buf) {
-  const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true; s.start(); return s
+function source(ctx, buf, loop = true) {
+  const s = ctx.createBufferSource(); s.buffer = buf; s.loop = loop; s.start(); return s
 }
 
-// Retourne { out (GainNode), stop() } — un sous-graphe qui synthétise `label`.
-function build(ctx, label) {
-  const out = ctx.createGain(); out.gain.value = 0
+// Construit un sous-graphe SYNTHÉTISÉ dans `out`. Retourne les nœuds à arrêter.
+function synthInto(ctx, out, label) {
   const parts = []
   const add = (node) => { parts.push(node); return node }
-
   const lfo = (freq, depth, target, base = 0) => {
     const o = add(ctx.createOscillator()); o.frequency.value = freq
     const g = add(ctx.createGain()); g.gain.value = depth
     o.connect(g); g.connect(target); target.value = base; o.start(); return o
   }
 
-  if (label === 'pluie' || label === 'neige') {
-    const s = add(source(ctx, noiseBuffer(ctx, 'white')))
-    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = label === 'neige' ? 600 : 1200
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 8000
-    s.connect(hp); hp.connect(lp); lp.connect(out)
-  } else if (label === 'ocean') {
-    const s = add(source(ctx, noiseBuffer(ctx, 'brown')))
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 600
-    const swell = ctx.createGain(); swell.gain.value = 0.5
-    s.connect(lp); lp.connect(swell); swell.connect(out)
-    lfo(0.1, 0.4, swell.gain, 0.5) // vagues
-  } else if (label === 'foret' || label === 'exterieur' || label === 'montagne' || label === 'ciel') {
-    const s = add(source(ctx, noiseBuffer(ctx, 'brown')))
-    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 500; bp.Q.value = 0.7
-    s.connect(bp); bp.connect(out)
-    lfo(0.08, 300, bp.frequency, 500) // vent qui module (forêt / plein air)
-  } else if (label === 'feu') {
+  if (label === 'feu') {
     const s = add(source(ctx, noiseBuffer(ctx, 'brown')))
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900
     s.connect(lp); lp.connect(out)              // grondement du feu
@@ -61,50 +53,67 @@ function build(ctx, label) {
     const cg = ctx.createGain(); cg.gain.value = 0.15
     cr.connect(hp); hp.connect(cg); cg.connect(out)
     lfo(7, 0.14, cg.gain, 0.15)                 // pétillement irrégulier
-  } else if (label === 'ville') {
-    const s = add(source(ctx, noiseBuffer(ctx, 'brown')))
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 220
-    s.connect(lp); lp.connect(out) // rumble urbain sourd
-  } else if (label === 'foule') {
-    const s = add(source(ctx, noiseBuffer(ctx, 'pink')))
-    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 900; bp.Q.value = 0.9
-    s.connect(bp); bp.connect(out)
-    lfo(0.5, 400, bp.frequency, 900) // brouhaha
-  } else if (label === 'nuit') {
-    const s = add(source(ctx, noiseBuffer(ctx, 'brown')))
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 300
-    const soft = ctx.createGain(); soft.gain.value = 0.25
-    s.connect(lp); lp.connect(soft); soft.connect(out)
-    const drone = add(ctx.createOscillator()); drone.type = 'sine'; drone.frequency.value = 55
-    const dg = ctx.createGain(); dg.gain.value = 0.06; drone.connect(dg); dg.connect(out); drone.start()
   } else if (label === 'action') {
-    // COUCHE de tension (combat / mouvement) : grondement bas + pulsation rythmique.
-    // Pensée pour se SUPERPOSER à un décor (foret+action, exterieur+action…).
+    // COUCHE de tension « FOCUS » : bruit brun grave et STABLE (pas de rythme), qui
+    // respire lentement → impression de concentration/tension. Pensée pour se SUPERPOSER
+    // discrètement à un décor (foret+action, exterieur+action…).
     const r = add(source(ctx, noiseBuffer(ctx, 'brown')))
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 180
-    const rg = ctx.createGain(); rg.gain.value = 0.3
-    r.connect(lp); lp.connect(rg); rg.connect(out)          // grondement sourd
-    const p = add(source(ctx, noiseBuffer(ctx, 'white')))
-    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 320; bp.Q.value = 1.2
-    const pg = ctx.createGain(); pg.gain.value = 0.06
-    p.connect(bp); bp.connect(pg); pg.connect(out)
-    lfo(2.2, 0.16, pg.gain, 0.06)                           // battement ~130 bpm
-  } else { // interieur / défaut : room tone très discret
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 240; lp.Q.value = 0.7
+    const rg = ctx.createGain(); rg.gain.value = 0.9
+    r.connect(lp); lp.connect(rg); rg.connect(out)
+    lfo(0.06, 0.25, rg.gain, 0.9)               // très lente respiration (focus qui pulse)
+  } else if (label === 'ocean') {
+    // Repli si l'extrait « ocean » manque : vagues synthétisées (bruit brun + houle lente).
+    const s = add(source(ctx, noiseBuffer(ctx, 'brown')))
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 600
+    const swell = ctx.createGain(); swell.gain.value = 0.5
+    s.connect(lp); lp.connect(swell); swell.connect(out)
+    lfo(0.1, 0.4, swell.gain, 0.5)              // vagues
+  } else { // repli générique : room tone très discret
     const s = add(source(ctx, noiseBuffer(ctx, 'pink')))
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 400
     const soft = ctx.createGain(); soft.gain.value = 0.12
     s.connect(lp); lp.connect(soft); soft.connect(out)
   }
+  return parts
+}
 
+function stopParts(parts) {
+  parts.forEach((p) => { try { p.stop && p.stop() } catch { /* noop */ } })
+}
+
+// Boucle audio RÉELLE : GainNode dispo tout de suite (pour le fondu). Dès que le buffer
+// est décodé (fetch async) on démarre la source ; s'il manque → repli synthé dans le même
+// GainNode. `level` = gain cible de la couche.
+function buildFile(ctx, label, getBuffer) {
+  const out = ctx.createGain(); out.gain.value = 0
+  let src = null, stopped = false, syn = []
+  getBuffer(label).then((buf) => {
+    if (stopped) return
+    if (buf) { src = ctx.createBufferSource(); src.buffer = buf; src.loop = true; src.connect(out); src.start() }
+    else { syn = synthInto(ctx, out, label) }   // fichier absent → repli synthé
+  }).catch(() => {})
   return {
-    out,
-    stop() { parts.forEach((p) => { try { p.stop && p.stop() } catch { /* noop */ } }) },
+    out, level: 1,
+    stop() { stopped = true; try { src && src.stop() } catch { /* noop */ } stopParts(syn) },
   }
+}
+
+function buildSynth(ctx, label) {
+  const out = ctx.createGain(); out.gain.value = 0
+  const parts = synthInto(ctx, out, label)
+  // « action » plus discrète que les décors pour ne pas écraser le mix.
+  return { out, level: label === 'action' ? 0.55 : 0.7, stop() { stopParts(parts) } }
+}
+
+function build(ctx, label, getBuffer) {
+  return FILE_LAYERS.has(label) ? buildFile(ctx, label, getBuffer) : buildSynth(ctx, label)
 }
 
 export function createAmbienceEngine() {
   let ctx = null, master = null, vol = 0.5
-  const layers = new Map() // label -> { out, stop }
+  const layers = new Map()   // label -> { out, level, stop }
+  const buffers = new Map()  // label -> Promise<AudioBuffer|null> (décodage mis en cache)
 
   const ensure = () => {
     if (ctx) return
@@ -112,11 +121,24 @@ export function createAmbienceEngine() {
     master = ctx.createGain(); master.gain.value = vol; master.connect(ctx.destination)
   }
 
+  // Décode (et met en cache) la boucle audio d'un décor. Le SW garde le fichier en cache
+  // → instantané aux relectures / hors-ligne. null si absent (→ repli synthé).
+  const getBuffer = (label) => {
+    if (!buffers.has(label)) {
+      const p = fetch(fileUrl(label))
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error('404'))))
+        .then((ab) => ctx.decodeAudioData(ab))
+        .catch(() => null)
+      buffers.set(label, p)
+    }
+    return buffers.get(label)
+  }
+
   const fadeIn = (node) => {
     const t = ctx.currentTime
     node.out.connect(master)
     node.out.gain.setValueAtTime(0.0001, t)
-    node.out.gain.exponentialRampToValueAtTime(1, t + FADE)
+    node.out.gain.exponentialRampToValueAtTime(node.level || 1, t + FADE)
   }
   const fadeOut = (node) => {
     const t = ctx.currentTime
@@ -136,7 +158,7 @@ export function createAmbienceEngine() {
       if (!want.has(label)) { fadeOut(node); layers.delete(label) }
     }
     for (const label of want) {
-      if (!layers.has(label)) { const n = build(ctx, label); fadeIn(n); layers.set(label, n) }
+      if (!layers.has(label)) { const n = build(ctx, label, getBuffer); fadeIn(n); layers.set(label, n) }
     }
   }
 

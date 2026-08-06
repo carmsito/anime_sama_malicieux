@@ -28,16 +28,22 @@ PRIORITY = [
     (["ocean", "beach", "water", "river", "waterfall"], "ocean"),
     (["forest", "bamboo_forest"], "foret"),
     (["crowd", "market"], "foule"),
-    (["city", "cityscape", "ruins"], "ville"),
+    (["city", "cityscape", "skyscraper", "skyline", "street", "alley", "building",
+      "neon_lights", "storefront"], "ville"),
     (["indoors"], "interieur"),
     (["night", "moon", "night_sky", "starry_sky", "darkness"], "nuit"),
     (["outdoors", "field", "mountain", "nature", "tree", "sky", "cloud", "road", "day", "sunlight"], "exterieur"),
 ]
-ACTION_TAGS = {"fighting", "battle", "war", "sword", "weapon", "blood", "explosion",
-               "motion_lines", "emphasis_lines", "speed_lines", "smoke"}
-# L'ACTION n'est pas un décor mais un AXE orthogonal (mouvement/combat) : on la superpose
-# en COUCHE au décor (interieur+action, foret+action…) dès que le segment bouge assez.
-ACTION_ON = 0.45   # score d'action moyen d'un segment à partir duquel on ajoute la couche
+# ACTION = TRÈS GROS MOUVEMENT uniquement. On ne garde que les marqueurs DESSINÉS pour
+# rendre le mouvement/l'impact (lignes de vitesse / mouvement / emphase, explosion, combat)
+# et on JETTE les tags ambigus qui trainent aussi dans des scènes calmes (épée au fourreau,
+# tache de sang, fumée de cigarette, arme rangée, « war »…) → sinon « action » se
+# déclenchait bien trop souvent. Seuls les tags réellement présents dans le vocab comptent.
+ACTION_TAGS = {"motion_lines", "emphasis_lines", "speed_lines", "action",
+               "explosion", "fighting", "battle"}
+# L'ACTION n'est pas un décor mais un AXE orthogonal (mouvement) : on la superpose en
+# COUCHE au décor (interieur+action, foret+action…) SEULEMENT si ça bouge vraiment fort.
+ACTION_ON = 0.62   # seuil HAUT (gros mouvement) à partir duquel on ajoute la couche
 
 
 def cache_epub(manga_id, chapter, kind):
@@ -99,7 +105,14 @@ def predict(p, gen, name2i, head):
     if max(tg("snow"), tg("snowing"), tg("snowscape")) > 0.5: return "neige"
     if tg("fire") > 0.55: return "feu"
     if max(tg("ocean"), tg("beach")) > 0.5: return "ocean"
-    if max(tg("city"), tg("cityscape")) > 0.5: return "ville"
+    # VILLE vs EXTÉRIEUR-NUIT : on distingue un vrai décor URBAIN (immeubles, rue, néons,
+    # skyline…) d'un extérieur de nuit non urbain (champ, forêt, route déserte). La ville
+    # est prioritaire sur « nuit » → une rue de nuit reste « ville » (piste urbaine dédiée),
+    # un champ au clair de lune tombe sur « nuit ».
+    urban = max(tg("city"), tg("cityscape"), tg("skyscraper"), tg("skyline"),
+                tg("street"), tg("alley"), tg("building"), tg("neon_lights"),
+                tg("storefront"), tg("shop"), tg("power_lines"), tg("lamppost"))
+    if urban > 0.5: return "ville"
     if max(tg("night"), tg("moon"), tg("night_sky")) > 0.5: return "nuit"
     if head is not None:
         coef, intercept, classes = head

@@ -79,12 +79,20 @@ export default function EpubReader() {
     setAmbSegments(null)
     api.getAmbience(mangaId, chapterNum).then((d) => setAmbSegments(d?.segments || null)).catch(() => setAmbSegments(null))
   }, [mangaId, chapterNum])
-  // couches d'ambiance de la planche courante (décor + éventuelle surcouche « action »)
+  // couches d'ambiance de la planche courante (décor + éventuelle surcouche « action »).
+  // La couche « action » = TRÈS GROS MOUVEMENT : on la (re)décide ICI depuis le score
+  // stocké `action`, donc relever la barre profite aussi aux chapitres déjà analysés
+  // (dont le `layers` a été figé avec l'ancien seuil, plus bas).
+  const ACTION_GATE = 0.62
   const currentLayers = useMemo(() => {
     if (!ambSegments) return null
     const s = ambSegments.find((x) => current >= x.from && current <= x.to)
     if (!s) return null
-    return (s.layers && s.layers.length) ? s.layers : [s.ambience]
+    const decor = s.ambience || (s.layers || []).find((l) => l !== 'action') || 'interieur'
+    const out = [decor]
+    const bigMove = typeof s.action === 'number' ? s.action >= ACTION_GATE : (s.layers || []).includes('action')
+    if (bigMove) out.push('action')
+    return out
   }, [ambSegments, current])
   // clé stable pour ne (re)piloter le moteur qu'au vrai changement de couches
   const layerKey = currentLayers ? currentLayers.join('+') : ''
