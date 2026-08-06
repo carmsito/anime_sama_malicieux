@@ -472,20 +472,14 @@ export default function SearchModal({
                 disabled={modalBusy || searching}
                 onChange={onQuery}
               />
-              {(searching || loadingSushi) && <div className="spin" style={{ alignSelf: 'center' }} />}
+              {searching && source !== 'sushiscan' && <div className="spin" style={{ alignSelf: 'center' }} />}
             </div>
-            {searching && (
+            {searching && source !== 'sushiscan' && (
               <div className="modal-spinner-state">
                 <div className="spin" />
                 <span className="modal-timeout-hint">
-                  Recherche en cours sur {SOURCE_LABELS[source]}…{source === 'sushiscan' ? ' (peut prendre quelques secondes)' : ''}
+                  Recherche en cours sur {SOURCE_LABELS[source]}…
                 </span>
-              </div>
-            )}
-            {loadingSushi && (
-              <div className="modal-spinner-state">
-                <div className="spin" />
-                <span className="modal-timeout-hint">Récupération des chapitres…</span>
               </div>
             )}
             <div className="s-results">
@@ -605,15 +599,6 @@ export default function SearchModal({
           </>
         )}
 
-        {step === S.CHAP && source === 'sushiscan' && loadingSushi && (
-          <>
-            <div className="modal-spinner-state" style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <div className="spin" />
-              <span className="modal-timeout-hint">Connexion à Sushiscan et récupération des chapitres…</span>
-            </div>
-          </>
-        )}
-
         {step === S.CHAP && source === 'sushiscan' && !loadingSushi && sushiChapInfo && (
           <>
             {sushiChapInfo.kinds && Object.keys(sushiChapInfo.kinds).length > 1 && (
@@ -662,6 +647,17 @@ export default function SearchModal({
               </button>
             </div>
           </>
+        )}
+
+        {/* Loader UNIQUE en bas du modal : ouverture/init de l'instance Sushiscan puis
+            récupération des chapitres — même loader, même emplacement pour les 2 phases. */}
+        {source === 'sushiscan' && (searching || loadingSushi) && (
+          <div className="modal-bottom-loader">
+            <div className="spin" />
+            <span className="modal-timeout-hint">
+              {loadingSushi ? 'Récupération des chapitres…' : 'Ouverture de l’instance Sushiscan…'}
+            </span>
+          </div>
         )}
       </div>
     </div>

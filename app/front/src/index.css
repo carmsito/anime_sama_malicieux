@@ -1052,6 +1052,12 @@ input::placeholder { color: rgba(255,255,255,.3); }
   display: flex; flex-direction: column; align-items: flex-start; gap: .75rem;
 }
 .modal-timeout-hint { font-size: .78rem; color: var(--text2); }
+/* Loader unique « en bas » du modal (ouverture instance Sushiscan + récup. chapitres) */
+.modal-bottom-loader {
+  display: flex; align-items: center; gap: .6rem;
+  margin-top: 1rem; padding-top: .9rem;
+  border-top: 1px solid rgba(255,255,255,.1);
+}
 
 /* ── JOBS ── */
 .jobs-wrap {
