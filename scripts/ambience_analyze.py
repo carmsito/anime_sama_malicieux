@@ -34,13 +34,21 @@ PRIORITY = [
     (["night", "moon", "night_sky", "starry_sky", "darkness"], "nuit"),
     (["outdoors", "field", "mountain", "nature", "tree", "sky", "cloud", "road", "day", "sunlight"], "exterieur"),
 ]
-# ACTION = TRÈS GROS MOUVEMENT uniquement. On ne garde que les marqueurs DESSINÉS pour
-# rendre le mouvement/l'impact (lignes de vitesse / mouvement / emphase, explosion, combat)
-# et on JETTE les tags ambigus qui trainent aussi dans des scènes calmes (épée au fourreau,
-# tache de sang, fumée de cigarette, arme rangée, « war »…) → sinon « action » se
-# déclenchait bien trop souvent. Seuls les tags réellement présents dans le vocab comptent.
-ACTION_TAGS = {"motion_lines", "emphasis_lines", "speed_lines", "action",
-               "explosion", "fighting", "battle"}
+# ACTION = « un COMBAT / gros mouvement a lieu sur la planche ». Piège : dans ce style de
+# manga (Vagabond/Baki, brossé) il n'y a quasi PAS de lignes de vitesse dessinées → se fier
+# aux seules motion/speed_lines rate toutes les bastons. Le vrai signal, c'est battle /
+# fighting / blood / decapitation / explosion. MAIS l'arme SEULE (sword/weapon/katana) NE
+# compte PAS : une épée au fourreau = scène calme (c'était la source des faux positifs). On
+# garde donc « le combat a lieu », pas « quelqu'un tient une arme ». Score PAR PLANCHE (le
+# pic), jamais moyenné. Seuls les tags réellement présents dans le vocab comptent.
+ACTION_TAGS = {"motion_lines", "emphasis_lines", "speed_lines", "action", "explosion",
+               "fighting", "battle", "punching", "kicking",
+               "blood", "blood_on_face", "bleeding", "decapitation"}
+# Le sang est OMNIPRÉSENT dans ce genre (samouraïs) → à poids plein il déclencherait
+# « action » sur presque toutes les planches. On le PONDÈRE : seul le gros gore/impact
+# compte (blood ~0.9 → 0.63), pas une petite tache (~0.5 → 0.35, sous le seuil). Les vrais
+# marqueurs de mouvement/combat (battle, fighting, lignes, explosion) restent à poids plein.
+ACTION_WEIGHT = {"blood": 0.70, "blood_on_face": 0.70, "bleeding": 0.70, "decapitation": 0.85}
 # L'ACTION n'est pas un décor mais un AXE orthogonal (mouvement) : on la superpose en
 # COUCHE au décor (interieur+action, foret+action…) SEULEMENT si ça bouge vraiment fort.
 ACTION_ON = 0.50   # seuil (gros mouvement) sur le PIC par planche du segment (repli layers)
@@ -139,7 +147,8 @@ def classify(epub_path):
             im = Image.open(io.BytesIO(z.read(n)))
             p = sess.run(None, {inp: prep(im, W, H)})[0][0]
             amb = predict(p, gen, name2i, head)
-            action = max([float(p[name2i[t]]) for t in ACTION_TAGS if t in name2i] + [0.0])
+            action = max([ACTION_WEIGHT.get(t, 1.0) * float(p[name2i[t]])
+                          for t in ACTION_TAGS if t in name2i] + [0.0])
             preds.append((amb, action))
         except Exception:
             preds.append((None, 0.0))
@@ -174,9 +183,14 @@ def smooth_rle(preds, min_seg=2):
             segs[-1]["to"] = i
         else:
             segs.append({"amb": a, "from": i, "to": i})
+    # Une ambiance « distinctive » (plan d'intention : lune, ville, océan…) NE doit PAS être
+    # effacée par le lissage même sur 1 planche (sinon une planche de pleine lune isolée est
+    # avalée par l'exterieur voisin). On ne lisse que les décors « liants » (ext/int/forêt).
+    DISTINCT = {"nuit", "ville", "ocean", "neige", "feu", "pluie", "foule"}
     merged = []
     for s in segs:
-        if merged and (s["to"] - s["from"] + 1) < min_seg:
+        short = (s["to"] - s["from"] + 1) < min_seg
+        if merged and short and s["amb"] not in DISTINCT:
             merged[-1]["to"] = s["to"]
         else:
             merged.append(s)

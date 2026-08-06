@@ -86,7 +86,7 @@ export default function EpubReader() {
   // se décide PLANCHE PAR PLANCHE depuis `actions` (le décor peut contenir des planches calmes
   // ET des planches d'action). Dilatation ±1 planche pour attraper le pic sans clignoter.
   // Repli sur les vieux `layers` si le chapitre n'a pas encore le tableau `actions`.
-  const ACTION_GATE = 0.45
+  const ACTION_GATE = 0.50
   const currentLayers = useMemo(() => {
     if (!ambSegments) return null
     const s = ambSegments.find((x) => current >= x.from && current <= x.to)
