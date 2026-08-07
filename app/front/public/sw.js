@@ -1,9 +1,9 @@
-// Service worker minimal pour l'installabilité PWA.
-// Stratégie : réseau d'abord (l'app a besoin de données fraîches : jobs, biblio),
-// avec repli sur le cache de l'app-shell hors-ligne. On ne met JAMAIS en cache
-// l'API ni les images de manga (contenu dynamique / lourd).
+// Service worker : app-shell hors-ligne + assets hashés en cache (rapidité), MAIS
+// l'AUDIO d'ambiance (/ambience/*.opus) n'est JAMAIS mis en cache — toujours servi EN
+// DIRECT depuis le serveur (le serveur fait foi). Ainsi un remplacement de piste est
+// audible immédiatement, sans que l'utilisateur ait à vider quoi que ce soit.
 
-const CACHE = 'mangalib-shell-v3';
+const CACHE = 'mangalib-shell-v4';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -22,8 +22,15 @@ self.addEventListener('fetch', (e) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
 
-  // On ne touche pas à l'API ni aux médias distants (mangadex, etc.)
+  // API et médias distants : on ne touche pas.
   if (url.pathname.startsWith('/api/') || url.origin !== self.location.origin) return;
+
+  // AUDIO d'ambiance : TOUJOURS le serveur, jamais le cache (on force la revalidation et
+  // on ne stocke rien). Repli sur un éventuel ancien cache uniquement si hors-ligne.
+  if (url.pathname.startsWith('/ambience/')) {
+    e.respondWith(fetch(request, { cache: 'no-cache' }).catch(() => caches.match(request)));
+    return;
+  }
 
   // Navigation (SPA) : réseau d'abord, repli index.html hors-ligne.
   if (request.mode === 'navigate') {
@@ -31,25 +38,7 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Boucles d'ambiance : l'URL est STABLE (/ambience/<label>.opus, pas de hash) → en
-  // cache-first le son resterait figé après remplacement d'une piste. On passe donc en
-  // stale-while-revalidate : on sert le cache tout de suite (rapide/offline) MAIS on
-  // re-télécharge en arrière-plan pour rafraîchir la piste au prochain coup.
-  if (url.pathname.startsWith('/ambience/')) {
-    e.respondWith(
-      caches.open(CACHE).then((c) =>
-        c.match(request).then((hit) => {
-          const net = fetch(request)
-            .then((res) => { if (res.ok) c.put(request, res.clone()); return res; })
-            .catch(() => hit);
-          return hit || net;
-        })
-      )
-    );
-    return;
-  }
-
-  // Assets statiques : cache d'abord, sinon réseau (et on met en cache).
+  // Assets statiques (hashés, immuables) : cache d'abord, sinon réseau (et on met en cache).
   e.respondWith(
     caches.match(request).then((hit) =>
       hit || fetch(request).then((res) => {

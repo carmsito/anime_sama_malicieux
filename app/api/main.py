@@ -92,7 +92,15 @@ if FRONT_DIST.exists():
         file = FRONT_DIST / full_path
         if file.exists() and file.is_file():
             mt = _MIME.get(file.suffix)
-            # Le service worker doit pouvoir contrôler toute l'app (scope racine)
-            headers = {"Service-Worker-Allowed": "/"} if file.name == "sw.js" else None
-            return FileResponse(str(file), media_type=mt, headers=headers)
+            headers = {}
+            if file.name == "sw.js":
+                # Le SW doit contrôler toute l'app (scope racine) + toujours être revalidé
+                # (sinon un vieux SW reste coincé et continue de servir du cache).
+                headers["Service-Worker-Allowed"] = "/"
+                headers["Cache-Control"] = "no-cache"
+            elif full_path.startswith("ambience/"):
+                # L'audio d'ambiance fait FOI côté serveur : revalidation systématique
+                # → un remplacement de piste est vu tout de suite, sans vider le cache.
+                headers["Cache-Control"] = "no-cache"
+            return FileResponse(str(file), media_type=mt, headers=headers or None)
         return FileResponse(str(FRONT_DIST / "index.html"))
