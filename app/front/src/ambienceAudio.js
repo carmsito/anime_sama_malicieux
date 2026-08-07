@@ -14,7 +14,11 @@ const FADE = 1.6 // s de fondu enchaîné entre couches
 const FILE_LAYERS = new Set([
   'pluie', 'neige', 'ocean', 'foret', 'foule', 'ville', 'interieur', 'nuit', 'exterieur',
 ])
-const fileUrl = (label) => `/ambience/${label}.opus`
+// Version des pistes : à INCRÉMENTER quand on remplace un .opus. L'URL change → cache
+// manqué partout (SW cache-first déjà installé ET cache HTTP) → re-téléchargement forcé
+// de la bonne piste, sans que l'utilisateur ait à vider son cache.
+const AUDIO_VERSION = 2
+const fileUrl = (label) => `/ambience/${label}.opus?v=${AUDIO_VERSION}`
 
 function noiseBuffer(ctx, kind = 'white', seconds = 4) {
   const n = ctx.sampleRate * seconds
