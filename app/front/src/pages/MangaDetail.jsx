@@ -147,7 +147,7 @@ function formatPendingNumber(value) {
 export default function MangaDetail() {
   const { mangaId } = useParams()
   const navigate = useNavigate()
-  const { jobs } = useContext(JobsCtx)
+  const { jobs, addJob } = useContext(JobsCtx)
   const { user } = useContext(AuthCtx)
   const isAdmin = user?.role === 'admin'
   const canScrape = user?.role === 'admin' || user?.role === 'scrapper'
@@ -411,7 +411,10 @@ export default function MangaDetail() {
     if (selectedChaps.size === 0) return
     setAnalyzing(true)
     try {
-      await api.analyzeAmbience(mangaId, Array.from(selectedChaps))
+      const res = await api.analyzeAmbience(mangaId, Array.from(selectedChaps))
+      // Retour visuel immédiat : on pousse le(s) job(s) dans la barre de suivi (le poller
+      // global prend ensuite le relais). Sans ça, le lancement était invisible.
+      ;(Array.isArray(res) ? res : [res]).forEach((j) => j && j.id && addJob(j))
       setSelectedChaps(new Set()); setSelectionMode(false)
     } catch (e) {
       alert(`Erreur: ${e.message}`)
