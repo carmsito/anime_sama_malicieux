@@ -21,4 +21,8 @@ telethon>=1.36.0
 # 2-5x plus rapides. Telethon l'utilise automatiquement. Aucune requête en plus.
 cryptg>=0.4.0
 
+# Playlist musique : yt-dlp résout le flux audio YouTube en live (nécessite deno dans
+# l'image pour le déchiffrement "n challenge" — voir deploy/Dockerfile).
+yt-dlp
+
 # Système requis (NON pip) : chromium, xvfb, imagemagick (voir deploy/Dockerfile)

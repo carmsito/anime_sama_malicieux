@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { gsap } from 'gsap'
 import { api } from '../api/client'
 import SearchModal from '../components/SearchModal'
+import PlaylistModal from '../components/PlaylistModal'
 import { JobsCtx, AuthCtx } from '../contexts'
 
 const PlayIcon = ({ size = 15 }) => (
@@ -174,6 +175,14 @@ export default function MangaDetail() {
   const sentinelRef = useRef()
   const [selectionMode, setSelectionMode] = useState(false)
   const [selAction, setSelAction] = useState('download')  // 'download' | 'delete'
+
+  // ── Playlist musique (liens YouTube, lecture LIVE via le serveur) ──
+  const [musicOpen, setMusicOpen] = useState(false)
+  const [musicTracks, setMusicTracks] = useState([])
+  const [musicIdx, setMusicIdx] = useState(-1)      // piste en cours (-1 = rien)
+  const [musicPlaying, setMusicPlaying] = useState(false)
+  const [addingMusic, setAddingMusic] = useState(false)
+  const audioRef = useRef(null)
   const [rangeInput, setRangeInput] = useState('')
   const galleryRef = useRef()
   const pollIntervalRef = useRef(null)
@@ -429,6 +438,44 @@ export default function MangaDetail() {
     setSelectedChaps(new Set())
   }
 
+  // ── Playlist musique ──
+  useEffect(() => {
+    setMusicTracks([]); setMusicIdx(-1); setMusicPlaying(false)
+    api.listMusic(mangaId).then((d) => setMusicTracks(d?.tracks || [])).catch(() => setMusicTracks([]))
+  }, [mangaId])
+
+  // Change de piste → (re)charge la source et lance la lecture live (stream serveur)
+  useEffect(() => {
+    const a = audioRef.current
+    if (!a || musicIdx < 0 || !musicTracks[musicIdx]) return
+    a.src = api.musicStreamUrl(mangaId, musicTracks[musicIdx].id)
+    a.play().then(() => setMusicPlaying(true)).catch(() => setMusicPlaying(false))
+  }, [musicIdx]) // eslint-disable-line
+
+  const playIdx = (i) => { if (i >= 0 && i < musicTracks.length) setMusicIdx(i) }
+  const nextTrack = () => { if (musicTracks.length) playIdx((musicIdx + 1) % musicTracks.length) }
+  const prevTrack = () => { if (musicTracks.length) playIdx((musicIdx - 1 + musicTracks.length) % musicTracks.length) }
+  const toggleMusic = () => {
+    const a = audioRef.current
+    if (!a) return
+    if (musicIdx < 0) { playIdx(0); return }
+    if (a.paused) { a.play(); setMusicPlaying(true) } else { a.pause(); setMusicPlaying(false) }
+  }
+  const addMusicTrack = async (url) => {
+    setAddingMusic(true)
+    try {
+      const t = await api.addMusic(mangaId, url)
+      setMusicTracks((prev) => [...prev, t])
+    } finally { setAddingMusic(false) }
+  }
+  const deleteMusicTrack = async (id) => {
+    await api.deleteMusic(mangaId, id).catch(() => {})
+    const idx = musicTracks.findIndex((t) => t.id === id)
+    setMusicTracks((prev) => prev.filter((t) => t.id !== id))
+    if (idx === musicIdx) { setMusicIdx(-1); setMusicPlaying(false) }
+    else if (idx > -1 && idx < musicIdx) { setMusicIdx((m) => m - 1) }
+  }
+
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
       <div className="spin" style={{ width: 28, height: 28 }} />
@@ -475,8 +522,13 @@ export default function MangaDetail() {
         <div className="detail-hero-fade" />
 
         <button className="detail-back" onClick={() => navigate('/')}>←</button>
-        {isAdmin && (
-          <div className="detail-hero-actions">
+        <div className="detail-hero-actions">
+          <button className="detail-del-btn" onClick={() => setMusicOpen(true)} title="Playlist musique">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+            </svg>
+          </button>
+          {isAdmin && (
             <button className={`detail-del-btn ${selectionMode && selAction === 'delete' ? 'active' : ''}`}
               onClick={() => {
                 if (selectionMode && selAction === 'delete') { setSelectionMode(false); return }
@@ -490,8 +542,8 @@ export default function MangaDetail() {
                 <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
               </svg>
             </button>
-          </div>
-        )}
+          )}
+        </div>
 
         <div className="detail-hero-body">
           <div className="detail-tag">{manga.category}</div>
@@ -805,6 +857,41 @@ export default function MangaDetail() {
           prefillSource={manga.source || 'anime-sama'}
         />
       )}
+
+      {musicOpen && (
+        <PlaylistModal
+          isAdmin={isAdmin}
+          tracks={musicTracks}
+          curIdx={musicIdx}
+          adding={addingMusic}
+          onAdd={addMusicTrack}
+          onDelete={deleteMusicTrack}
+          onPlay={(i) => playIdx(i)}
+          onClose={() => setMusicOpen(false)}
+        />
+      )}
+
+      {/* Mini-player flottant : persiste tant qu'on est sur la fiche du manga */}
+      {musicIdx >= 0 && musicTracks[musicIdx] && (
+        <div style={{
+          position: 'fixed', left: '1rem', bottom: '1rem', zIndex: 350,
+          display: 'flex', alignItems: 'center', gap: '.4rem', maxWidth: 320,
+          background: 'rgba(20,20,20,.97)', border: '1px solid rgba(255,255,255,.12)',
+          borderRadius: 8, padding: '.5rem .6rem', boxShadow: '0 8px 30px rgba(0,0,0,.6)',
+        }}>
+          <button onClick={prevTrack} title="Précédent" style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '.9rem', padding: '.1rem .2rem' }}>⏮</button>
+          <button onClick={toggleMusic} title={musicPlaying ? 'Pause' : 'Lire'} style={{ background: 'none', border: 'none', color: '#e50914', cursor: 'pointer', fontSize: '1.15rem', padding: '.1rem .2rem' }}>{musicPlaying ? '⏸' : '▶'}</button>
+          <button onClick={nextTrack} title="Suivant" style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '.9rem', padding: '.1rem .2rem' }}>⏭</button>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: '.58rem', color: 'rgba(255,255,255,.4)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.03em' }}>♪ Playlist</div>
+            <div style={{ fontSize: '.8rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {musicTracks[musicIdx].title || musicTracks[musicIdx].url}
+            </div>
+          </div>
+          <button onClick={() => { audioRef.current?.pause(); setMusicIdx(-1); setMusicPlaying(false) }} title="Arrêter" style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.5)', cursor: 'pointer', fontSize: '.9rem', padding: '.1rem .2rem' }}>✕</button>
+        </div>
+      )}
+      <audio ref={audioRef} onEnded={nextTrack} onPlay={() => setMusicPlaying(true)} onPause={() => setMusicPlaying(false)} style={{ display: 'none' }} />
     </div>
   )
 }

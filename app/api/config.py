@@ -47,6 +47,10 @@ DATA_DIR = Path(__file__).parent / "data"
 DB_PATH = Path(os.environ.get("DB_PATH", str(DATA_DIR / "app.db")))
 DATABASE_URL = os.environ.get("DATABASE_URL")  # ex: postgres://... (facultatif)
 
+# Playlist musique par manga : cookies YouTube (Netscape) pour que yt-dlp passe le
+# "bot check" depuis l'IP du serveur. Fichier gitignoré, déposé dans srv-data.
+YOUTUBE_COOKIES = Path(os.environ.get("YOUTUBE_COOKIES", str(DATA_DIR / "youtube_cookies.txt")))
+
 # ── Stockage Telegram (MTProto) ───────────────────────────────────────────────
 # Vide → stockage local (comportement actuel). Renseigné → offload EPUB vers Telegram.
 # MTProto (Telethon) car les volumes EPUB atteignent 75–106 Mo (> limites Bot API).

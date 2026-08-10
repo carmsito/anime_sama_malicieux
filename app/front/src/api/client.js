@@ -131,6 +131,14 @@ export const api = {
     req(`/mangas/${mangaId}/chapters/${ch}/ambience${kind ? `?kind=${encodeURIComponent(kind)}` : ''}`),
   listAmbience: (mangaId) => req(`/mangas/${mangaId}/ambience`),
 
+  // Playlist musique par manga (liens YouTube, lecture live via le serveur)
+  listMusic: (mangaId) => req(`/mangas/${mangaId}/music`),
+  addMusic: (mangaId, url) =>
+    req(`/mangas/${mangaId}/music`, { method: 'POST', body: JSON.stringify({ url }) }),
+  deleteMusic: (mangaId, trackId) =>
+    req(`/mangas/${mangaId}/music/${trackId}`, { method: 'DELETE' }),
+  musicStreamUrl: (mangaId, trackId) => `${BASE}/mangas/${mangaId}/music/${trackId}/stream`,
+
   // Jobs
   listJobs: () => req('/jobs'),
   getJob: (id) => req(`/jobs/${id}`),

@@ -28,6 +28,10 @@ RUN if [ -f /etc/ImageMagick-6/policy.xml ]; then \
       sed -i 's/rights="none" pattern="WEBP"/rights="read|write" pattern="WEBP"/' /etc/ImageMagick-6/policy.xml || true; \
     fi
 
+# deno = runtime JavaScript requis par yt-dlp pour résoudre le "n challenge" de YouTube
+# (sans lui, aucune URL audio n'est extraite). Binaire seul depuis l'image officielle.
+COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
+
 WORKDIR /srv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
