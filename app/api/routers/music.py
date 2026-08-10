@@ -1,3 +1,5 @@
+import os
+
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -8,6 +10,10 @@ from ..services import music
 router = APIRouter(tags=["music"])
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+# Même proxy que yt-dlp : l'URL googlevideo est verrouillée sur l'IP qui a résolu (le proxy)
+# → on doit relayer le flux par le même egress, sinon 403.
+_PROXY = os.environ.get("YTDLP_PROXY", "").strip()
+_PROXIES = {"http": _PROXY, "https": _PROXY} if _PROXY else None
 
 
 @router.get("/mangas/{manga_id}/music", summary="Playlist musique d'un manga")
@@ -43,7 +49,7 @@ def stream_music(manga_id: str, track_id: str, request: Request):
         fwd["Range"] = rng   # seek : on relaie la plage au CDN Google
 
     try:
-        upstream = requests.get(audio_url, headers=fwd, stream=True, timeout=30)
+        upstream = requests.get(audio_url, headers=fwd, stream=True, timeout=30, proxies=_PROXIES)
     except Exception:
         raise HTTPException(502, "Flux audio injoignable")
 

@@ -19,6 +19,10 @@ from . import db
 _YTDLP_CACHE = str(DATA_DIR / "ytdlp-cache")
 # Sidecar bgutil qui fournit le PO token (proof-of-origin) → bot check YouTube fiable.
 _BGUTIL_URL = os.environ.get("BGUTIL_BASE_URL", "").strip()
+# Egress : l'IP datacenter du serveur est bloquée par YouTube. Poser YTDLP_PROXY dans .env
+# (ex. socks5://user:pass@host:port — proxy résidentiel, VPN, ou ta connexion maison) route
+# yt-dlp par une IP non-bloquée → l'extraction repasse. Vide = pas de proxy.
+_PROXY = os.environ.get("YTDLP_PROXY", "").strip()
 
 # Cache des URLs audio résolues (elles expirent côté Google ~6 h) → on évite de relancer
 # yt-dlp à chaque requête Range du <audio>.
@@ -43,6 +47,8 @@ def _ytdlp(*args, timeout=90):
            "--remote-components", "ejs:github", "--cache-dir", _YTDLP_CACHE]
     if _BGUTIL_URL:
         cmd += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={_BGUTIL_URL}"]
+    if _PROXY:
+        cmd += ["--proxy", _PROXY]
     tmp_cookies = None
     if YOUTUBE_COOKIES.exists():
         # yt-dlp RÉÉCRIT le fichier passé à --cookies après chaque appel. Si on lui donnait

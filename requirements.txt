@@ -27,5 +27,7 @@ yt-dlp
 # Plugin PO token : yt-dlp récupère le "proof-of-origin token" auprès du sidecar
 # bgutil-provider → passe le bot check YouTube de façon fiable sur IP datacenter.
 bgutil-ytdlp-pot-provider
+# PySocks : support des proxys socks5 (YTDLP_PROXY) pour yt-dlp ET le relais de flux.
+PySocks
 
 # Système requis (NON pip) : chromium, xvfb, imagemagick (voir deploy/Dockerfile)
