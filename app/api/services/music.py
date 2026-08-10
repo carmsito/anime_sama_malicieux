@@ -17,6 +17,8 @@ from . import db
 
 # Cache yt-dlp (dont le solveur EJS téléchargé UNE fois) sur le volume persistant.
 _YTDLP_CACHE = str(DATA_DIR / "ytdlp-cache")
+# Sidecar bgutil qui fournit le PO token (proof-of-origin) → bot check YouTube fiable.
+_BGUTIL_URL = os.environ.get("BGUTIL_BASE_URL", "").strip()
 
 # Cache des URLs audio résolues (elles expirent côté Google ~6 h) → on évite de relancer
 # yt-dlp à chaque requête Range du <audio>.
@@ -39,6 +41,8 @@ def _ytdlp(*args, timeout=90):
     # --cache-dir : le solveur est mis en cache sur srv-data → téléchargé une seule fois.
     cmd = ["yt-dlp", "--no-warnings", "--no-playlist",
            "--remote-components", "ejs:github", "--cache-dir", _YTDLP_CACHE]
+    if _BGUTIL_URL:
+        cmd += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={_BGUTIL_URL}"]
     tmp_cookies = None
     if YOUTUBE_COOKIES.exists():
         # yt-dlp RÉÉCRIT le fichier passé à --cookies après chaque appel. Si on lui donnait

@@ -15,8 +15,10 @@ services:
     env_file: ../.env
     environment:
       FLARESOLVERR_URL: http://flaresolverr:8191/v1
+      BGUTIL_BASE_URL: http://bgutil-provider:4416
     depends_on:
       - flaresolverr
+      - bgutil-provider
     # Permet à la console admin de joindre l'HÔTE (SSH root) de façon fiable
     # depuis le conteneur : host.docker.internal → passerelle de l'hôte.
     extra_hosts:
@@ -39,3 +41,9 @@ services:
     restart: unless-stopped
     environment:
       LOG_LEVEL: info
+
+  # Génère les "PO tokens" (proof-of-origin) que YouTube exige → yt-dlp passe le bot
+  # check de façon fiable même depuis une IP datacenter (playlist musique). Interne.
+  bgutil-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    restart: unless-stopped

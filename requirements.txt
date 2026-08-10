@@ -24,5 +24,8 @@ cryptg>=0.4.0
 # Playlist musique : yt-dlp résout le flux audio YouTube en live (nécessite deno dans
 # l'image pour le déchiffrement "n challenge" — voir deploy/Dockerfile).
 yt-dlp
+# Plugin PO token : yt-dlp récupère le "proof-of-origin token" auprès du sidecar
+# bgutil-provider → passe le bot check YouTube de façon fiable sur IP datacenter.
+bgutil-ytdlp-pot-provider
 
 # Système requis (NON pip) : chromium, xvfb, imagemagick (voir deploy/Dockerfile)
