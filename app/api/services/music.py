@@ -12,8 +12,11 @@ import shutil
 import tempfile
 import subprocess
 
-from ..config import YOUTUBE_COOKIES
+from ..config import YOUTUBE_COOKIES, DATA_DIR
 from . import db
+
+# Cache yt-dlp (dont le solveur EJS téléchargé UNE fois) sur le volume persistant.
+_YTDLP_CACHE = str(DATA_DIR / "ytdlp-cache")
 
 # Cache des URLs audio résolues (elles expirent côté Google ~6 h) → on évite de relancer
 # yt-dlp à chaque requête Range du <audio>.
@@ -31,7 +34,11 @@ def _ensure_table(conn):
 
 
 def _ytdlp(*args, timeout=90):
-    cmd = ["yt-dlp", "--no-warnings", "--no-playlist"]
+    # --remote-components ejs:github : récupère le solveur JS officiel de yt-dlp (exécuté
+    # dans deno) pour résoudre le "n challenge" YouTube — sinon aucun format audio.
+    # --cache-dir : le solveur est mis en cache sur srv-data → téléchargé une seule fois.
+    cmd = ["yt-dlp", "--no-warnings", "--no-playlist",
+           "--remote-components", "ejs:github", "--cache-dir", _YTDLP_CACHE]
     tmp_cookies = None
     if YOUTUBE_COOKIES.exists():
         # yt-dlp RÉÉCRIT le fichier passé à --cookies après chaque appel. Si on lui donnait
