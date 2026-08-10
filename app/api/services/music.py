@@ -5,8 +5,11 @@
   cookies YouTube (bot check) + deno (déchiffrement du "n challenge") — et le routeur
   re-streame ce flux au navigateur. Zéro fichier stocké, zéro pub.
 """
+import os
 import time
 import uuid
+import shutil
+import tempfile
 import subprocess
 
 from ..config import YOUTUBE_COOKIES
@@ -29,10 +32,24 @@ def _ensure_table(conn):
 
 def _ytdlp(*args, timeout=90):
     cmd = ["yt-dlp", "--no-warnings", "--no-playlist"]
+    tmp_cookies = None
     if YOUTUBE_COOKIES.exists():
-        cmd += ["--cookies", str(YOUTUBE_COOKIES)]
+        # yt-dlp RÉÉCRIT le fichier passé à --cookies après chaque appel. Si on lui donnait
+        # le fichier maître, un challenge YouTube le dégraderait (perte des cookies d'auth)
+        # et casserait tout. → on passe une COPIE JETABLE ; le fichier maître reste intact.
+        fd, tmp_cookies = tempfile.mkstemp(prefix="ytc_", suffix=".txt")
+        os.close(fd)
+        shutil.copy(str(YOUTUBE_COOKIES), tmp_cookies)
+        cmd += ["--cookies", tmp_cookies]
     cmd += list(args)
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    finally:
+        if tmp_cookies:
+            try:
+                os.remove(tmp_cookies)
+            except OSError:
+                pass
 
 
 def list_tracks(manga_id: str) -> list[dict]:
