@@ -86,15 +86,18 @@ def image_data(msg_id: int, size: int, idx: int) -> tuple[Optional[bytes], Optio
     e = imgs[idx]
     cli = telegram_client.get_client()
 
-    # En-tête local (30 o fixes) → longueurs nom/extra (peuvent différer de la table centrale).
-    lh = cli.read_range(msg_id, e["lho"], 30)
-    if len(lh) < 30 or lh[:4] != b"PK\x03\x04":
+    # UNE seule lecture : en-tête local (30 o) + nom/extra + données compressées d'un coup.
+    # (SLACK couvre nom+extra du header local sans 2ᵉ aller-retour dans le cas courant.)
+    SLACK = 512
+    blob = cli.read_range(msg_id, e["lho"], 30 + SLACK + e["comp_size"])
+    if len(blob) < 30 or blob[:4] != b"PK\x03\x04":
         return None, None
-    name_len = struct.unpack("<H", lh[26:28])[0]
-    extra_len = struct.unpack("<H", lh[28:30])[0]
-    data_off = e["lho"] + 30 + name_len + extra_len
-
-    raw = cli.read_range(msg_id, data_off, e["comp_size"])
+    name_len = struct.unpack("<H", blob[26:28])[0]
+    extra_len = struct.unpack("<H", blob[28:30])[0]
+    hdr = 30 + name_len + extra_len
+    raw = blob[hdr:hdr + e["comp_size"]]
+    if len(raw) < e["comp_size"]:   # nom+extra plus longs que SLACK → lecture précise (rare)
+        raw = cli.read_range(msg_id, e["lho"] + hdr, e["comp_size"])
     if e["method"] == 0:
         data = raw
     elif e["method"] == 8:
