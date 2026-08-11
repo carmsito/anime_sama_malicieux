@@ -169,9 +169,11 @@ class TelegramMTProto:
                 self._loc_cache[msg_id] = loc
                 return loc
 
-            ALIGN = 4096          # MTProto : offset ET limit multiples de 4096
-            MB = 1 << 20          # …et une requête ne franchit jamais une frontière de 1 Mo
-            start = offset - (offset % ALIGN)
+            # MTProto EXIGE une limit qui divise 1 Mo (512 Ko, 256 Ko…) : une valeur
+            # arbitraire est refusée ("An invalid limit was provided"). On lit donc par
+            # blocs de 512 Ko alignés (512 Ko divise 1 Mo → jamais à cheval sur 1 Mo).
+            PART = 524288
+            start = offset - (offset % PART)
             end = offset + length
             for attempt in (0, 1):
                 loc = await get_loc(refresh=(attempt == 1))
@@ -179,15 +181,12 @@ class TelegramMTProto:
                     buf = bytearray()
                     pos = start
                     while pos < end:
-                        boundary = ((pos // MB) + 1) * MB
-                        want = ((end - pos + ALIGN - 1) // ALIGN) * ALIGN   # arrondi 4096
-                        limit = min(want, boundary - pos, MB)              # exact, sans sur-lecture
-                        res = await self._client(GetFileRequest(loc, offset=pos, limit=limit))
+                        res = await self._client(GetFileRequest(loc, offset=pos, limit=PART))
                         data = getattr(res, "bytes", b"") or b""
                         buf += data
-                        if len(data) < limit:
+                        if len(data) < PART:
                             break        # fin de fichier
-                        pos += limit
+                        pos += PART
                     s = offset - start
                     return bytes(buf[s:s + length])
                 except FileReferenceExpiredError:
