@@ -17,6 +17,7 @@ L'import de Telethon est paresseux : le reste de l'app fonctionne sans la lib.
 from __future__ import annotations
 
 import re
+import time
 import threading
 from pathlib import Path
 from typing import Optional
@@ -114,6 +115,11 @@ class TelegramStorage:
         # indéfiniment → EPUB sans EOCD → couverture/lecture en 500.
         if out.exists() and out.stat().st_size > 0:
             if not expected or out.stat().st_size == expected:
+                try:
+                    out.touch()           # marque « lu récemment » → LRU
+                except OSError:
+                    pass
+                _trim_cache(cache, keep=out)
                 return out
             out.unlink(missing_ok=True)   # cache tronqué → on re-télécharge
         get_client().download(rec["msg_id"], str(out))
@@ -121,6 +127,7 @@ class TelegramStorage:
         if out.exists() and expected and out.stat().st_size != expected:
             out.unlink(missing_ok=True)
             return None
+        _trim_cache(cache, keep=out)       # borne le cache après chaque download
         return out if out.exists() else None
 
 
@@ -154,6 +161,44 @@ def store_epub(manga_id: str, chapter_number: float, kind: str, epub_path: Path)
 
 def fetch_epub(manga_id: str, chapter_number: float, kind: str) -> Optional[Path]:
     return get_backend().fetch_epub(manga_id, chapter_number, kind)
+
+
+def _trim_cache(cache: Path, keep: Optional[Path] = None) -> None:
+    """Borne le cache EPUB de lecture : supprime les fichiers plus vieux que LOCAL_CACHE_TTL,
+    puis, si le total dépasse LOCAL_CACHE_MAX_BYTES, évince les moins récemment lus (LRU par
+    mtime). Ne touche jamais au fichier `keep` (celui qu'on vient de servir/télécharger)."""
+    try:
+        from ..config import LOCAL_CACHE_TTL, LOCAL_CACHE_MAX_BYTES
+        if not cache.exists():
+            return
+        now = time.time()
+        items = []
+        for f in cache.glob("*.epub"):
+            try:
+                st = f.stat()
+            except OSError:
+                continue
+            items.append((f, st.st_mtime, st.st_size))
+        # 1) TTL
+        if LOCAL_CACHE_TTL:
+            for f, mt, _ in items:
+                if keep and f == keep:
+                    continue
+                if (now - mt) > LOCAL_CACHE_TTL:
+                    f.unlink(missing_ok=True)
+        # 2) Plafond de taille → éviction LRU (plus anciens mtime d'abord)
+        alive = [(f, mt, sz) for f, mt, sz in items if f.exists()]
+        total = sum(sz for _, _, sz in alive)
+        if LOCAL_CACHE_MAX_BYTES and total > LOCAL_CACHE_MAX_BYTES:
+            for f, mt, sz in sorted(alive, key=lambda x: x[1]):
+                if keep and f == keep:
+                    continue
+                f.unlink(missing_ok=True)
+                total -= sz
+                if total <= LOCAL_CACHE_MAX_BYTES:
+                    break
+    except Exception:
+        pass
 
 
 def purge_cache(manga_id: str, chapter_number: float, kind: str) -> None:
