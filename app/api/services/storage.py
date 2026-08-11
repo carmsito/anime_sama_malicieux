@@ -207,37 +207,48 @@ def _trim_cache(cache: Path, keep: Optional[Path] = None) -> None:
     _sweep_dir(cache, LOCAL_CACHE_TTL, LOCAL_CACHE_MAX_BYTES, "*.epub", keep)
 
 
-def sweep_all() -> None:
-    """Balaye TOUS les caches disque bornés : EPUB de lecture + vignettes de chapitres."""
+def sweep_all() -> dict:
+    """Balaye TOUS les caches disque bornés (EPUB de lecture + vignettes de chapitres).
+    Retourne le nb de fichiers évincés par cache."""
     from ..config import (DATA_DIR, COVERS_DIR, LOCAL_CACHE_TTL, LOCAL_CACHE_MAX_BYTES,
                           COVER_CACHE_TTL, COVER_CACHE_MAX_BYTES)
     n1 = _sweep_dir(DATA_DIR / "epub_cache", LOCAL_CACHE_TTL, LOCAL_CACHE_MAX_BYTES, "*.epub")
     n2 = _sweep_dir(COVERS_DIR / "ch", COVER_CACHE_TTL, COVER_CACHE_MAX_BYTES, "*.jpg")
     if n1 or n2:
         print(f"[cache] balayage : {n1} EPUB + {n2} vignettes évincés", flush=True)
+    return {"epub_removed": n1, "cover_removed": n2}
 
 
-_janitor_started = False
-
-
-def start_janitor(interval: int = 900) -> None:
-    """Balayage périodique EN FOND (daemon, toutes les 15 min) : garantit que les caches
-    disque restent bornés même quand aucune fonction n'y touche (lectures live → fetch_epub
-    quasi jamais appelé). Un balayage immédiat au démarrage nettoie l'existant."""
-    global _janitor_started
-    if _janitor_started:
-        return
-    _janitor_started = True
-
-    def _loop():
-        while True:
+def _dir_size(directory: Path, pattern: str) -> tuple[int, int]:
+    total = count = 0
+    if directory.exists():
+        for f in directory.glob(pattern):
             try:
-                sweep_all()
-            except Exception:
+                total += f.stat().st_size
+                count += 1
+            except OSError:
                 pass
-            time.sleep(interval)
+    return total, count
 
-    threading.Thread(target=_loop, name="cache-janitor", daemon=True).start()
+
+def cache_stats() -> dict:
+    """État des caches disque (pour l'admin) : tailles, plafonds, et espace disque."""
+    import shutil
+    from ..config import (DATA_DIR, COVERS_DIR, LOCAL_CACHE_MAX_BYTES, COVER_CACHE_MAX_BYTES)
+    epub_bytes, epub_n = _dir_size(DATA_DIR / "epub_cache", "*.epub")
+    cov_bytes, cov_n = _dir_size(COVERS_DIR / "ch", "*.jpg")
+    try:
+        du = shutil.disk_usage(str(DATA_DIR))
+        disk = {"total": du.total, "used": du.used, "free": du.free}
+    except Exception:
+        disk = {"total": 0, "used": 0, "free": 0}
+    return {
+        "epub": {"bytes": epub_bytes, "count": epub_n, "cap": LOCAL_CACHE_MAX_BYTES},
+        "covers": {"bytes": cov_bytes, "count": cov_n, "cap": COVER_CACHE_MAX_BYTES},
+        "total_bytes": epub_bytes + cov_bytes,
+        "total_cap": LOCAL_CACHE_MAX_BYTES + COVER_CACHE_MAX_BYTES,
+        "disk": disk,
+    }
 
 
 def purge_cache(manga_id: str, chapter_number: float, kind: str) -> None:

@@ -113,6 +113,115 @@ function Maintenance() {
   )
 }
 
+const fmtBytes = (b) => {
+  if (!b) return '0 Mo'
+  const mb = b / (1024 * 1024)
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} Go` : `${Math.round(mb)} Mo`
+}
+
+function CacheBar({ label, used, cap }) {
+  const pct = cap ? Math.min(100, Math.round((used / cap) * 100)) : 0
+  const color = pct >= 90 ? '#e50914' : pct >= 70 ? '#e6a100' : '#2ecc71'
+  return (
+    <div style={{ marginBottom: '.55rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '.78rem', color: 'var(--text2)', marginBottom: '.25rem' }}>
+        <span>{label}</span><span>{fmtBytes(used)} / {fmtBytes(cap)} ({pct}%)</span>
+      </div>
+      <div style={{ height: 8, borderRadius: 4, background: 'rgba(255,255,255,.1)', overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: color, transition: 'width .3s' }} />
+      </div>
+    </div>
+  )
+}
+
+function CacheMaintenance() {
+  const [st, setSt] = useState(null)
+  const [enabled, setEnabled] = useState(false)
+  const [unit, setUnit] = useState('day')
+  const [count, setCount] = useState(1)
+  const [saving, setSaving] = useState(false)
+  const [running, setRunning] = useState(false)
+
+  const load = () => api.getScenarios().then((r) => {
+    const c = r.cache
+    if (!c) return
+    setSt(c); setEnabled(c.conf.enabled); setUnit(c.conf.unit); setCount(c.conf.count)
+  }).catch(() => {})
+
+  useEffect(() => {
+    load()
+    const t = setInterval(load, 5000)
+    return () => clearInterval(t)
+  }, [])
+
+  const save = async () => {
+    setSaving(true)
+    try { await api.setCache(enabled, unit, count); await load() }
+    finally { setSaving(false) }
+  }
+  const runNow = async () => {
+    setRunning(true)
+    try { await api.runCache(); setTimeout(load, 1500) }
+    finally { setRunning(false) }
+  }
+
+  const fmt = (iso) => iso ? new Date(iso).toLocaleString('fr-FR') : '—'
+  const res = st?.result
+  const stats = res?.stats
+
+  return (
+    <div className="maint-panel">
+      <div className="maint-head">
+        <div>
+          <div className="maint-title">Maintenance — Nettoyage du cache</div>
+          <div className="maint-sub">Vide les caches disque (EPUB de lecture + vignettes). Auto toutes les 15 min.</div>
+        </div>
+        <button className="btn btn-primary btn-sm" onClick={runNow} disabled={running || st?.running}>
+          {(running || st?.running)
+            ? <><span className="spin" style={{ width: 13, height: 13 }} /> En cours…</>
+            : <><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg> Lancer maintenant</>}
+        </button>
+      </div>
+
+      <div className="maint-config">
+        <label className="maint-toggle">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          <span>Programmé</span>
+        </label>
+        <span className="maint-freq">
+          <input type="number" min="1" max="100" value={count}
+            onChange={(e) => setCount(Math.max(1, Number(e.target.value) || 1))} disabled={!enabled} />
+          fois par
+          <select value={unit} onChange={(e) => setUnit(e.target.value)} disabled={!enabled}>
+            <option value="day">jour</option>
+            <option value="week">semaine</option>
+            <option value="month">mois</option>
+          </select>
+        </span>
+        <button className="btn btn-ghost btn-sm" onClick={save} disabled={saving}>
+          {saving ? '…' : 'Enregistrer'}
+        </button>
+      </div>
+
+      <div className="maint-meta">
+        Dernier balayage : <b>{fmt(st?.conf?.last_run)}</b>
+        {enabled && <> · Prochain (programmé) : <b>{fmt(st?.conf?.next_run)}</b></>}
+        {res && res.ts && <> · {(res.epub_removed || 0) + (res.cover_removed || 0)} fichier(s) évincé(s)</>}
+      </div>
+
+      {stats && (
+        <div className="maint-results">
+          <CacheBar label="Cache EPUB (lecture)" used={stats.epub.bytes} cap={stats.epub.cap} />
+          <CacheBar label="Vignettes de chapitres" used={stats.covers.bytes} cap={stats.covers.cap} />
+          <div style={{ fontSize: '.75rem', color: 'var(--text2)', marginTop: '.35rem' }}>
+            Total caches : <b>{fmtBytes(stats.total_bytes)}</b> · Disque libre : {fmtBytes(stats.disk.free)} / {fmtBytes(stats.disk.total)}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Users() {
   const { user } = useContext(AuthCtx)
   const navigate = useNavigate()
@@ -160,6 +269,7 @@ export default function Users() {
       {err && <div className="err-msg" style={{ marginBottom: '1rem' }}>{err}</div>}
 
       <Maintenance />
+      <CacheMaintenance />
 
       <h2 className="users-subtitle">Utilisateurs</h2>
       {/* Création */}

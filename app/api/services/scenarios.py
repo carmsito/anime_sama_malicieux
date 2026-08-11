@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 
 from . import db, library
 
+# Clés KV historiques (vérification) = _*_key("verification").
 _KEY_CONF = "scenario_verification_conf"
 _KEY_RESULT = "scenario_verification_result"
 _KEY_RUNNING = "scenario_verification_running"
@@ -37,8 +38,13 @@ def _iso(dt: datetime) -> str:
     return dt.isoformat()
 
 
-def get_conf() -> dict:
-    raw = db.kv_get(_KEY_CONF)
+def _conf_key(name: str) -> str: return f"scenario_{name}_conf"
+def _result_key(name: str) -> str: return f"scenario_{name}_result"
+def _running_key(name: str) -> str: return f"scenario_{name}_running"
+
+
+def get_conf(name: str = "verification") -> dict:
+    raw = db.kv_get(_conf_key(name))
     conf = json.loads(raw) if raw else {}
     return {
         "enabled": conf.get("enabled", False),
@@ -55,12 +61,12 @@ def _interval_seconds(conf: dict) -> float:
     return unit / count
 
 
-def _save_conf(conf: dict) -> None:
-    db.kv_set(_KEY_CONF, json.dumps(conf))
+def _save_conf(conf: dict, name: str = "verification") -> None:
+    db.kv_set(_conf_key(name), json.dumps(conf))
 
 
-def set_conf(enabled: bool, unit: str, count: int) -> dict:
-    conf = get_conf()
+def set_conf(enabled: bool, unit: str, count: int, name: str = "verification") -> dict:
+    conf = get_conf(name)
     conf["enabled"] = bool(enabled)
     conf["unit"] = unit if unit in _UNIT_SECONDS else "week"
     conf["count"] = max(1, min(int(count), 100))
@@ -68,17 +74,19 @@ def set_conf(enabled: bool, unit: str, count: int) -> dict:
         conf["next_run"] = _iso(_now() + timedelta(seconds=_interval_seconds(conf)))
     else:
         conf["next_run"] = None
-    _save_conf(conf)
+    _save_conf(conf, name)
     return conf
 
 
-def get_result() -> dict:
-    raw = db.kv_get(_KEY_RESULT)
-    return json.loads(raw) if raw else {"ts": None, "checked": 0, "broken": []}
+def get_result(name: str = "verification") -> dict:
+    raw = db.kv_get(_result_key(name))
+    if raw:
+        return json.loads(raw)
+    return {"ts": None, "checked": 0, "broken": []} if name == "verification" else {"ts": None}
 
 
-def is_running() -> bool:
-    return db.kv_get(_KEY_RUNNING) == "1"
+def is_running(name: str = "verification") -> bool:
+    return db.kv_get(_running_key(name)) == "1"
 
 
 # ── Scénario : vérification d'intégrité ───────────────────────────────────────
@@ -161,25 +169,82 @@ def run_verification() -> dict:
         db.kv_set(_KEY_RUNNING, "0")
 
 
-def run_now() -> None:
-    """Lance la vérification tout de suite, en arrière-plan (ne bloque pas la requête)."""
-    threading.Thread(target=run_verification, daemon=True).start()
+# ── Scénario : nettoyage du cache ─────────────────────────────────────────────
+
+def run_cache(silent: bool = False) -> dict:
+    """Balaie tous les caches disque (storage.sweep_all) et enregistre résultat + stats.
+    silent=True (balayage AUTOMATIQUE toutes les 15 min) : ne crée pas de job visible."""
+    if is_running("cache"):
+        return {"skipped": "déjà en cours"}
+    db.kv_set(_running_key("cache"), "1")
+    jid = None
+    try:
+        from . import storage
+        if not silent:
+            from . import jobs as jobs_svc
+            job = jobs_svc.create_job(manga_name="Nettoyage du cache", category="maintenance",
+                                      start_chapter=0, end_chapter=0, source="maintenance")
+            jid = job["id"]
+            jobs_svc.update_job(jid, status="running", total=1)
+        counts = storage.sweep_all()
+        result = {
+            "ts": _iso(_now()),
+            "epub_removed": counts.get("epub_removed", 0),
+            "cover_removed": counts.get("cover_removed", 0),
+            "stats": storage.cache_stats(),
+        }
+        db.kv_set(_result_key("cache"), json.dumps(result))
+        if jid:
+            from . import jobs as jobs_svc
+            jobs_svc.update_job(jid, status="done", progress=1)
+        conf = get_conf("cache")
+        conf["last_run"] = result["ts"]
+        if conf.get("enabled"):
+            conf["next_run"] = _iso(_now() + timedelta(seconds=_interval_seconds(conf)))
+        _save_conf(conf, "cache")
+        return result
+    finally:
+        db.kv_set(_running_key("cache"), "0")
+
+
+def run_now(name: str = "verification") -> None:
+    """Lance le scénario tout de suite, en arrière-plan (ne bloque pas la requête)."""
+    target = (lambda: run_cache(False)) if name == "cache" else run_verification
+    threading.Thread(target=target, daemon=True).start()
 
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
 def _scheduler_loop() -> None:
+    last_auto_cache = 0.0
     while True:
         try:
-            conf = get_conf()
+            # Vérification d'intégrité (programmée)
+            conf = get_conf("verification")
             if conf.get("enabled") and conf.get("next_run"):
                 try:
                     nxt = datetime.fromisoformat(conf["next_run"])
                 except Exception:
                     nxt = None
-                if nxt and _now() >= nxt and not is_running():
+                if nxt and _now() >= nxt and not is_running("verification"):
                     print("[scenario] déclenchement vérification (programmée)", flush=True)
                     run_verification()
+            # Nettoyage du cache (programmé)
+            cconf = get_conf("cache")
+            if cconf.get("enabled") and cconf.get("next_run"):
+                try:
+                    cnxt = datetime.fromisoformat(cconf["next_run"])
+                except Exception:
+                    cnxt = None
+                if cnxt and _now() >= cnxt and not is_running("cache"):
+                    print("[scenario] déclenchement nettoyage cache (programmé)", flush=True)
+                    run_cache(False)
+            # Garantie DYNAMIQUE : balayage silencieux du cache au moins toutes les 15 min
+            # (indépendant de la programmation → les caches restent toujours bornés).
+            if time.time() - last_auto_cache >= 900:
+                last_auto_cache = time.time()
+                if not is_running("cache"):
+                    run_cache(silent=True)
         except Exception as e:
             print(f"[scenario] scheduler: {e}", flush=True)
         time.sleep(60)   # vérifie chaque minute (léger)

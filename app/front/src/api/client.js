@@ -34,6 +34,9 @@ export const api = {
   setVerification: (enabled, unit, count) =>
     req('/admin/scenarios/verification', { method: 'PUT', body: JSON.stringify({ enabled, unit, count }) }),
   runVerification: () => req('/admin/scenarios/verification/run', { method: 'POST' }),
+  setCache: (enabled, unit, count) =>
+    req('/admin/scenarios/cache', { method: 'PUT', body: JSON.stringify({ enabled, unit, count }) }),
+  runCache: () => req('/admin/scenarios/cache/run', { method: 'POST' }),
 
   // Console admin (terminal web)
   consoleStatus: () => req('/admin/console/status', { cache: 'no-store' }),
