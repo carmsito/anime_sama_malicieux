@@ -119,50 +119,45 @@ const fmtBytes = (b) => {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} Go` : `${Math.round(mb)} Mo`
 }
 
-function CacheBar({ label, used, cap }) {
-  const pct = cap ? Math.min(100, Math.round((used / cap) * 100)) : 0
-  const color = pct >= 90 ? '#e50914' : pct >= 70 ? '#e6a100' : '#2ecc71'
-  return (
-    <div style={{ marginBottom: '.55rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '.78rem', color: 'var(--text2)', marginBottom: '.25rem' }}>
-        <span>{label}</span><span>{fmtBytes(used)} / {fmtBytes(cap)} ({pct}%)</span>
-      </div>
-      <div style={{ height: 8, borderRadius: 4, background: 'rgba(255,255,255,.1)', overflow: 'hidden' }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: color, transition: 'width .3s' }} />
-      </div>
-    </div>
-  )
-}
+const CACHE_FREQ = [
+  ['15min', 'toutes les 15 min'], ['30min', 'toutes les 30 min'], ['1h', 'toutes les heures'],
+  ['6h', 'toutes les 6 h'], ['12h', 'toutes les 12 h'], ['day', 'tous les jours'],
+  ['week', 'toutes les semaines'], ['month', 'tous les mois'],
+]
 
 function CacheMaintenance() {
   const [st, setSt] = useState(null)
   const [enabled, setEnabled] = useState(false)
-  const [unit, setUnit] = useState('day')
-  const [count, setCount] = useState(1)
+  const [unit, setUnit] = useState('1h')
   const [saving, setSaving] = useState(false)
   const [running, setRunning] = useState(false)
+  const [justRan, setJustRan] = useState(false)
 
   const load = () => api.getScenarios().then((r) => {
     const c = r.cache
     if (!c) return
-    setSt(c); setEnabled(c.conf.enabled); setUnit(c.conf.unit); setCount(c.conf.count)
+    setSt(c); setEnabled(c.conf.enabled)
+    if (c.conf.unit) setUnit(c.conf.unit)
   }).catch(() => {})
 
   useEffect(() => {
     load()
-    const t = setInterval(load, 5000)
+    const t = setInterval(load, 8000)
     return () => clearInterval(t)
   }, [])
 
   const save = async () => {
     setSaving(true)
-    try { await api.setCache(enabled, unit, count); await load() }
+    try { await api.setCache(enabled, unit, 1); await load() }
     finally { setSaving(false) }
   }
   const runNow = async () => {
     setRunning(true)
-    try { await api.runCache(); setTimeout(load, 1500) }
-    finally { setRunning(false) }
+    try {
+      await api.runCache()
+      setJustRan(true); setTimeout(() => setJustRan(false), 3500)
+      setTimeout(load, 1200)
+    } finally { setRunning(false) }
   }
 
   const fmt = (iso) => iso ? new Date(iso).toLocaleString('fr-FR') : '—'
@@ -174,7 +169,7 @@ function CacheMaintenance() {
       <div className="maint-head">
         <div>
           <div className="maint-title">Maintenance — Nettoyage du cache</div>
-          <div className="maint-sub">Vide les caches disque (EPUB de lecture + vignettes). Auto toutes les 15 min.</div>
+          <div className="maint-sub">Vide les caches disque : EPUB de lecture + vignettes de chapitres (miniatures de la 1ʳᵉ page). Balayage instantané. Auto toutes les 15 min.</div>
         </div>
         <button className="btn btn-primary btn-sm" onClick={runNow} disabled={running || st?.running}>
           {(running || st?.running)
@@ -189,13 +184,9 @@ function CacheMaintenance() {
           <span>Programmé</span>
         </label>
         <span className="maint-freq">
-          <input type="number" min="1" max="100" value={count}
-            onChange={(e) => setCount(Math.max(1, Number(e.target.value) || 1))} disabled={!enabled} />
-          fois par
+          Fréquence
           <select value={unit} onChange={(e) => setUnit(e.target.value)} disabled={!enabled}>
-            <option value="day">jour</option>
-            <option value="week">semaine</option>
-            <option value="month">mois</option>
+            {CACHE_FREQ.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
           </select>
         </span>
         <button className="btn btn-ghost btn-sm" onClick={save} disabled={saving}>
@@ -207,17 +198,31 @@ function CacheMaintenance() {
         Dernier balayage : <b>{fmt(st?.conf?.last_run)}</b>
         {enabled && <> · Prochain (programmé) : <b>{fmt(st?.conf?.next_run)}</b></>}
         {res && res.ts && <> · {(res.epub_removed || 0) + (res.cover_removed || 0)} fichier(s) évincé(s)</>}
+        {justRan && <span style={{ color: '#2ecc71', marginLeft: '.45rem' }}>✓ balayé</span>}
       </div>
 
-      {stats && (
-        <div className="maint-results">
-          <CacheBar label="Cache EPUB (lecture)" used={stats.epub.bytes} cap={stats.epub.cap} />
-          <CacheBar label="Vignettes de chapitres" used={stats.covers.bytes} cap={stats.covers.cap} />
-          <div style={{ fontSize: '.75rem', color: 'var(--text2)', marginTop: '.35rem' }}>
-            Total caches : <b>{fmtBytes(stats.total_bytes)}</b> · Disque libre : {fmtBytes(stats.disk.free)} / {fmtBytes(stats.disk.total)}
+      {stats && (() => {
+        const free = stats.disk?.free || 0
+        const app = stats.app_bytes || 0
+        const denom = app + free
+        const pct = denom ? Math.round((app / denom) * 100) : 0
+        const color = pct >= 90 ? '#e50914' : pct >= 70 ? '#e6a100' : '#2ecc71'
+        return (
+          <div className="maint-results">
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '.82rem', marginBottom: '.3rem' }}>
+              <span>Disque utilisé par l'app <span style={{ opacity: .55 }}>(hors OS/système)</span></span>
+              <span><b>{fmtBytes(app)}</b> / {fmtBytes(denom)} dispo ({pct}%)</span>
+            </div>
+            <div style={{ height: 10, borderRadius: 5, background: 'rgba(255,255,255,.1)', overflow: 'hidden' }}>
+              <div style={{ width: `${pct}%`, height: '100%', background: color, transition: 'width .3s' }} />
+            </div>
+            <div style={{ fontSize: '.75rem', color: 'var(--text2)', marginTop: '.5rem', lineHeight: 1.7 }}>
+              Détail : Cache EPUB <b>{fmtBytes(stats.epub.bytes)}</b> · Vignettes <b>{fmtBytes(stats.covers.bytes)}</b> · Autres <b>{fmtBytes(stats.other_bytes)}</b> <span style={{ opacity: .55 }}>(DB, sessions…)</span><br />
+              Disque libre : <b>{fmtBytes(free)}</b> sur {fmtBytes(stats.disk.total)}
+            </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

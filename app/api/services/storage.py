@@ -231,12 +231,27 @@ def _dir_size(directory: Path, pattern: str) -> tuple[int, int]:
     return total, count
 
 
+def _tree_size(directory: Path) -> int:
+    total = 0
+    if directory.exists():
+        for f in directory.rglob("*"):
+            try:
+                if f.is_file():
+                    total += f.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
 def cache_stats() -> dict:
-    """État des caches disque (pour l'admin) : tailles, plafonds, et espace disque."""
+    """État disque pour l'admin. On raisonne sur l'empreinte de l'APP (données + caches),
+    en OMETTANT l'OS/système : l'espace « pour l'app » = empreinte app + espace libre."""
     import shutil
-    from ..config import (DATA_DIR, COVERS_DIR, LOCAL_CACHE_MAX_BYTES, COVER_CACHE_MAX_BYTES)
+    from ..config import (DATA_DIR, COVERS_DIR, EXTRACTION_DIR,
+                          LOCAL_CACHE_MAX_BYTES, COVER_CACHE_MAX_BYTES)
     epub_bytes, epub_n = _dir_size(DATA_DIR / "epub_cache", "*.epub")
     cov_bytes, cov_n = _dir_size(COVERS_DIR / "ch", "*.jpg")
+    app_bytes = _tree_size(DATA_DIR) + _tree_size(EXTRACTION_DIR)  # tout ce que l'app pose sur disque
     try:
         du = shutil.disk_usage(str(DATA_DIR))
         disk = {"total": du.total, "used": du.used, "free": du.free}
@@ -245,8 +260,8 @@ def cache_stats() -> dict:
     return {
         "epub": {"bytes": epub_bytes, "count": epub_n, "cap": LOCAL_CACHE_MAX_BYTES},
         "covers": {"bytes": cov_bytes, "count": cov_n, "cap": COVER_CACHE_MAX_BYTES},
-        "total_bytes": epub_bytes + cov_bytes,
-        "total_cap": LOCAL_CACHE_MAX_BYTES + COVER_CACHE_MAX_BYTES,
+        "app_bytes": app_bytes,                                    # empreinte totale de l'app
+        "other_bytes": max(0, app_bytes - epub_bytes - cov_bytes),  # DB, sessions, extraction…
         "disk": disk,
     }
 

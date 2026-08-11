@@ -23,8 +23,11 @@ _KEY_CONF = "scenario_verification_conf"
 _KEY_RESULT = "scenario_verification_result"
 _KEY_RUNNING = "scenario_verification_running"
 
-# secondes par unité de fréquence
-_UNIT_SECONDS = {"day": 86400, "week": 604800, "month": 2592000}
+# secondes par unité de fréquence (fines pour le cache : 15 min → mois)
+_UNIT_SECONDS = {
+    "15min": 900, "30min": 1800, "1h": 3600, "6h": 21600, "12h": 43200,
+    "day": 86400, "week": 604800, "month": 2592000,
+}
 
 _lock = threading.Lock()
 _scheduler_started = False
