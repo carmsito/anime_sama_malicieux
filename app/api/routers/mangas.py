@@ -275,6 +275,22 @@ def get_chapter_cover(manga_id: str, chapter_number: float):
     if cf.exists() and cf.stat().st_size > 0:
         return FileResponse(str(cf), media_type="image/jpeg",
                             headers={"Cache-Control": "public, max-age=604800"})
+    # LIVE : on extrait SEULEMENT la 1ère image depuis Telegram (~qq centaines de Ko),
+    # au lieu de rapatrier l'EPUB entier (150 Mo !) pour chaque vignette de la grille.
+    rec = _tg_record(manga_id, chapter_number)
+    if rec:
+        try:
+            from ..services import epub_remote
+            data, media_type = epub_remote.image_data(rec[0], rec[1], 0)
+            if data is not None:
+                try:
+                    cf.write_bytes(data)   # cache le thumbnail → instantané ensuite
+                except Exception:
+                    pass
+                return Response(content=data, media_type=media_type,
+                                headers={"Cache-Control": "public, max-age=604800"})
+        except Exception as e:
+            print(f"[epub_remote] cover fallback {manga_id} ch{chapter_number}: {e}", flush=True)
     path = _resolve_epub(manga_id, chapter_number)
     if not path:
         raise HTTPException(404)
