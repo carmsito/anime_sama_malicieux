@@ -62,8 +62,13 @@ TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION", str(DATA_DIR / "tg.session
 # Durée de vie du cache EPUB local après upload (secondes). 0 = supprime tout de suite.
 LOCAL_CACHE_TTL = int(os.environ.get("LOCAL_CACHE_TTL", "86400"))
 # Plafond du cache EPUB local de LECTURE (octets). Au-delà → éviction LRU (les moins
-# récemment lus d'abord). Empêche le cache de gonfler (les EPUB vivent sur Telegram).
-LOCAL_CACHE_MAX_BYTES = int(os.environ.get("LOCAL_CACHE_MAX_BYTES", str(2 * 1024**3)))
+# récemment lus d'abord). Les lectures sont LIVE → ce cache n'est plus qu'un repli rare,
+# donc plafond serré (1 Go). Un balayeur périodique (storage.start_janitor) le fait
+# respecter même quand aucune fonction n'y touche.
+LOCAL_CACHE_MAX_BYTES = int(os.environ.get("LOCAL_CACHE_MAX_BYTES", str(1 * 1024**3)))
+# Cache des VIGNETTES de chapitres (covers/ch/*.jpg) : borné aussi (TTL + plafond LRU).
+COVER_CACHE_TTL = int(os.environ.get("COVER_CACHE_TTL", str(7 * 86400)))
+COVER_CACHE_MAX_BYTES = int(os.environ.get("COVER_CACHE_MAX_BYTES", str(512 * 1024**2)))
 
 # ── Console admin (terminal web → shell ROOT sur l'hôte via SSH) ───────────────
 # RCE volontaire, réservé admin + passphrase dédiée + audit. DÉSACTIVÉE par défaut :

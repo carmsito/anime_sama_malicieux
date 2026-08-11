@@ -163,42 +163,81 @@ def fetch_epub(manga_id: str, chapter_number: float, kind: str) -> Optional[Path
     return get_backend().fetch_epub(manga_id, chapter_number, kind)
 
 
-def _trim_cache(cache: Path, keep: Optional[Path] = None) -> None:
-    """Borne le cache EPUB de lecture : supprime les fichiers plus vieux que LOCAL_CACHE_TTL,
-    puis, si le total dépasse LOCAL_CACHE_MAX_BYTES, évince les moins récemment lus (LRU par
-    mtime). Ne touche jamais au fichier `keep` (celui qu'on vient de servir/télécharger)."""
+def _sweep_dir(directory: Path, ttl: int, max_bytes: int,
+               pattern: str = "*", keep: Optional[Path] = None) -> int:
+    """Borne un dossier de cache : supprime les fichiers plus vieux que `ttl` (s), puis, si le
+    total dépasse `max_bytes`, évince les moins récemment lus (LRU par mtime). Ne touche
+    jamais `keep`. Retourne le nb de fichiers supprimés."""
+    removed = 0
     try:
-        from ..config import LOCAL_CACHE_TTL, LOCAL_CACHE_MAX_BYTES
-        if not cache.exists():
-            return
+        if not directory.exists():
+            return 0
         now = time.time()
         items = []
-        for f in cache.glob("*.epub"):
+        for f in directory.glob(pattern):
+            if not f.is_file():
+                continue
             try:
                 st = f.stat()
             except OSError:
                 continue
             items.append((f, st.st_mtime, st.st_size))
-        # 1) TTL
-        if LOCAL_CACHE_TTL:
+        if ttl:                                   # 1) TTL
             for f, mt, _ in items:
-                if keep and f == keep:
+                if (keep and f == keep) or (now - mt) <= ttl:
                     continue
-                if (now - mt) > LOCAL_CACHE_TTL:
-                    f.unlink(missing_ok=True)
-        # 2) Plafond de taille → éviction LRU (plus anciens mtime d'abord)
+                f.unlink(missing_ok=True); removed += 1
         alive = [(f, mt, sz) for f, mt, sz in items if f.exists()]
         total = sum(sz for _, _, sz in alive)
-        if LOCAL_CACHE_MAX_BYTES and total > LOCAL_CACHE_MAX_BYTES:
+        if max_bytes and total > max_bytes:       # 2) plafond → LRU (plus vieux mtime d'abord)
             for f, mt, sz in sorted(alive, key=lambda x: x[1]):
                 if keep and f == keep:
                     continue
-                f.unlink(missing_ok=True)
-                total -= sz
-                if total <= LOCAL_CACHE_MAX_BYTES:
+                f.unlink(missing_ok=True); removed += 1; total -= sz
+                if total <= max_bytes:
                     break
     except Exception:
         pass
+    return removed
+
+
+def _trim_cache(cache: Path, keep: Optional[Path] = None) -> None:
+    """Borne le cache EPUB de lecture (appelé après chaque fetch)."""
+    from ..config import LOCAL_CACHE_TTL, LOCAL_CACHE_MAX_BYTES
+    _sweep_dir(cache, LOCAL_CACHE_TTL, LOCAL_CACHE_MAX_BYTES, "*.epub", keep)
+
+
+def sweep_all() -> None:
+    """Balaye TOUS les caches disque bornés : EPUB de lecture + vignettes de chapitres."""
+    from ..config import (DATA_DIR, COVERS_DIR, LOCAL_CACHE_TTL, LOCAL_CACHE_MAX_BYTES,
+                          COVER_CACHE_TTL, COVER_CACHE_MAX_BYTES)
+    n1 = _sweep_dir(DATA_DIR / "epub_cache", LOCAL_CACHE_TTL, LOCAL_CACHE_MAX_BYTES, "*.epub")
+    n2 = _sweep_dir(COVERS_DIR / "ch", COVER_CACHE_TTL, COVER_CACHE_MAX_BYTES, "*.jpg")
+    if n1 or n2:
+        print(f"[cache] balayage : {n1} EPUB + {n2} vignettes évincés", flush=True)
+
+
+_janitor_started = False
+
+
+def start_janitor(interval: int = 900) -> None:
+    """Balayage périodique EN FOND (daemon, toutes les 15 min) : garantit que les caches
+    disque restent bornés même quand aucune fonction n'y touche (lectures live → fetch_epub
+    quasi jamais appelé). Un balayage immédiat au démarrage nettoie l'existant."""
+    global _janitor_started
+    if _janitor_started:
+        return
+    _janitor_started = True
+
+    def _loop():
+        while True:
+            try:
+                sweep_all()
+            except Exception:
+                pass
+            time.sleep(interval)
+
+    threading.Thread(target=_loop, name="cache-janitor", daemon=True).start()
 
 
 def purge_cache(manga_id: str, chapter_number: float, kind: str) -> None:

@@ -19,6 +19,8 @@ async def lifespan(app: FastAPI):
     ensure_admin()     # migration rôles : garantit un admin
     loop.run_in_executor(None, warm_base_url)  # non-blocking warm-up
     job_queue.start()  # démarre le pool de workers
+    from .services import storage
+    storage.start_janitor()  # balaie périodiquement les caches disque (bornés)
     from .services import scenarios
     scenarios.start_scheduler()   # scénarios de maintenance programmés
     yield

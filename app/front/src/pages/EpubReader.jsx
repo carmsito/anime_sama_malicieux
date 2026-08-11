@@ -13,8 +13,11 @@ const DEFAULT_SENS = 1        // sensibilité de déplacement en zoom par défau
 const AUTO_SPEEDS = [8, 16, 28, 46, 72, 110]
 // Mise à l'échelle (mode fit-largeur) — 100% = max (ajusté largeur), on réduit pour adapter
 const ZOOM_PERCENTS = [100, 90, 80, 70, 60, 50]
-// Préchargement des planches : taille de batch (on garde ~1 batch d'avance en permanence)
-const PREFETCH_BATCH = 8
+// Préchargement des planches en FENÊTRE GLISSANTE : on garde toujours PREFETCH_AHEAD
+// pages prêtes en avant + PREFETCH_BEHIND en arrière (nav retour rapide). Le navigateur
+// évince tout seul les pages sorties de la fenêtre → rien ne s'accumule.
+const PREFETCH_AHEAD = 6
+const PREFETCH_BEHIND = 2
 
 export default function EpubReader() {
   const { mangaId, chapterNum } = useParams()
@@ -197,8 +200,8 @@ export default function EpubReader() {
   // en arrivant sur la planche. On garde donc la réf tant que l'image n'est pas chargée,
   // et on lance le batch SUIVANT dès qu'on atteint la moitié du batch courant (mi-batch).
   const prefetchRef = useRef(new Map())     // index → HTMLImageElement (gardé tant qu'en vol)
-  const prefetchFrontierRef = useRef(-1)    // plus haut index déjà lancé en préchargement
-  useEffect(() => { prefetchRef.current.clear(); prefetchFrontierRef.current = -1 }, [images])
+  // Nouveau chapitre → on décharge tout le préchargement (« œuvre lue = déchargée »).
+  useEffect(() => { prefetchRef.current.clear() }, [images])
   useEffect(() => {
     if (!images.length) return
     const map = prefetchRef.current
@@ -206,19 +209,16 @@ export default function EpubReader() {
       if (i < 0 || i >= images.length || map.has(i)) return
       const im = new Image()
       im.decoding = 'async'
-      im.onload = im.onerror = () => map.delete(i)   // chargé → reste en cache navigateur, on libère la réf
+      im.onload = im.onerror = () => map.delete(i)   // chargé → reste en cache navigateur (compressé), on libère la réf JS
       im.src = images[i]
       map.set(i, im)                                  // rétention anti-annulation tant qu'en vol
     }
-    // mi-batch atteint → on précharge le batch d'après
-    if (current + Math.ceil(PREFETCH_BATCH / 2) >= prefetchFrontierRef.current) {
-      const from = Math.max(prefetchFrontierRef.current + 1, current)
-      const to = Math.min(images.length - 1, Math.max(prefetchFrontierRef.current, current) + PREFETCH_BATCH)
-      for (let i = from; i <= to; i++) load(i)
-      prefetchFrontierRef.current = Math.max(prefetchFrontierRef.current, to)
-    }
-    load(current)          // filet de sécurité : la planche courante
-    load(current - 1)      // 1 en arrière pour la nav retour
+    // Fenêtre glissante : on demande toujours [current-BEHIND, current+AHEAD]. En avançant,
+    // le batch suivant est déjà lancé ; les pages sorties de la fenêtre sont évincées par le
+    // navigateur (cache compressé auto-géré) → mémoire bornée, avance fluide.
+    const lo = Math.max(0, current - PREFETCH_BEHIND)
+    const hi = Math.min(images.length - 1, current + PREFETCH_AHEAD)
+    for (let i = lo; i <= hi; i++) load(i)
   }, [current, images])
 
   // Marque la planche comme prête : force le DÉCODAGE (sinon iOS peut afficher du noir
