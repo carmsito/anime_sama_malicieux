@@ -4,6 +4,7 @@ import { gsap } from 'gsap'
 import { api } from '../api/client'
 import { AuthCtx } from '../contexts'
 import { loadReaderSettings } from '../readerSettings'
+import { loadProfiles, resolveProfileId, getProfile, saveProfiles } from '../readerProfiles'
 import { createAmbienceEngine } from '../ambienceAudio'
 
 const IS_TOUCH = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches
@@ -56,11 +57,45 @@ export default function EpubReader() {
   useEffect(() => { zoomPctRef.current = zoomPct }, [zoomPct])
   useEffect(() => { autoScrollRef.current = autoScroll }, [autoScroll])
 
-  // Réglages du lecteur (par utilisateur) : boutons visibles, plages, pause auto-scroll
-  const [settings, setSettings] = useState(() => loadReaderSettings(uid))
+  // Profils de lecture (synchronisés par compte). Le profil ACTIF (résolu par manga) pilote
+  // quelles options sont visibles + leurs valeurs → on en dérive l'objet `settings` que le
+  // reste du reader consomme déjà (boutons visibles, plages, pause auto-scroll).
+  const [profStore, setProfStore] = useState(null)
+  const [activeProfileId, setActiveProfileId] = useState('default')
+  const [showReaderMenu, setShowReaderMenu] = useState(false)
+  useEffect(() => {
+    let alive = true
+    loadProfiles(uid).then((st) => {
+      if (!alive) return
+      setProfStore(st); setActiveProfileId(resolveProfileId(st, mangaId))
+    })
+    return () => { alive = false }
+  }, [uid, mangaId])
+  const profile = useMemo(() => (profStore ? getProfile(profStore, activeProfileId) : null), [profStore, activeProfileId])
+  const zoomGesture = profile?.zoomGesture || 'both'
+  const settings = useMemo(() => {
+    if (!profile) return loadReaderSettings(uid)
+    return {
+      buttons: { ...profile.visible, fullscreen: true },
+      scaleLevels: profile.values.scaleLevels,
+      sensLevels: profile.values.sensLevels,
+      speedLevels: profile.values.speedLevels,
+      autoEdgePause: profile.defaults?.autoEdgePause || 0,
+    }
+  }, [profile, uid])
+  // Change de profil pour CE manga (propre à l'utilisateur, persisté backend).
+  const selectProfile = (id) => {
+    setActiveProfileId(id)
+    setProfStore((prev) => {
+      if (!prev) return prev
+      const next = { ...prev, activeId: id, perManga: { ...prev.perManga, [mangaId]: id } }
+      saveProfiles(next)
+      return next
+    })
+    setShowReaderMenu(false)
+  }
   const speedLevelsRef = useRef(settings.speedLevels)
   const autoEdgePauseRef = useRef(settings.autoEdgePause)
-  useEffect(() => { setSettings(loadReaderSettings(uid)) }, [uid])
   useEffect(() => {
     speedLevelsRef.current = settings.speedLevels
     autoEdgePauseRef.current = settings.autoEdgePause
@@ -191,6 +226,9 @@ export default function EpubReader() {
   const panStartRef = useRef(null)
   const touchStartRef = useRef({ x: 0, y: 0 })
   const touchMovedRef = useRef(false)
+  const pinchRef = useRef(null)             // pincement 2 doigts en cours : { d0, dLast, cx, cy }
+  const zoomGestureRef = useRef('both')     // geste de zoom du profil (lu sans re-créer les handlers)
+  useEffect(() => { zoomGestureRef.current = zoomGesture }, [zoomGesture])
 
   // Réinitialise le zoom à chaque changement de page / chapitre
   useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }) }, [current, chapterNum])
@@ -437,12 +475,27 @@ export default function EpubReader() {
     touchStartRef.current = { x: t.clientX, y: t.clientY }
     autoPausedRef.current = true   // toucher l'écran → pause l'auto-scroll
     if (fitWidthRef.current) return   // mode défilement : scroll natif (on garde juste startY)
+    // Pincement (mode paginé) : 2 doigts → toggle zoom (si le geste est autorisé par le profil)
+    const g = zoomGestureRef.current
+    if (e.touches.length === 2 && (g === 'pinch' || g === 'both')) {
+      const a = e.touches[0], b = e.touches[1]
+      const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+      pinchRef.current = { d0: d, dLast: d, cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2 }
+      return
+    }
     touchMovedRef.current = false
     if (zoomed) panStartRef.current = { px: pan.x, py: pan.y, tx: t.clientX, ty: t.clientY }
   }, [zoomed, pan])
 
   const onTouchMove = useCallback((e) => {
     if (fitWidthRef.current) return
+    if (pinchRef.current && e.touches.length === 2) {
+      const a = e.touches[0], b = e.touches[1]
+      pinchRef.current.dLast = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+      pinchRef.current.cx = (a.clientX + b.clientX) / 2
+      pinchRef.current.cy = (a.clientY + b.clientY) / 2
+      return
+    }
     if (zoomed && panStartRef.current) {
       const t = e.touches[0]
       const dx = t.clientX - panStartRef.current.tx
@@ -458,6 +511,15 @@ export default function EpubReader() {
     // reprise de l'auto-scroll après un court délai (laisse retomber l'inertie iOS)
     clearTimeout(wheelPauseTimer.current)
     wheelPauseTimer.current = setTimeout(() => { autoPausedRef.current = false }, 350)
+    // Fin d'un PINCEMENT → toggle zoom selon l'écartement des doigts
+    if (pinchRef.current) {
+      const { d0, dLast, cx, cy } = pinchRef.current
+      pinchRef.current = null
+      const ratio = dLast / (d0 || 1)
+      if (!zoomed && ratio > 1.15) toggleZoomAt(cx, cy)                        // écartement → zoome
+      else if (zoomed && ratio < 0.87) { setZoom(1); setPan({ x: 0, y: 0 }) }  // pincement → dézoome
+      return
+    }
     if (fitWidthRef.current) {
       // Mode défilement : le tap est géré par onAreaClick. Ici on gère le SWIPE vertical
       // qui tourne la page — aux extrémités de la planche, ou si elle tient à l'écran.
@@ -492,7 +554,9 @@ export default function EpubReader() {
 
     // ── C'est un TAP ──
     const last = lastTapRef.current
-    const isDouble = (now - last.t < 300) && Math.abs(t.clientX - last.x) < 45 && Math.abs(t.clientY - last.y) < 45
+    const dblG = zoomGestureRef.current
+    const allowDbl = dblG === 'doubletap' || dblG === 'both'
+    const isDouble = allowDbl && (now - last.t < 300) && Math.abs(t.clientX - last.x) < 45 && Math.abs(t.clientY - last.y) < 45
     if (zoomed) {
       // double-tap n'importe où → dézoome
       if (isDouble) { lastTapRef.current = { t: 0, x: 0, y: 0 }; setZoom(1); setPan({ x: 0, y: 0 }) }
@@ -671,6 +735,15 @@ export default function EpubReader() {
             </svg>
           </button>
         )}
+        <button onClick={() => setShowReaderMenu(true)} title="Options de lecture / profil"
+          style={{ color: 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
+            background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
+            display: 'flex', alignItems: 'center' }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
         {ambSegments && (
           <button onClick={toggleAmbience}
             title={ambOn ? 'Ambiance sonore : ON — clique pour couper' : 'Ambiance sonore détectée — clique pour activer le son'}
@@ -943,6 +1016,39 @@ export default function EpubReader() {
           </button>
         ))}
       </div>
+
+      {showReaderMenu && profStore && (
+        <div onClick={(e) => { if (e.target === e.currentTarget) setShowReaderMenu(false) }}
+          style={{ position: 'fixed', inset: 0, zIndex: 500, background: 'rgba(0,0,0,.5)',
+            display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+          <div style={{ width: '100%', maxWidth: 560, background: '#1b1b1f',
+            borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: '1rem 1.1rem 1.6rem',
+            boxShadow: '0 -8px 40px rgba(0,0,0,.6)', maxHeight: '80vh', overflowY: 'auto' }}>
+            <div style={{ width: 40, height: 4, borderRadius: 2, background: 'rgba(255,255,255,.2)', margin: '0 auto .9rem' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '.8rem' }}>
+              <div style={{ fontWeight: 800, fontSize: '1rem' }}>Profil de lecture</div>
+              <button onClick={() => setShowReaderMenu(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.6)', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ fontSize: '.78rem', color: 'rgba(255,255,255,.5)', marginBottom: '.6rem' }}>
+              Choisis le profil pour ce manga (propre à ton compte, synchronisé).
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '.5rem', marginBottom: '1rem' }}>
+              {Object.values(profStore.profiles).map((p) => (
+                <button key={p.id} onClick={() => selectProfile(p.id)}
+                  style={{ padding: '.4rem .85rem', borderRadius: 20, border: 'none', cursor: 'pointer',
+                    fontSize: '.82rem', fontWeight: 600,
+                    background: p.id === activeProfileId ? '#e50914' : 'rgba(255,255,255,.12)', color: '#fff' }}>
+                  {p.name}{p.id === profStore.defaultId ? ' ★' : ''}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: '.75rem', color: 'rgba(255,255,255,.45)', lineHeight: 1.7 }}>
+              Geste de zoom : <b>{zoomGesture === 'doubletap' ? 'Double-tap' : zoomGesture === 'pinch' ? 'Pincement' : 'Double-tap + pincement'}</b><br />
+              Personnalise les profils (options visibles, valeurs, zoom) dans <b>Réglages</b>.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

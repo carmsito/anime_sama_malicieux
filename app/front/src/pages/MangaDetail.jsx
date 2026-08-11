@@ -4,6 +4,7 @@ import { gsap } from 'gsap'
 import { api } from '../api/client'
 import SearchModal from '../components/SearchModal'
 import PlaylistModal from '../components/PlaylistModal'
+import { loadProfiles, saveProfiles } from '../readerProfiles'
 import { JobsCtx, AuthCtx } from '../contexts'
 
 const PlayIcon = ({ size = 15 }) => (
@@ -183,6 +184,20 @@ export default function MangaDetail() {
   const [musicPlaying, setMusicPlaying] = useState(false)
   const [addingMusic, setAddingMusic] = useState(false)
   const audioRef = useRef(null)
+
+  // ── Profil de lecture de CE manga (propre à l'utilisateur, synchronisé) ──
+  const [profStore, setProfStore] = useState(null)
+  const [showProfiles, setShowProfiles] = useState(false)
+  useEffect(() => { loadProfiles(user?.id).then(setProfStore).catch(() => {}) }, [user])
+  const pickProfile = (pid) => {
+    setProfStore((prev) => {
+      if (!prev) return prev
+      const next = { ...prev, perManga: { ...prev.perManga, [mangaId]: pid } }
+      saveProfiles(next)
+      return next
+    })
+    setShowProfiles(false)
+  }
   const [rangeInput, setRangeInput] = useState('')
   const galleryRef = useRef()
   const pollIntervalRef = useRef(null)
@@ -528,6 +543,11 @@ export default function MangaDetail() {
               <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
             </svg>
           </button>
+          <button className="detail-del-btn" onClick={() => setShowProfiles(true)} title="Profil de lecture de ce manga">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 20a8 8 0 0 1 16 0"/><circle cx="12" cy="8" r="4"/>
+            </svg>
+          </button>
           {isAdmin && (
             <button className={`detail-del-btn ${selectionMode && selAction === 'delete' ? 'active' : ''}`}
               onClick={() => {
@@ -869,6 +889,34 @@ export default function MangaDetail() {
           onPlay={(i) => playIdx(i)}
           onClose={() => setMusicOpen(false)}
         />
+      )}
+
+      {showProfiles && profStore && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowProfiles(false)}>
+          <div className="modal" style={{ maxWidth: 420 }}>
+            <div className="modal-head">
+              <h2>Profil de lecture</h2>
+              <button className="modal-x" onClick={() => setShowProfiles(false)}>✕</button>
+            </div>
+            <p style={{ color: 'var(--text2)', fontSize: '.83rem', marginBottom: '.8rem' }}>
+              Choisis le profil appliqué à ce manga (propre à ton compte). Gère tes profils dans Réglages.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '.4rem' }}>
+              {Object.values(profStore.profiles).map((p) => {
+                const active = (profStore.perManga && profStore.perManga[mangaId]) === p.id
+                const isDefaultUsed = !((profStore.perManga || {})[mangaId]) && p.id === profStore.defaultId
+                return (
+                  <button key={p.id} onClick={() => pickProfile(p.id)}
+                    style={{ textAlign: 'left', padding: '.6rem .8rem', borderRadius: 6, cursor: 'pointer',
+                      border: 'none', fontSize: '.9rem', fontWeight: 600,
+                      background: (active || isDefaultUsed) ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff' }}>
+                    {p.name}{p.id === profStore.defaultId ? ' ★ (défaut)' : ''}{active ? ' ✓' : ''}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Mini-player flottant : persiste tant qu'on est sur la fiche du manga */}

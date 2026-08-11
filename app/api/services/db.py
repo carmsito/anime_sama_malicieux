@@ -64,6 +64,14 @@ CREATE TABLE IF NOT EXISTS favorites (
     PRIMARY KEY (user_id, manga_id)
 );
 CREATE INDEX IF NOT EXISTS idx_fav_user ON favorites (user_id);
+
+-- Profils de lecture par utilisateur (blob JSON : profiles + defaultId + perManga + activeId).
+-- Synchronisé par compte → multi-appareils, aucune gestion de cache locale.
+CREATE TABLE IF NOT EXISTS reader_profiles (
+    user_id    TEXT PRIMARY KEY,
+    data       TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -184,6 +192,32 @@ def kv_set(k: str, v: str) -> None:
         conn.execute(
             "INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
             (k, v),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Profils de lecture (par utilisateur) ──────────────────────────────────────
+
+def get_reader_profiles(user_id: str) -> Optional[str]:
+    init()
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT data FROM reader_profiles WHERE user_id=?", (user_id,)).fetchone()
+        return row["data"] if row else None
+    finally:
+        conn.close()
+
+
+def set_reader_profiles(user_id: str, data: str) -> None:
+    init()
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT INTO reader_profiles (user_id, data, updated_at) VALUES (?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at",
+            (user_id, data, datetime.now(timezone.utc).isoformat()),
         )
         conn.commit()
     finally:

@@ -142,6 +142,10 @@ export const api = {
     req(`/mangas/${mangaId}/music/${trackId}`, { method: 'DELETE' }),
   musicStreamUrl: (mangaId, trackId) => `${BASE}/mangas/${mangaId}/music/${trackId}/stream`,
 
+  // Profils de lecture (synchronisés par compte)
+  getReaderProfiles: () => req('/me/reader-profiles'),
+  setReaderProfiles: (store) => req('/me/reader-profiles', { method: 'PUT', body: JSON.stringify(store) }),
+
   // Jobs
   listJobs: () => req('/jobs'),
   getJob: (id) => req(`/jobs/${id}`),
