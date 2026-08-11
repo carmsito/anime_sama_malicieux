@@ -63,6 +63,7 @@ export default function EpubReader() {
   const [profStore, setProfStore] = useState(null)
   const [activeProfileId, setActiveProfileId] = useState('default')
   const [showReaderMenu, setShowReaderMenu] = useState(false)
+  const [sheetExpanded, setSheetExpanded] = useState(false)   // bottom-sheet plié (55vh) ⇄ étendu (92vh)
   useEffect(() => {
     let alive = true
     loadProfiles(uid).then((st) => {
@@ -92,7 +93,7 @@ export default function EpubReader() {
       saveProfiles(next)
       return next
     })
-    setShowReaderMenu(false)
+    // On NE ferme PAS : les commandes du profil sont dans ce même panneau (comme NeoReader).
   }
   const speedLevelsRef = useRef(settings.speedLevels)
   const autoEdgePauseRef = useRef(settings.autoEdgePause)
@@ -157,47 +158,70 @@ export default function EpubReader() {
   // Activation par session (le tap = geste utilisateur requis pour démarrer l'audio).
   const toggleAmbience = () => setAmbOn((v) => !v)
 
-  // Charge les préférences de CET utilisateur (isolées des autres comptes)
+  // ── Liaison profil ⇄ état VIVANT ──
+  // Le profil ACTIF porte l'état réellement actif (échelle, fit, vitesse…). On l'APPLIQUE aux
+  // commandes à l'ouverture / au changement de profil, et on le RÉÉCRIT à chaque changement dans
+  // le lecteur → synchronisé par compte (retrouvé tel quel sur tout appareil / manga du profil).
+  const activeProfileIdRef = useRef(activeProfileId)
+  useEffect(() => { activeProfileIdRef.current = activeProfileId }, [activeProfileId])
+  const saveTimerRef = useRef(null)
+  const scheduleSave = (store) => {
+    clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => saveProfiles(store), 600)  // débounce l'écriture backend
+  }
+  const patchActiveState = (patch) => {
+    setProfStore((prev) => {
+      if (!prev) return prev
+      const id = activeProfileIdRef.current
+      const p = prev.profiles[id]; if (!p) return prev
+      const next = { ...prev, profiles: { ...prev.profiles, [id]: { ...p, state: { ...(p.state || {}), ...patch } } } }
+      scheduleSave(next)
+      return next
+    })
+  }
+  // Applique l'état du profil aux commandes — SEULEMENT au 1er chargement / changement de profil
+  // (garde `appliedProfRef`), pour ne pas écraser un réglage qu'on vient de toucher en direct.
+  const appliedProfRef = useRef(null)
   useEffect(() => {
-    setScrollNav(localStorage.getItem(prefKey('scrollnav')) === '1')
-    setPageFlip(localStorage.getItem(prefKey('pageflip')) === '1')
-    setFitWidth(localStorage.getItem(prefKey('fitwidth')) === '1')
-    const s = Number(localStorage.getItem(prefKey('pansens')))
-    setPanSens(s > 0 ? s : DEFAULT_SENS)
-    const al = Number(localStorage.getItem(prefKey('autolevel')))
-    setAutoLevel(al >= 1 ? al : 1)
-    const zp = Number(localStorage.getItem(prefKey('zoompct')))
-    setZoomPct(zp >= 40 && zp <= 100 ? zp : 100)
-  }, [uid]) // eslint-disable-line
+    if (!profile) return
+    if (appliedProfRef.current === activeProfileId) return
+    const st = profile.state || {}
+    setScrollNav(!!st.scrollnav)
+    setPageFlip(!!st.flip)
+    setFitWidth(!!st.fitwidth)
+    setAutoScroll(!!st.autoscroll)
+    setZoomPct(st.scale >= 40 && st.scale <= 100 ? st.scale : 100)
+    setPanSens(st.sens > 0 ? st.sens : DEFAULT_SENS)
+    const idx = (profile.values?.speedLevels || []).indexOf(st.speed)
+    setAutoLevel(idx >= 0 ? idx + 1 : 1)
+    if (!st.fitwidth) { setZoom(1); setPan({ x: 0, y: 0 }) }
+    appliedProfRef.current = activeProfileId
+  }, [profile, activeProfileId])
 
-  const cycleAutoSpeed = () => setAutoLevel((v) => {
-    const len = settings.speedLevels.length
-    const next = (v % len) + 1
-    localStorage.setItem(prefKey('autolevel'), String(next))
-    return next
-  })
-  const toggleAutoScroll = () => setAutoScroll((v) => !v)
-  const cycleZoom = () => setZoomPct((v) => {
+  const cycleAutoSpeed = () => {
+    const levels = settings.speedLevels
+    setAutoLevel((v) => { const next = (v % levels.length) + 1; patchActiveState({ speed: levels[next - 1] }); return next })
+  }
+  const setSpeedValue = (val) => { const i = settings.speedLevels.indexOf(val); setAutoLevel(i >= 0 ? i + 1 : 1); patchActiveState({ speed: val }) }
+  const toggleAutoScroll = () => setAutoScroll((v) => { patchActiveState({ autoscroll: !v }); return !v })
+  const cycleZoom = () => {
     const levels = settings.scaleLevels
-    const i = levels.indexOf(v)
-    const next = levels[(i + 1) % levels.length]
-    localStorage.setItem(prefKey('zoompct'), String(next))
-    return next
-  })
-
-  const togglePageFlip = () => setPageFlip((v) => { localStorage.setItem(prefKey('pageflip'), v ? '0' : '1'); return !v })
+    setZoomPct((v) => { const i = levels.indexOf(v); const next = levels[(i + 1) % levels.length]; patchActiveState({ scale: next }); return next })
+  }
+  const setScaleValue = (val) => { setZoomPct(val); patchActiveState({ scale: val }) }
+  const togglePageFlip = () => setPageFlip((v) => { patchActiveState({ flip: !v }); return !v })
   const toggleFitWidth = () => setFitWidth((v) => {
-    localStorage.setItem(prefKey('fitwidth'), v ? '0' : '1')
     if (!v) { setZoom(1); setPan({ x: 0, y: 0 }) }  // en entrant : on annule un éventuel zoom
+    patchActiveState({ fitwidth: !v })
     return !v
   })
-  // Sensibilité : bouton qui cycle selon la plage choisie dans les réglages
   const cycleSens = () => {
     const steps = settings.sensLevels
     const i = steps.findIndex((v) => Math.abs(v - panSens) < 0.001)
     const next = steps[(i + 1) % steps.length]
-    setPanSens(next); localStorage.setItem(prefKey('pansens'), String(next))
+    setPanSens(next); patchActiveState({ sens: next })
   }
+  const setSensValue = (val) => { setPanSens(val); patchActiveState({ sens: val }) }
   // Plein écran immersif : masque header/footer + plein écran natif (F11) sur desktop
   const enterFullscreen = () => {
     setFullscreen(true)
@@ -297,7 +321,7 @@ export default function EpubReader() {
   }
 
   const toggleScrollNav = () => {
-    setScrollNav((v) => { localStorage.setItem(prefKey('scrollnav'), v ? '0' : '1'); return !v })
+    setScrollNav((v) => { patchActiveState({ scrollnav: !v }); return !v })
   }
   // Page forcée via l'URL (?p=N) : "Lire depuis le début" (p=0) ou reprise ciblée.
   // Si présent, on NE reprend PAS la page enregistrée.
@@ -703,38 +727,6 @@ export default function EpubReader() {
             Début
           </button>
         )}
-        {settings.buttons.scrollnav && (
-          <button onClick={toggleScrollNav}
-            title={scrollNav ? 'Navigation au scroll : ON' : 'Navigation au scroll : OFF'}
-            style={{ color: scrollNav ? '#e50914' : 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
-              background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
-              display: 'flex', alignItems: 'center' }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="6" y="2" width="12" height="20" rx="6"/><line x1="12" y1="6" x2="12" y2="10"/>
-            </svg>
-          </button>
-        )}
-        {settings.buttons.fitwidth && (
-          <button onClick={toggleFitWidth}
-            title={fitWidth ? 'Lecture défilement (fit largeur) : ON' : 'Lecture défilement (fit largeur) : OFF'}
-            style={{ color: fitWidth ? '#e50914' : 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
-              background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
-              display: 'flex', alignItems: 'center' }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="4" y="3" width="16" height="18" rx="1"/><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/>
-            </svg>
-          </button>
-        )}
-        {settings.buttons.fullscreen && (
-          <button onClick={enterFullscreen} title="Plein écran"
-            style={{ color: 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
-              background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
-              display: 'flex', alignItems: 'center' }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>
-            </svg>
-          </button>
-        )}
         <button onClick={() => setShowReaderMenu(true)} title="Options de lecture / profil"
           style={{ color: 'rgba(255,255,255,.6)', padding: '.28rem .42rem',
             background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4, cursor: 'pointer',
@@ -875,47 +867,22 @@ export default function EpubReader() {
         )}
       </div>
 
-      {/* Bouton flottant pour quitter le plein écran */}
+      {/* Plein écran : boutons flottants (quitter + ⚙️ options). Tout le reste est dans le sheet. */}
       {fullscreen && (
-        <button onClick={exitFullscreen} className="reader-fs-exit" title="Quitter le plein écran">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>
-          </svg>
-        </button>
-      )}
-
-      {/* Plein écran : barre flottante de contrôles (mode fit-largeur) — échelle, vitesse, lecture */}
-      {fullscreen && fitWidth && (
-        <div className="reader-fs-controls">
-          {settings.buttons.scale && (
-            <button onClick={cycleZoom} className="reader-fs-chip" title={`Taille de la planche : ${zoomPct}%`}
-              style={{ color: zoomPct < 100 ? '#e50914' : '#fff' }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
-              </svg>
-              {zoomPct}%
-            </button>
-          )}
-          {autoScroll && settings.buttons.autoscroll && (
-            <button onClick={cycleAutoSpeed} className="reader-fs-chip" title="Vitesse du défilement auto"
-              style={{ color: '#e50914' }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="7 13 12 18 17 13" /><polyline points="7 6 12 11 17 6" />
-              </svg>
-              V{autoLevel}
-            </button>
-          )}
-          {settings.buttons.autoscroll && (
-            <button onClick={toggleAutoScroll} className="reader-fs-round"
-              title={autoScroll ? 'Défilement auto : ON (touche l\'écran pour mettre en pause)' : 'Défilement auto : OFF'}
-              style={{ color: autoScroll ? '#e50914' : '#fff' }}>
-              {autoScroll ? (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
-              ) : (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7 6 12 11 17 6"/><polyline points="7 13 12 18 17 13"/></svg>
-              )}
-            </button>
-          )}
+        <div style={{ position: 'fixed', top: 12, right: 12, zIndex: 60, display: 'flex', gap: '.4rem' }}>
+          <button onClick={() => setShowReaderMenu(true)} className="reader-fs-exit" title="Options de lecture / profil"
+            style={{ position: 'static' }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+          <button onClick={exitFullscreen} className="reader-fs-exit" title="Quitter le plein écran"
+            style={{ position: 'static' }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>
+            </svg>
+          </button>
         </div>
       )}
 
@@ -932,51 +899,6 @@ export default function EpubReader() {
         display: fullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.5rem',
         background: 'rgba(0,0,0,.9)', borderTop: '1px solid rgba(255,255,255,.08)',
       }}>
-        {/* Contrôles gauche : selon le mode */}
-        <div style={{ position: 'absolute', left: '.6rem', top: 22, transform: 'translateY(-50%)',
-          display: 'flex', alignItems: 'center', gap: '.3rem' }}>
-          {fitWidth ? (
-            <>
-              {/* Mise à l'échelle : taille de la planche en mode fit-largeur */}
-              {settings.buttons.scale && (
-              <button onClick={cycleZoom} title={`Taille de la planche : ${zoomPct}%`}
-                style={{ display: 'flex', alignItems: 'center', gap: '.25rem',
-                  color: zoomPct < 100 ? '#e50914' : 'rgba(255,255,255,.6)',
-                  background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
-                  padding: '.28rem .5rem', cursor: 'pointer', fontSize: '.72rem', fontWeight: 700 }}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
-                </svg>
-                {zoomPct}%
-              </button>
-              )}
-              {autoScroll && (
-                <button onClick={cycleAutoSpeed} title="Vitesse du défilement auto"
-                  style={{ display: 'flex', alignItems: 'center', gap: '.25rem', color: '#e50914',
-                    background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
-                    padding: '.28rem .5rem', cursor: 'pointer', fontSize: '.74rem', fontWeight: 700 }}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="7 13 12 18 17 13" /><polyline points="7 6 12 11 17 6" />
-                  </svg>
-                  V{autoLevel}
-                </button>
-              )}
-            </>
-          ) : (
-            settings.buttons.sensitivity && (
-            <button onClick={cycleSens} title={`Sensibilité de déplacement en zoom : ×${panSens}`}
-              style={{ display: 'flex', alignItems: 'center', gap: '.25rem',
-                color: panSens > 1 ? '#e50914' : 'rgba(255,255,255,.6)',
-                background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
-                padding: '.28rem .5rem', cursor: 'pointer', fontSize: '.72rem', fontWeight: 700 }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 20a8 8 0 1 0-8-8"/><path d="M12 12l4-2"/>
-              </svg>
-              ×{panSens}
-            </button>
-            )
-          )}
-        </div>
         <button onClick={goPrev} disabled={current === 0}
           style={{ color: current === 0 ? 'rgba(255,255,255,.2)' : 'rgba(255,255,255,.7)',
             background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
@@ -988,67 +910,139 @@ export default function EpubReader() {
           style={{ color: current >= images.length - 1 ? 'rgba(255,255,255,.2)' : 'rgba(255,255,255,.7)',
             background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
             padding: '.3rem .7rem', cursor: 'pointer', fontSize: '1rem' }}>→</button>
-        {/* Contrôle droite : auto-scroll (fit-largeur) ou animation de page (normal) */}
-        {fitWidth ? (settings.buttons.autoscroll && (
-          <button onClick={toggleAutoScroll}
-            title={autoScroll ? 'Défilement auto : ON (touche l\'écran pour mettre en pause)' : 'Défilement auto : OFF'}
-            style={{ position: 'absolute', right: '.8rem', top: 22, transform: 'translateY(-50%)',
-              color: autoScroll ? '#e50914' : 'rgba(255,255,255,.55)',
-              background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
-              padding: '.32rem .42rem', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-            {autoScroll ? (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
-            ) : (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7 6 12 11 17 6"/><polyline points="7 13 12 18 17 13"/></svg>
-            )}
-          </button>
-        )) : (settings.buttons.flip && (
-          <button onClick={togglePageFlip}
-            title={pageFlip ? 'Animation page : ON' : 'Animation page : OFF'}
-            style={{ position: 'absolute', right: '.8rem', top: 22, transform: 'translateY(-50%)',
-              color: pageFlip ? '#e50914' : 'rgba(255,255,255,.55)',
-              background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 4,
-              padding: '.32rem .42rem', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
-              <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
-            </svg>
-          </button>
-        ))}
       </div>
 
-      {showReaderMenu && profStore && (
+      {showReaderMenu && profStore && (() => {
+        const vis = profile?.visible || {}
+        // Styles partagés du panneau (DRY)
+        const section = { marginBottom: '1rem' }
+        const label = { fontSize: '.72rem', textTransform: 'uppercase', letterSpacing: '.04em',
+          color: 'rgba(255,255,255,.45)', fontWeight: 700, marginBottom: '.45rem' }
+        const chipRow = { display: 'flex', flexWrap: 'wrap', gap: '.4rem' }
+        const chip = (on) => ({ padding: '.4rem .8rem', borderRadius: 18, border: 'none', cursor: 'pointer',
+          fontSize: '.82rem', fontWeight: 700, background: on ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff' })
+        const toggleRow = (on) => ({ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '.7rem .85rem', borderRadius: 10, border: 'none', cursor: 'pointer',
+          background: 'rgba(255,255,255,.06)', color: '#fff', fontSize: '.88rem', fontWeight: 600, marginBottom: '.5rem' })
+        const pill = (on) => ({ fontSize: '.72rem', fontWeight: 800, padding: '.18rem .6rem', borderRadius: 12,
+          background: on ? '#e50914' : 'rgba(255,255,255,.14)', color: on ? '#fff' : 'rgba(255,255,255,.6)' })
+        return (
         <div onClick={(e) => { if (e.target === e.currentTarget) setShowReaderMenu(false) }}
-          style={{ position: 'fixed', inset: 0, zIndex: 500, background: 'rgba(0,0,0,.5)',
+          style={{ position: 'fixed', inset: 0, zIndex: 500, background: 'rgba(0,0,0,.55)',
             display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-          <div style={{ width: '100%', maxWidth: 560, background: '#1b1b1f',
-            borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: '1rem 1.1rem 1.6rem',
-            boxShadow: '0 -8px 40px rgba(0,0,0,.6)', maxHeight: '80vh', overflowY: 'auto' }}>
-            <div style={{ width: 40, height: 4, borderRadius: 2, background: 'rgba(255,255,255,.2)', margin: '0 auto .9rem' }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '.8rem' }}>
-              <div style={{ fontWeight: 800, fontSize: '1rem' }}>Profil de lecture</div>
-              <button onClick={() => setShowReaderMenu(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.6)', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
-            </div>
-            <div style={{ fontSize: '.78rem', color: 'rgba(255,255,255,.5)', marginBottom: '.6rem' }}>
-              Choisis le profil pour ce manga (propre à ton compte, synchronisé).
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '.5rem', marginBottom: '1rem' }}>
-              {Object.values(profStore.profiles).map((p) => (
-                <button key={p.id} onClick={() => selectProfile(p.id)}
-                  style={{ padding: '.4rem .85rem', borderRadius: 20, border: 'none', cursor: 'pointer',
-                    fontSize: '.82rem', fontWeight: 600,
-                    background: p.id === activeProfileId ? '#e50914' : 'rgba(255,255,255,.12)', color: '#fff' }}>
-                  {p.name}{p.id === profStore.defaultId ? ' ★' : ''}
+          <div style={{ width: '100%', maxWidth: 560, background: '#17171b',
+            borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: '.5rem 1.1rem 1.6rem',
+            boxShadow: '0 -8px 40px rgba(0,0,0,.6)', display: 'flex', flexDirection: 'column',
+            height: sheetExpanded ? '92vh' : '58vh', maxHeight: '92vh', transition: 'height .25s ease' }}>
+            {/* Poignée : glisser/cliquer pour étendre ou replier */}
+            <button onClick={() => setSheetExpanded((v) => !v)} title={sheetExpanded ? 'Replier' : 'Étendre'}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '.35rem 0 .55rem', margin: '0 auto', display: 'block' }}>
+              <div style={{ width: 42, height: 4, borderRadius: 2, background: 'rgba(255,255,255,.25)', margin: '0 auto' }} />
+            </button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '.7rem', flexShrink: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: '1.02rem' }}>Lecture</div>
+              <div style={{ display: 'flex', gap: '.3rem', alignItems: 'center' }}>
+                <button onClick={() => setSheetExpanded((v) => !v)} title={sheetExpanded ? 'Replier' : 'Étendre'}
+                  style={{ background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 6, color: 'rgba(255,255,255,.7)', cursor: 'pointer', padding: '.25rem .4rem', display: 'flex' }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    {sheetExpanded ? <polyline points="6 15 12 9 18 15"/> : <polyline points="6 9 12 15 18 9"/>}
+                  </svg>
                 </button>
-              ))}
+                <button onClick={() => setShowReaderMenu(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.6)', fontSize: '1.2rem', cursor: 'pointer', padding: '0 .2rem' }}>✕</button>
+              </div>
             </div>
-            <div style={{ fontSize: '.75rem', color: 'rgba(255,255,255,.45)', lineHeight: 1.7 }}>
-              Geste de zoom : <b>{zoomGesture === 'doubletap' ? 'Double-tap' : zoomGesture === 'pinch' ? 'Pincement' : 'Double-tap + pincement'}</b><br />
-              Personnalise les profils (options visibles, valeurs, zoom) dans <b>Réglages</b>.
+
+            <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingRight: '.2rem' }}>
+              {/* Profil actif pour CE manga (propre à l'utilisateur, synchronisé) */}
+              <div style={section}>
+                <div style={{ ...label, display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Profil de ce manga</span>
+                  <span onClick={() => navigate('/settings')} style={{ cursor: 'pointer', color: 'rgba(255,255,255,.55)', textTransform: 'none', letterSpacing: 0 }}>Gérer ›</span>
+                </div>
+                <div style={chipRow}>
+                  {Object.values(profStore.profiles).map((p) => (
+                    <button key={p.id} onClick={() => selectProfile(p.id)} style={chip(p.id === activeProfileId)}>
+                      {p.name}{p.id === profStore.defaultId ? ' ★' : ''}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Bascules d'affichage/lecture */}
+              {vis.fitwidth && (
+                <button onClick={toggleFitWidth} style={toggleRow(fitWidth)}>
+                  <span>Mode défilement (fit largeur)</span><span style={pill(fitWidth)}>{fitWidth ? 'ON' : 'OFF'}</span>
+                </button>
+              )}
+              {vis.scrollnav && (
+                <button onClick={toggleScrollNav} style={toggleRow(scrollNav)}>
+                  <span>Navigation à la molette</span><span style={pill(scrollNav)}>{scrollNav ? 'ON' : 'OFF'}</span>
+                </button>
+              )}
+              {vis.flip && (
+                <button onClick={togglePageFlip} style={toggleRow(pageFlip)}>
+                  <span>Animation page qui se tourne</span><span style={pill(pageFlip)}>{pageFlip ? 'ON' : 'OFF'}</span>
+                </button>
+              )}
+              {vis.autoscroll && (
+                <button onClick={toggleAutoScroll} style={toggleRow(autoScroll)}>
+                  <span>Défilement auto</span><span style={pill(autoScroll)}>{autoScroll ? 'ON' : 'OFF'}</span>
+                </button>
+              )}
+
+              {/* Vitesses (liées au défilement auto) */}
+              {vis.autoscroll && (
+                <div style={section}>
+                  <div style={label}>Vitesse du défilement auto</div>
+                  <div style={chipRow}>
+                    {settings.speedLevels.map((v, i) => (
+                      <button key={v} onClick={() => setSpeedValue(v)} style={chip(autoLevel === i + 1)}>V{i + 1}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Échelle de planche */}
+              {vis.scale && (
+                <div style={section}>
+                  <div style={label}>Taille de planche</div>
+                  <div style={chipRow}>
+                    {settings.scaleLevels.map((v) => (
+                      <button key={v} onClick={() => setScaleValue(v)} style={chip(zoomPct === v)}>{v}%</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Sensibilité de déplacement en zoom */}
+              {vis.sensitivity && (
+                <div style={section}>
+                  <div style={label}>Sensibilité en zoom</div>
+                  <div style={chipRow}>
+                    {settings.sensLevels.map((v) => (
+                      <button key={v} onClick={() => setSensValue(v)} style={chip(Math.abs(panSens - v) < 0.001)}>×{v}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Plein écran — toujours disponible */}
+              <div style={section}>
+                <div style={label}>Affichage</div>
+                <button onClick={() => { fullscreen ? exitFullscreen() : enterFullscreen(); }} style={{ ...toggleRow(fullscreen), marginBottom: 0 }}>
+                  <span>Plein écran immersif</span><span style={pill(fullscreen)}>{fullscreen ? 'ON' : 'OFF'}</span>
+                </button>
+              </div>
+
+              <div style={{ fontSize: '.75rem', color: 'rgba(255,255,255,.4)', lineHeight: 1.7, marginTop: '.4rem' }}>
+                Geste de zoom : <b>{zoomGesture === 'doubletap' ? 'Double-tap' : zoomGesture === 'pinch' ? 'Pincement' : 'Double-tap + pincement'}</b>.
+                Choix des options visibles, valeurs et geste dans <b onClick={() => navigate('/settings')} style={{ cursor: 'pointer', textDecoration: 'underline' }}>Réglages</b>.
+              </div>
             </div>
           </div>
         </div>
-      )}
+        )
+      })()}
     </div>
   )
 }
