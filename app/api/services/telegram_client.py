@@ -66,6 +66,7 @@ class TelegramMTProto:
         self._ready = threading.Event()
         self._start_err: Optional[Exception] = None
         self._start_lock = threading.Lock()
+        self._loc_cache: dict = {}   # msg_id -> InputFileLocation (lecture live ZIP)
 
     # ── boucle dédiée ─────────────────────────────────────────────────────────
 
@@ -144,6 +145,51 @@ class TelegramMTProto:
                 print(f"[telegram] download parallèle échoué, fallback: {e}", flush=True)
             # 2) Fallback sûr : méthode standard de Telethon.
             return await self._client.download_media(msg, file=out_path)
+
+        return self._submit(_do())
+
+    def read_range(self, msg_id: int, offset: int, length: int) -> bytes:
+        """Lit UNIQUEMENT [offset, offset+length) du fichier Telegram (download partiel
+        MTProto). Sert la lecture ZIP « live » : on ne rapatrie jamais l'EPUB entier.
+        La location est mise en cache ; on la rafraîchit si la file_reference expire."""
+        channel = _channel()
+
+        async def _do():
+            from telethon import utils
+            from telethon.tl.functions.upload import GetFileRequest
+            from telethon.errors import FileReferenceExpiredError
+
+            async def get_loc(refresh: bool):
+                if not refresh and msg_id in self._loc_cache:
+                    return self._loc_cache[msg_id]
+                msg = await self._client.get_messages(channel, ids=msg_id)
+                if not msg:
+                    raise RuntimeError(f"message {msg_id} introuvable")
+                _dc, loc = utils.get_input_location(msg.media)
+                self._loc_cache[msg_id] = loc
+                return loc
+
+            PART = 524288  # 512 Ko : aligné et sans franchir de frontière 1 Mo (limite MTProto)
+            start = (offset // PART) * PART
+            end = offset + length
+            for attempt in (0, 1):
+                loc = await get_loc(refresh=(attempt == 1))
+                try:
+                    buf = bytearray()
+                    pos = start
+                    while pos < end:
+                        res = await self._client(GetFileRequest(loc, offset=pos, limit=PART))
+                        data = getattr(res, "bytes", b"") or b""
+                        buf += data
+                        if len(data) < PART:
+                            break        # fin de fichier
+                        pos += PART
+                    s = offset - start
+                    return bytes(buf[s:s + length])
+                except FileReferenceExpiredError:
+                    self._loc_cache.pop(msg_id, None)   # référence périmée → on refait get_messages
+                    continue
+            return b""
 
         return self._submit(_do())
 

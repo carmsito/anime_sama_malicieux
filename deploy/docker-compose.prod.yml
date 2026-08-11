@@ -20,7 +20,6 @@ services:
     depends_on:
       - flaresolverr
       - bgutil-provider
-      - yt-extractor
     # Permet à la console admin de joindre l'HÔTE (SSH root) de façon fiable
     # depuis le conteneur : host.docker.internal → passerelle de l'hôte.
     extra_hosts:
@@ -50,10 +49,5 @@ services:
     image: brainicism/bgutil-ytdlp-pot-provider:latest
     restart: unless-stopped
 
-  # Extraction audio YouTube via un VRAI Chrome (Playwright) → capture l'URL du flux
-  # audio que le navigateur récupère (yt-dlp est détecté comme bot, pas un vrai navigateur).
-  yt-extractor:
-    build:
-      context: ./yt-extractor
-    restart: unless-stopped
-    shm_size: "1gb"
+  # (Sidecar yt-extractor de la playlist musique : temporairement retiré — feature en
+  # pause + disque plein. À réactiver quand on reprend la musique.)

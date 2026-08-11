@@ -108,6 +108,27 @@ def _resolve_epub(manga_id: str, chapter_number: float):
     return path
 
 
+def _tg_record(manga_id: str, chapter_number: float):
+    """(msg_id, size) de l'EPUB sur Telegram, ou None (stockage local / non indexé).
+    Sert la lecture ZIP LIVE : lire les pages directement depuis Telegram, sans
+    rapatrier l'EPUB entier sur le disque."""
+    try:
+        from ..services import db
+        m = library.get_manga(manga_id)
+        kind = None
+        for ch in (m or {}).get("chapters", []) or []:
+            if float(ch.get("number", -1)) == float(chapter_number):
+                kind = ch.get("kind")
+                break
+        kind = kind or (m or {}).get("meta", {}).get("kind") or "Chapitre"
+        rec = db.get_file(manga_id, chapter_number, kind)
+        if rec and rec.get("msg_id") and rec.get("size"):
+            return int(rec["msg_id"]), int(rec["size"])
+    except Exception:
+        pass
+    return None
+
+
 @router.get("/{manga_id}/chapters/{chapter_number}/epub", summary="Télécharger l'EPUB")
 def get_epub(manga_id: str, chapter_number: float):
     path = _resolve_epub(manga_id, chapter_number)
@@ -193,6 +214,18 @@ def delete_manga(manga_id: str, user: dict = Depends(require_admin)):
 
 @router.get("/{manga_id}/chapters/{chapter_number}/images", summary="Liste des images d'un chapitre")
 def list_chapter_images(manga_id: str, chapter_number: float):
+    # LIVE : on lit le nombre de pages directement depuis Telegram (table ZIP), sans
+    # télécharger l'EPUB. Repli sur le download complet en cas de souci → aucune régression.
+    rec = _tg_record(manga_id, chapter_number)
+    if rec:
+        try:
+            from ..services import epub_remote
+            count = epub_remote.image_count(rec[0], rec[1])
+            if count > 0:
+                return {"count": count,
+                        "urls": [f"/api/mangas/{manga_id}/chapters/{chapter_number}/images/{i}" for i in range(count)]}
+        except Exception as e:
+            print(f"[epub_remote] list fallback {manga_id} ch{chapter_number}: {e}", flush=True)
     path = _resolve_epub(manga_id, chapter_number)
     if not path:
         raise HTTPException(404, "Chapitre introuvable")
@@ -205,6 +238,17 @@ def list_chapter_images(manga_id: str, chapter_number: float):
 
 @router.get("/{manga_id}/chapters/{chapter_number}/images/{idx}", summary="Image d'un chapitre")
 def get_chapter_image(manga_id: str, chapter_number: float, idx: int):
+    # LIVE : on lit UNIQUEMENT les octets de cette page depuis Telegram (rien stocké).
+    rec = _tg_record(manga_id, chapter_number)
+    if rec:
+        try:
+            from ..services import epub_remote
+            data, media_type = epub_remote.image_data(rec[0], rec[1], idx)
+            if data is not None:
+                return Response(content=data, media_type=media_type,
+                                headers={"Cache-Control": "public, max-age=86400"})
+        except Exception as e:
+            print(f"[epub_remote] image fallback {manga_id} ch{chapter_number} #{idx}: {e}", flush=True)
     path = _resolve_epub(manga_id, chapter_number)
     if not path:
         raise HTTPException(404)
