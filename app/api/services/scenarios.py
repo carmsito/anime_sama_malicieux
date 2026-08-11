@@ -200,11 +200,14 @@ def run_cache(silent: bool = False) -> dict:
         if jid:
             from . import jobs as jobs_svc
             jobs_svc.update_job(jid, status="done", progress=1)
-        conf = get_conf("cache")
-        conf["last_run"] = result["ts"]
-        if conf.get("enabled"):
-            conf["next_run"] = _iso(_now() + timedelta(seconds=_interval_seconds(conf)))
-        _save_conf(conf, "cache")
+        # Le balayage AUTO (silent, 15 min) est DISSOCIÉ de la programmation : il ne touche
+        # pas last_run/next_run (qui suivent uniquement le scénario que l'admin programme).
+        if not silent:
+            conf = get_conf("cache")
+            conf["last_run"] = result["ts"]
+            if conf.get("enabled"):
+                conf["next_run"] = _iso(_now() + timedelta(seconds=_interval_seconds(conf)))
+            _save_conf(conf, "cache")
         return result
     finally:
         db.kv_set(_running_key("cache"), "0")

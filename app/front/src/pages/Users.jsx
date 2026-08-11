@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useContext } from 'react'
+import React, { useEffect, useState, useContext, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { AuthCtx } from '../contexts'
@@ -13,10 +13,13 @@ function Maintenance() {
   const [saving, setSaving] = useState(false)
   const [running, setRunning] = useState(false)
 
+  const inited = useRef(false)
   const load = () => api.getScenarios().then((r) => {
     const v = r.verification
     setSt(v)
-    setEnabled(v.conf.enabled); setUnit(v.conf.unit); setCount(v.conf.count)
+    if (!inited.current) {   // n'écrase pas le formulaire en cours d'édition
+      setEnabled(v.conf.enabled); setUnit(v.conf.unit); setCount(v.conf.count); inited.current = true
+    }
   }).catch(() => {})
 
   useEffect(() => {
@@ -133,11 +136,14 @@ function CacheMaintenance() {
   const [running, setRunning] = useState(false)
   const [justRan, setJustRan] = useState(false)
 
+  const inited = useRef(false)
   const load = () => api.getScenarios().then((r) => {
     const c = r.cache
     if (!c) return
-    setSt(c); setEnabled(c.conf.enabled)
-    if (c.conf.unit) setUnit(c.conf.unit)
+    setSt(c)
+    if (!inited.current) {   // n'écrase pas la case « Programmé » / la fréquence en cours d'édition
+      setEnabled(c.conf.enabled); if (c.conf.unit) setUnit(c.conf.unit); inited.current = true
+    }
   }).catch(() => {})
 
   useEffect(() => {
@@ -169,7 +175,7 @@ function CacheMaintenance() {
       <div className="maint-head">
         <div>
           <div className="maint-title">Maintenance — Nettoyage du cache</div>
-          <div className="maint-sub">Vide les caches disque : EPUB de lecture + vignettes de chapitres (miniatures de la 1ʳᵉ page). Balayage instantané. Auto toutes les 15 min.</div>
+          <div className="maint-sub">Vide les caches disque : EPUB de lecture + vignettes de chapitres (miniatures de la 1ʳᵉ page). Balayage instantané.</div>
         </div>
         <button className="btn btn-primary btn-sm" onClick={runNow} disabled={running || st?.running}>
           {(running || st?.running)
@@ -194,9 +200,13 @@ function CacheMaintenance() {
         </button>
       </div>
 
+      <div style={{ fontSize: '.72rem', color: 'var(--text2)', marginTop: '-.2rem', marginBottom: '.4rem', opacity: .85 }}>
+        🛡️ Séparément, un balayage de sécurité tourne <b>automatiquement toutes les 15 min</b> (indépendant de la programmation ci-dessus) → le cache reste toujours borné.
+      </div>
+
       <div className="maint-meta">
-        Dernier balayage : <b>{fmt(st?.conf?.last_run)}</b>
-        {enabled && <> · Prochain (programmé) : <b>{fmt(st?.conf?.next_run)}</b></>}
+        Dernier balayage programmé : <b>{fmt(st?.conf?.last_run)}</b>
+        {enabled && <> · Prochain : <b>{fmt(st?.conf?.next_run)}</b></>}
         {res && res.ts && <> · {(res.epub_removed || 0) + (res.cover_removed || 0)} fichier(s) évincé(s)</>}
         {justRan && <span style={{ color: '#2ecc71', marginLeft: '.45rem' }}>✓ balayé</span>}
       </div>

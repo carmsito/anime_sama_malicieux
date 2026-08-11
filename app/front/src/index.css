@@ -993,6 +993,8 @@ input, select {
 }
 input:focus, select:focus { border-color: rgba(255,255,255,.4); }
 input::placeholder { color: rgba(255,255,255,.3); }
+/* Menu déroulant natif : fond sombre + texte clair (sinon options blanches illisibles). */
+select option, select optgroup { background: #1f1f1f; color: #f2f2f2; }
 
 /* iOS : champs >= 16px sur mobile → empêche le zoom automatique au focus (ex. ouverture
    du modal Extraire). !important pour couvrir aussi les champs à style inline.
