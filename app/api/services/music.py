@@ -1,33 +1,27 @@
 """Playlist musique par manga.
 
-- Stockage : table SQLite `manga_music` (juste l'URL YouTube + titre, RIEN n'est téléchargé).
-- Lecture LIVE : yt-dlp résout l'URL audio directe (googlevideo) à la volée — avec les
-  cookies YouTube (bot check) + deno (déchiffrement du "n challenge") — et le routeur
-  re-streame ce flux au navigateur. Zéro fichier stocké, zéro pub.
+- Stockage : table SQLite `manga_music` (juste l'URL YouTube + le titre, RIEN n'est
+  téléchargé).
+- Titre : via l'oembed YouTube (public, pas de bot check).
+- Lecture LIVE : un sidecar navigateur (yt-extractor, vrai Chrome) capture l'URL du flux
+  audio que YouTube sert au lecteur ; le routeur la relaie au navigateur. yt-dlp est
+  détecté comme bot depuis l'IP serveur → on passe par un vrai navigateur à la place.
+  Zéro fichier stocké, zéro pub.
 """
 import os
 import time
 import uuid
-import shutil
-import tempfile
-import subprocess
 
-from ..config import YOUTUBE_COOKIES, DATA_DIR
+import requests
+
 from . import db
 
-# Cache yt-dlp (dont le solveur EJS téléchargé UNE fois) sur le volume persistant.
-_YTDLP_CACHE = str(DATA_DIR / "ytdlp-cache")
-# Sidecar bgutil qui fournit le PO token (proof-of-origin) → bot check YouTube fiable.
-_BGUTIL_URL = os.environ.get("BGUTIL_BASE_URL", "").strip()
-# Egress : l'IP datacenter du serveur est bloquée par YouTube. Poser YTDLP_PROXY dans .env
-# (ex. socks5://user:pass@host:port — proxy résidentiel, VPN, ou ta connexion maison) route
-# yt-dlp par une IP non-bloquée → l'extraction repasse. Vide = pas de proxy.
-_PROXY = os.environ.get("YTDLP_PROXY", "").strip()
+_EXTRACTOR = os.environ.get("YT_EXTRACTOR_URL", "http://yt-extractor:8080").strip().rstrip("/")
 
 # Cache des URLs audio résolues (elles expirent côté Google ~6 h) → on évite de relancer
-# yt-dlp à chaque requête Range du <audio>.
+# le navigateur à chaque requête Range du <audio>.
 _URL_CACHE: dict[str, tuple[str, float]] = {}
-_URL_TTL = 5 * 3600
+_URL_TTL = 3 * 3600
 
 
 def _ensure_table(conn):
@@ -37,36 +31,6 @@ def _ensure_table(conn):
             position INTEGER, created_at TEXT,
             PRIMARY KEY (manga_id, id))"""
     )
-
-
-def _ytdlp(*args, timeout=90):
-    # --remote-components ejs:github : récupère le solveur JS officiel de yt-dlp (exécuté
-    # dans deno) pour résoudre le "n challenge" YouTube — sinon aucun format audio.
-    # --cache-dir : le solveur est mis en cache sur srv-data → téléchargé une seule fois.
-    cmd = ["yt-dlp", "--no-warnings", "--no-playlist",
-           "--remote-components", "ejs:github", "--cache-dir", _YTDLP_CACHE]
-    if _BGUTIL_URL:
-        cmd += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={_BGUTIL_URL}"]
-    if _PROXY:
-        cmd += ["--proxy", _PROXY]
-    tmp_cookies = None
-    if YOUTUBE_COOKIES.exists():
-        # yt-dlp RÉÉCRIT le fichier passé à --cookies après chaque appel. Si on lui donnait
-        # le fichier maître, un challenge YouTube le dégraderait (perte des cookies d'auth)
-        # et casserait tout. → on passe une COPIE JETABLE ; le fichier maître reste intact.
-        fd, tmp_cookies = tempfile.mkstemp(prefix="ytc_", suffix=".txt")
-        os.close(fd)
-        shutil.copy(str(YOUTUBE_COOKIES), tmp_cookies)
-        cmd += ["--cookies", tmp_cookies]
-    cmd += list(args)
-    try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    finally:
-        if tmp_cookies:
-            try:
-                os.remove(tmp_cookies)
-            except OSError:
-                pass
 
 
 def list_tracks(manga_id: str) -> list[dict]:
@@ -84,12 +48,17 @@ def list_tracks(manga_id: str) -> list[dict]:
 
 
 def _fetch_title(url: str) -> str:
+    # oembed : titre public sans bot check.
     try:
-        out = _ytdlp("--skip-download", "--print", "%(title)s", url, timeout=60)
-        lines = [l for l in out.stdout.strip().splitlines() if l.strip()]
-        return lines[0] if lines else url
+        r = requests.get("https://www.youtube.com/oembed",
+                         params={"url": url, "format": "json"}, timeout=15)
+        if r.ok:
+            t = (r.json() or {}).get("title")
+            if t:
+                return t
     except Exception:
-        return url
+        pass
+    return url
 
 
 def add_track(manga_id: str, url: str) -> dict:
@@ -138,7 +107,7 @@ def _track_source(manga_id: str, track_id: str) -> str | None:
 
 
 def resolve_audio(manga_id: str, track_id: str) -> str | None:
-    """URL audio directe (googlevideo) de la piste, mise en cache (TTL). None si KO."""
+    """URL audio directe (googlevideo) via le sidecar navigateur, mise en cache. None si KO."""
     now = time.time()
     cached = _URL_CACHE.get(track_id)
     if cached and cached[1] > now:
@@ -147,9 +116,8 @@ def resolve_audio(manga_id: str, track_id: str) -> str | None:
     if not src:
         return None
     try:
-        out = _ytdlp("-f", "bestaudio[ext=m4a]/bestaudio/best", "-g", src, timeout=90)
-        lines = [l for l in out.stdout.strip().splitlines() if l.startswith("http")]
-        url = lines[0] if lines else None
+        r = requests.get(f"{_EXTRACTOR}/extract", params={"id": src}, timeout=90)
+        url = (r.json() or {}).get("url") if r.ok else None
     except Exception:
         url = None
     if url:
