@@ -5,55 +5,47 @@
 import { api } from './api/client'
 import { DEFAULTS } from './readerSettings'
 
-// Options togglables dans un profil (le plein écran reste TOUJOURS visible, hors liste).
+// Le mode « fit-largeur / mise à l'échelle » est la MÉCA DE BASE (toujours active) : ce n'est
+// plus une option. Le pincement zoome librement l'échelle. Options togglables restantes :
 export const OPTION_KEYS = [
-  { key: 'scrollnav', label: 'Navigation à la molette' },
-  { key: 'fitwidth', label: 'Mode défilement (fit largeur)' },
-  { key: 'flip', label: 'Animation page qui se tourne' },
-  { key: 'autoscroll', label: 'Défilement auto + vitesse' },   // auto-scroll ⇄ vitesse : liés
-  { key: 'scale', label: "Taille de la planche (échelle)" },
-  { key: 'sensitivity', label: 'Sensibilité de déplacement en zoom' },
-]
-
-export const ZOOM_GESTURES = [
-  ['doubletap', 'Double-tap'], ['pinch', 'Pincement'], ['both', 'Les deux'],
+  { key: 'scrollnav', label: 'Navigation à la molette / liseuse' },
+  { key: 'autoscroll', label: 'Défilement automatique' },
 ]
 
 export function makeProfile(id, name, allVisible = true) {
   return {
     id,
     name,
-    visible: {
-      scrollnav: allVisible, fitwidth: allVisible, flip: allVisible,
-      autoscroll: allVisible, scale: allVisible, sensitivity: allVisible,
-    },
+    visible: { scrollnav: allVisible, autoscroll: allVisible },
     values: {
-      scaleLevels: [...DEFAULTS.scaleLevels],
-      sensLevels: [...DEFAULTS.sensLevels],
-      speedLevels: [...DEFAULTS.speedLevels],
+      scaleLevels: [...DEFAULTS.scaleLevels],   // % d'échelle proposés (le pincement va au-delà)
+      speedMults: [...DEFAULTS.speedMults],     // multiplicateurs de vitesse d'auto-scroll
+      pauseLevels: [...DEFAULTS.pauseLevels],   // temps de pause entre planches (s)
     },
-    // État VIVANT du profil : ce qui est réellement ACTIF (échelle 50 %, défilement auto, etc.).
-    // Synchronisé par compte → retrouvé tel quel sur tout appareil / manga qui utilise ce profil,
-    // sans avoir à ré-activer quoi que ce soit. Réécrit à chaque changement dans le lecteur.
-    state: {
-      fitwidth: false, flip: false, scrollnav: false, autoscroll: false,
-      scale: 100, sens: 1, speed: DEFAULTS.speedLevels[3] || 70,
-    },
-    defaults: { autoEdgePause: 0 },   // paramètres non pilotés en direct dans le lecteur
-    zoomGesture: 'both',
+    // État VIVANT : ce qui est réellement ACTIF (échelle, auto-scroll, ×vitesse, pause…).
+    // Synchronisé par compte → retrouvé tel quel sur tout appareil / manga du profil, sans
+    // ré-activation. Réécrit à chaque changement dans le lecteur.
+    state: { scale: 100, scrollnav: false, autoscroll: false, speedMult: 1, pause: 0 },
+    defaults: {},
   }
 }
 
-// Garantit qu'un profil a un `state` complet (migration depuis les anciens `defaults`).
+// Garantit qu'un profil a un `state` + des `values` complets (auto-upgrade des anciens schémas).
 export function ensureState(p) {
   if (!p) return p
-  const base = {
-    fitwidth: false, flip: false, scrollnav: false, autoscroll: false,
-    scale: 100, sens: 1, speed: DEFAULTS.speedLevels[3] || 70,
-  }
+  const base = { scale: 100, scrollnav: false, autoscroll: false, speedMult: 1, pause: 0 }
+  p.state = { ...base, ...(p.state || {}) }
   const old = p.defaults || {}
-  p.state = { ...base, ...old, ...(p.state || {}) }   // ancien `defaults` sert de graine
-  p.zoomGesture = p.zoomGesture || 'both'
+  if (!(p.state.pause > 0) && typeof old.autoEdgePause === 'number' && old.autoEdgePause > 0) {
+    p.state.pause = old.autoEdgePause   // migration de l'ancienne pause de bord
+  }
+  const V = (p.values = p.values || {})
+  if (!Array.isArray(V.scaleLevels) || !V.scaleLevels.length) V.scaleLevels = [...DEFAULTS.scaleLevels]
+  if (!Array.isArray(V.speedMults) || !V.speedMults.length) V.speedMults = [...DEFAULTS.speedMults]
+  if (!Array.isArray(V.pauseLevels) || !V.pauseLevels.length) V.pauseLevels = [...DEFAULTS.pauseLevels]
+  const vis = (p.visible = p.visible || {})
+  if (typeof vis.autoscroll !== 'boolean') vis.autoscroll = true
+  if (typeof vis.scrollnav !== 'boolean') vis.scrollnav = true
   return p
 }
 
@@ -87,18 +79,13 @@ export async function loadProfiles(uid) {
         if (Array.isArray(s.scaleLevels) && s.scaleLevels.length) p.values.scaleLevels = s.scaleLevels
         if (Array.isArray(s.sensLevels) && s.sensLevels.length) p.values.sensLevels = s.sensLevels
         if (Array.isArray(s.speedLevels) && s.speedLevels.length) p.values.speedLevels = s.speedLevels
-        if (typeof s.autoEdgePause === 'number') p.defaults.autoEdgePause = s.autoEdgePause
         // Reprend l'ÉTAT ACTIF de cet appareil (anciennes clés reader_<k>_<uid>) → pas de perte.
         ensureState(p)
+        if (typeof s.autoEdgePause === 'number' && s.autoEdgePause > 0) p.state.pause = s.autoEdgePause
         const u = uid || 'anon'
         const g = (k) => localStorage.getItem(`reader_${k}_${u}`)
         p.state.scrollnav = g('scrollnav') === '1'
-        p.state.flip = g('pageflip') === '1'
-        p.state.fitwidth = g('fitwidth') === '1'
-        const ps = Number(g('pansens')); if (ps > 0) p.state.sens = ps
         const zp = Number(g('zoompct')); if (zp >= 40 && zp <= 100) p.state.scale = zp
-        const al = Number(g('autolevel'))
-        if (al >= 1 && p.values.speedLevels[al - 1]) p.state.speed = p.values.speedLevels[al - 1]
         store.profiles.perso = p
         store.defaultId = 'perso'; store.activeId = 'perso'
       }

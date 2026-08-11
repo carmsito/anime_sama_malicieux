@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { gsap } from 'gsap'
 import { api } from '../api/client'
 import { AuthCtx } from '../contexts'
-import { loadReaderSettings } from '../readerSettings'
+import { loadReaderSettings, BASE_AUTO_SPEED } from '../readerSettings'
 import { loadProfiles, resolveProfileId, getProfile, saveProfiles } from '../readerProfiles'
 import { createAmbienceEngine } from '../ambienceAudio'
 
@@ -36,26 +36,27 @@ export default function EpubReader() {
   // Préférences (par utilisateur) : chargées depuis localStorage selon l'uid (effet plus bas)
   const [scrollNav, setScrollNav] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
-  const [pageFlip, setPageFlip] = useState(false)
-  const [fitWidth, setFitWidth] = useState(false)       // mode lecture défilement (fit largeur)
-  const [panSens, setPanSens] = useState(DEFAULT_SENS)   // sensibilité déplacement en zoom
-  const [autoScroll, setAutoScroll] = useState(false)    // défilement auto (fit largeur)
-  const [autoLevel, setAutoLevel] = useState(1)          // niveau de vitesse 1..6
-  const [zoomPct, setZoomPct] = useState(100)            // niveau de zoom double-tap (%)
-  const pageFlipRef = useRef(pageFlip)
-  const sensRef = useRef(panSens)
-  const fitWidthRef = useRef(fitWidth)
-  const autoLevelRef = useRef(autoLevel)
+  // Mode « fit-largeur / mise à l'échelle » = MÉCA DE BASE, toujours active (plus une option).
+  const fitWidth = true
+  const [zoomPct, setZoomPct] = useState(100)            // échelle courante en % (pincement = libre)
+  const [autoScroll, setAutoScroll] = useState(false)    // défilement auto activé pour ce profil
+  const [scrollPaused, setScrollPaused] = useState(false) // pause manuelle (bouton play/pause flottant)
+  const [speedMult, setSpeedMult] = useState(1)          // multiplicateur de vitesse d'auto-scroll
+  const [pauseSec, setPauseSec] = useState(0)            // temps de pause entre planches (s)
+  const fitWidthRef = useRef(true)
+  const speedMultRef = useRef(speedMult)
   const zoomPctRef = useRef(zoomPct)
-  const autoPausedRef = useRef(false)   // pause momentanée quand on touche l'écran
+  const autoPausedRef = useRef(false)   // pause momentanée (toucher l'écran, panneau ouvert)
+  const scrollPausedRef = useRef(false) // pause manuelle (play/pause)
   const autoCooldownRef = useRef(0)     // pause de bord de planche (survit au redémarrage d'effet)
   const autoAdvancePendingRef = useRef(false)  // en pause "fin de planche", avant d'avancer
   const autoStartPauseRef = useRef(false)      // pause de DÉBUT à armer quand la planche devient visible
   const autoScrollRef = useRef(false)          // lecture de autoScroll sans re-déclencher les effets
   const wheelPauseTimer = useRef()
-  useEffect(() => { autoLevelRef.current = autoLevel }, [autoLevel])
+  useEffect(() => { speedMultRef.current = speedMult }, [speedMult])
   useEffect(() => { zoomPctRef.current = zoomPct }, [zoomPct])
   useEffect(() => { autoScrollRef.current = autoScroll }, [autoScroll])
+  useEffect(() => { scrollPausedRef.current = scrollPaused }, [scrollPaused])
 
   // Profils de lecture (synchronisés par compte). Le profil ACTIF (résolu par manga) pilote
   // quelles options sont visibles + leurs valeurs → on en dérive l'objet `settings` que le
@@ -73,15 +74,14 @@ export default function EpubReader() {
     return () => { alive = false }
   }, [uid, mangaId])
   const profile = useMemo(() => (profStore ? getProfile(profStore, activeProfileId) : null), [profStore, activeProfileId])
-  const zoomGesture = profile?.zoomGesture || 'both'
   const settings = useMemo(() => {
     if (!profile) return loadReaderSettings(uid)
     return {
       buttons: { ...profile.visible, fullscreen: true },
-      scaleLevels: profile.values.scaleLevels,
-      sensLevels: profile.values.sensLevels,
-      speedLevels: profile.values.speedLevels,
-      autoEdgePause: profile.defaults?.autoEdgePause || 0,
+      scaleLevels: profile.values.scaleLevels || [],
+      speedMults: profile.values.speedMults || [],
+      pauseLevels: profile.values.pauseLevels || [],
+      autoEdgePause: profile.state?.pause || 0,
     }
   }, [profile, uid])
   // Change de profil pour CE manga (propre à l'utilisateur, persisté backend).
@@ -95,18 +95,11 @@ export default function EpubReader() {
     })
     // On NE ferme PAS : les commandes du profil sont dans ce même panneau (comme NeoReader).
   }
-  const speedLevelsRef = useRef(settings.speedLevels)
   const autoEdgePauseRef = useRef(settings.autoEdgePause)
-  useEffect(() => {
-    speedLevelsRef.current = settings.speedLevels
-    autoEdgePauseRef.current = settings.autoEdgePause
-  }, [settings])
+  useEffect(() => { autoEdgePauseRef.current = settings.autoEdgePause }, [settings])
   const scrollRef = useRef()        // conteneur scrollable (mode fit largeur)
   const fitScrollRef = useRef(0)    // position de scroll voulue après changement de page
   const imgReadyRef = useRef(false)
-  useEffect(() => { pageFlipRef.current = pageFlip }, [pageFlip])
-  useEffect(() => { sensRef.current = panSens }, [panSens])
-  useEffect(() => { fitWidthRef.current = fitWidth }, [fitWidth])
   useEffect(() => { imgReadyRef.current = imgReady }, [imgReady])
 
   // ── Ambiance sonore : segments détectés + moteur audio synthétisé (Web Audio) ──
@@ -187,41 +180,26 @@ export default function EpubReader() {
     if (appliedProfRef.current === activeProfileId) return
     const st = profile.state || {}
     setScrollNav(!!st.scrollnav)
-    setPageFlip(!!st.flip)
-    setFitWidth(!!st.fitwidth)
     setAutoScroll(!!st.autoscroll)
-    setZoomPct(st.scale >= 40 && st.scale <= 100 ? st.scale : 100)
-    setPanSens(st.sens > 0 ? st.sens : DEFAULT_SENS)
-    const idx = (profile.values?.speedLevels || []).indexOf(st.speed)
-    setAutoLevel(idx >= 0 ? idx + 1 : 1)
-    if (!st.fitwidth) { setZoom(1); setPan({ x: 0, y: 0 }) }
+    setScrollPaused(false)
+    setZoomPct(st.scale >= 40 ? st.scale : 100)
+    setSpeedMult(st.speedMult > 0 ? st.speedMult : 1)
+    setPauseSec(st.pause >= 0 ? st.pause : 0)
     appliedProfRef.current = activeProfileId
   }, [profile, activeProfileId])
 
-  const cycleAutoSpeed = () => {
-    const levels = settings.speedLevels
-    setAutoLevel((v) => { const next = (v % levels.length) + 1; patchActiveState({ speed: levels[next - 1] }); return next })
-  }
-  const setSpeedValue = (val) => { const i = settings.speedLevels.indexOf(val); setAutoLevel(i >= 0 ? i + 1 : 1); patchActiveState({ speed: val }) }
-  const toggleAutoScroll = () => setAutoScroll((v) => { patchActiveState({ autoscroll: !v }); return !v })
-  const cycleZoom = () => {
-    const levels = settings.scaleLevels
-    setZoomPct((v) => { const i = levels.indexOf(v); const next = levels[(i + 1) % levels.length]; patchActiveState({ scale: next }); return next })
-  }
+  const toggleAutoScroll = () => setAutoScroll((v) => { patchActiveState({ autoscroll: !v }); if (v) setScrollPaused(false); return !v })
+  // Échelle : les chips posent une valeur, le pincement zoome LIBREMENT (persisté dans le profil).
   const setScaleValue = (val) => { setZoomPct(val); patchActiveState({ scale: val }) }
-  const togglePageFlip = () => setPageFlip((v) => { patchActiveState({ flip: !v }); return !v })
-  const toggleFitWidth = () => setFitWidth((v) => {
-    if (!v) { setZoom(1); setPan({ x: 0, y: 0 }) }  // en entrant : on annule un éventuel zoom
-    patchActiveState({ fitwidth: !v })
-    return !v
-  })
-  const cycleSens = () => {
-    const steps = settings.sensLevels
-    const i = steps.findIndex((v) => Math.abs(v - panSens) < 0.001)
-    const next = steps[(i + 1) % steps.length]
-    setPanSens(next); patchActiveState({ sens: next })
+  // Vitesse d'auto-scroll : multiplicateur (× BASE). Chips + cycle.
+  const setSpeedMultValue = (val) => { setSpeedMult(val); patchActiveState({ speedMult: val }) }
+  const cycleSpeedMult = () => {
+    const mults = settings.speedMults.length ? settings.speedMults : [1]
+    const i = mults.findIndex((m) => Math.abs(m - speedMult) < 0.001)
+    setSpeedMultValue(mults[(i + 1) % mults.length])
   }
-  const setSensValue = (val) => { setPanSens(val); patchActiveState({ sens: val }) }
+  // Temps de pause entre planches (comme une option du profil).
+  const setPauseValue = (val) => { setPauseSec(val); autoEdgePauseRef.current = val; patchActiveState({ pause: val }) }
   // Plein écran immersif : masque header/footer + plein écran natif (F11) sur desktop
   const enterFullscreen = () => {
     setFullscreen(true)
@@ -250,9 +228,7 @@ export default function EpubReader() {
   const panStartRef = useRef(null)
   const touchStartRef = useRef({ x: 0, y: 0 })
   const touchMovedRef = useRef(false)
-  const pinchRef = useRef(null)             // pincement 2 doigts en cours : { d0, dLast, cx, cy }
-  const zoomGestureRef = useRef('both')     // geste de zoom du profil (lu sans re-créer les handlers)
-  useEffect(() => { zoomGestureRef.current = zoomGesture }, [zoomGesture])
+  const pinchRef = useRef(null)             // pincement 2 doigts en cours : { d0, base, z }
 
   // Réinitialise le zoom à chaque changement de page / chapitre
   useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }) }, [current, chapterNum])
@@ -391,40 +367,11 @@ export default function EpubReader() {
   useLayoutEffect(() => {
     const dir = animateRef.current
     animateRef.current = null
-    // Mode fit-largeur : pas d'anim de flip, on repositionne le scroll (haut pour suivant,
+    // Mode fit-largeur (toujours actif) : on repositionne le scroll (haut pour suivant,
     // bas pour précédent — le bas est appliqué à la fin du chargement de l'image).
-    if (fitWidthRef.current) {
-      if (scrollRef.current) {
-        if (dir === -1 && current > 0) { fitScrollRef.current = 'bottom' }  // page précédente → bas
-        else { scrollRef.current.scrollTop = 0; fitScrollRef.current = 0 }  // sinon → haut
-      }
-      return
-    }
-    const el = flipRef.current
-    if (dir == null || !el) return
-    if (pageFlipRef.current) {
-      // Vraie page qui se tourne (façon turn.js / StPageFlip) :
-      // pivot autour de la reliure (proche 90°, sous perspective) + ombre en dégradé
-      // qui balaie la page et s'estompe quand elle se replie à plat.
-      const originX = dir === 1 ? 'left' : 'right'
-      const shade = shadeRef.current
-      if (shade) {
-        shade.style.background = dir === 1
-          ? 'linear-gradient(90deg, rgba(0,0,0,.55) 0%, rgba(0,0,0,.12) 35%, rgba(0,0,0,0) 60%)'
-          : 'linear-gradient(270deg, rgba(0,0,0,.55) 0%, rgba(0,0,0,.12) 35%, rgba(0,0,0,0) 60%)'
-      }
-      const tl = gsap.timeline()
-      tl.fromTo(el,
-        { rotationY: dir === 1 ? 96 : -96 },
-        { rotationY: 0, duration: .62, ease: 'power2.out',
-          transformOrigin: `${originX} center`, clearProps: 'transform' }, 0)
-      if (shade) {
-        tl.fromTo(shade, { opacity: .9 }, { opacity: 0, duration: .62, ease: 'power1.in' }, 0)
-      }
-    } else {
-      gsap.fromTo(el,
-        { x: dir === 1 ? -20 : 20 },
-        { x: 0, duration: .18, ease: 'power2.out', clearProps: 'transform' })
+    if (scrollRef.current) {
+      if (dir === -1 && current > 0) { fitScrollRef.current = 'bottom' }  // page précédente → bas
+      else { scrollRef.current.scrollTop = 0; fitScrollRef.current = 0 }  // sinon → haut
     }
   }, [current, chapterNum])
 
@@ -493,110 +440,56 @@ export default function EpubReader() {
     if (e.deltaY > 0) goNext(); else goPrev()
   }, [scrollNav, zoomed, fitWidth, goNext, goPrev])
 
-  // ── Gestes tactiles : tap latéral = page, double-tap = zoom, glisser = pan/swipe ──
+  // ── Gestes tactiles (mode fit-largeur, toujours actif) ──
+  // 1 doigt = scroll natif + swipe pour changer de planche (si molette active).
+  // 2 doigts = PINCEMENT → zoom LIBRE de l'échelle (autant qu'on veut), figé dans le profil.
   const onTouchStart = useCallback((e) => {
     const t = e.touches[0]
     touchStartRef.current = { x: t.clientX, y: t.clientY }
     autoPausedRef.current = true   // toucher l'écran → pause l'auto-scroll
-    if (fitWidthRef.current) return   // mode défilement : scroll natif (on garde juste startY)
-    // Pincement (mode paginé) : 2 doigts → toggle zoom (si le geste est autorisé par le profil)
-    const g = zoomGestureRef.current
-    if (e.touches.length === 2 && (g === 'pinch' || g === 'both')) {
+    if (e.touches.length === 2) {
       const a = e.touches[0], b = e.touches[1]
       const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
-      pinchRef.current = { d0: d, dLast: d, cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2 }
-      return
+      pinchRef.current = { d0: d || 1, base: zoomPctRef.current, z: zoomPctRef.current }
     }
-    touchMovedRef.current = false
-    if (zoomed) panStartRef.current = { px: pan.x, py: pan.y, tx: t.clientX, ty: t.clientY }
-  }, [zoomed, pan])
+  }, [])
 
   const onTouchMove = useCallback((e) => {
-    if (fitWidthRef.current) return
     if (pinchRef.current && e.touches.length === 2) {
       const a = e.touches[0], b = e.touches[1]
-      pinchRef.current.dLast = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
-      pinchRef.current.cx = (a.clientX + b.clientX) / 2
-      pinchRef.current.cy = (a.clientY + b.clientY) / 2
-      return
+      const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+      let z = Math.round(pinchRef.current.base * (d / pinchRef.current.d0))
+      z = Math.max(40, Math.min(500, z))   // zoom libre 40 %..500 %
+      pinchRef.current.z = z
+      setZoomPct(z)
     }
-    if (zoomed && panStartRef.current) {
-      const t = e.touches[0]
-      const dx = t.clientX - panStartRef.current.tx
-      const dy = t.clientY - panStartRef.current.ty
-      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) touchMovedRef.current = true
-      const s = sensRef.current   // sensibilité réglable (vitesse de déplacement en zoom)
-      setPan({ x: panStartRef.current.px + dx * s, y: panStartRef.current.py + dy * s })
-    }
-  }, [zoomed])
+  }, [])
 
   const onTouchEnd = useCallback((e) => {
     const t = e.changedTouches[0]
     // reprise de l'auto-scroll après un court délai (laisse retomber l'inertie iOS)
     clearTimeout(wheelPauseTimer.current)
     wheelPauseTimer.current = setTimeout(() => { autoPausedRef.current = false }, 350)
-    // Fin d'un PINCEMENT → toggle zoom selon l'écartement des doigts
+    // Fin d'un pincement → fige l'échelle atteinte dans le profil (synchronisé).
     if (pinchRef.current) {
-      const { d0, dLast, cx, cy } = pinchRef.current
+      const z = pinchRef.current.z
       pinchRef.current = null
-      const ratio = dLast / (d0 || 1)
-      if (!zoomed && ratio > 1.15) toggleZoomAt(cx, cy)                        // écartement → zoome
-      else if (zoomed && ratio < 0.87) { setZoom(1); setPan({ x: 0, y: 0 }) }  // pincement → dézoome
+      if (e.touches.length === 0) { setZoomPct(z); patchActiveState({ scale: z }) }
       return
     }
-    if (fitWidthRef.current) {
-      // Mode défilement : le tap est géré par onAreaClick. Ici on gère le SWIPE vertical
-      // qui tourne la page — aux extrémités de la planche, ou si elle tient à l'écran.
-      // Seulement si le mode molette/scroll est actif (cohabitation).
-      if (!scrollNav) return
-      if (!imgReadyRef.current) return   // planche pas encore chargée → pas de saut de page
-      const el = scrollRef.current
-      if (!el) return
-      const dy = t.clientY - touchStartRef.current.y
-      if (Math.abs(dy) < 40) return   // tap → onAreaClick
-      const fits = el.scrollHeight <= el.clientHeight + 3
-      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 3
-      const atTop = el.scrollTop <= 3
-      if (dy < 0 && (fits || atBottom)) goNext()        // swipe vers le haut → suivant
-      else if (dy > 0 && (fits || atTop)) goPrev()      // swipe vers le bas → précédent
-      return
-    }
-    const now = Date.now()
-    // Fin d'un glissement pour paner (zoomé) → ne pas interpréter comme un tap
-    if (zoomed && touchMovedRef.current) { panStartRef.current = null; return }
-    const dx = t.clientX - touchStartRef.current.x
+    // Swipe vertical → changer de planche (aux extrémités / si la planche tient), molette active.
+    if (!scrollNav) return
+    if (!imgReadyRef.current) return
+    const el = scrollRef.current
+    if (!el) return
     const dy = t.clientY - touchStartRef.current.y
-    const moved = Math.abs(dx) > 12 || Math.abs(dy) > 12
-    const r = e.currentTarget.getBoundingClientRect()
-
-    // Swipe vertical (mode molette/scroll activé, non zoomé)
-    if (!zoomed && scrollNav && Math.abs(dy) >= 45 && Math.abs(dy) > Math.abs(dx)) {
-      if (dy < 0) goNext(); else goPrev()
-      return
-    }
-    if (moved) return  // glissement non géré → rien
-
-    // ── C'est un TAP ──
-    const last = lastTapRef.current
-    const dblG = zoomGestureRef.current
-    const allowDbl = dblG === 'doubletap' || dblG === 'both'
-    const isDouble = allowDbl && (now - last.t < 300) && Math.abs(t.clientX - last.x) < 45 && Math.abs(t.clientY - last.y) < 45
-    if (zoomed) {
-      // double-tap n'importe où → dézoome
-      if (isDouble) { lastTapRef.current = { t: 0, x: 0, y: 0 }; setZoom(1); setPan({ x: 0, y: 0 }) }
-      else lastTapRef.current = { t: now, x: t.clientX, y: t.clientY }
-      return
-    }
-    // double-tap → zoome (n'importe où)
-    if (isDouble) { lastTapRef.current = { t: 0, x: 0, y: 0 }; toggleZoomAt(t.clientX, t.clientY); return }
-    lastTapRef.current = { t: now, x: t.clientX, y: t.clientY }
-    // Navigation par tap latéral — DÉSACTIVÉE quand le mode scroll est actif
-    if (!scrollNav) {
-      const x = t.clientX - r.left
-      if (x < r.width * 0.33) goPrev()          // tiers gauche → précédent
-      else if (x > r.width * 0.67) goNext()     // tiers droit → suivant
-    }
-  }, [zoomed, scrollNav, goNext, goPrev, pan]) // eslint-disable-line
+    if (Math.abs(dy) < 40) return   // tap → onAreaClick
+    const fits = el.scrollHeight <= el.clientHeight + 3
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 3
+    const atTop = el.scrollTop <= 3
+    if (dy < 0 && (fits || atBottom)) goNext()        // swipe vers le haut → suivant
+    else if (dy > 0 && (fits || atTop)) goPrev()      // swipe vers le bas → précédent
+  }, [scrollNav, goNext, goPrev]) // eslint-disable-line
 
   // Clic latéral = changement de page
   const onAreaClick = useCallback((e) => {
@@ -628,7 +521,7 @@ export default function EpubReader() {
       const dt = Math.min(0.05, (now - last) / 1000); last = now
       const el = scrollRef.current
       // autoCooldownRef survit au redémarrage de l'effet (goNext change `current` → restart)
-      if (el && !autoPausedRef.current && imgReadyRef.current && now > autoCooldownRef.current) {
+      if (el && !autoPausedRef.current && !scrollPausedRef.current && imgReadyRef.current && now > autoCooldownRef.current) {
         const remaining = el.scrollHeight - el.clientHeight - el.scrollTop
         if (remaining <= 1) {
           const pauseMs = autoEdgePauseRef.current > 0 ? autoEdgePauseRef.current * 1000 : 900
@@ -646,8 +539,7 @@ export default function EpubReader() {
             else setAutoScroll(false)           // fin du chapitre sans suite → stop
           }
         } else {
-          const speeds = speedLevelsRef.current
-          acc += (speeds[autoLevelRef.current - 1] || speeds[0] || 8) * dt
+          acc += BASE_AUTO_SPEED * (speedMultRef.current || 1) * dt
           const px = Math.floor(acc)
           if (px > 0) { el.scrollTop += Math.min(px, remaining); acc -= px }
         }
@@ -658,8 +550,12 @@ export default function EpubReader() {
     return () => cancelAnimationFrame(raf)
   }, [autoScroll, fitWidth, current, images.length, nextChapNum, goNext])
 
-  // Désactive l'auto-scroll si on quitte le mode fit-largeur
-  useEffect(() => { if (!fitWidth) setAutoScroll(false) }, [fitWidth])
+  // Panneau ⚙️ ouvert → auto-scroll en pause (on ne défile pas pendant qu'on règle).
+  useEffect(() => {
+    if (showReaderMenu) { autoPausedRef.current = true; return }
+    const t = setTimeout(() => { autoPausedRef.current = false }, 250)
+    return () => clearTimeout(t)
+  }, [showReaderMenu])
 
   // CHANGEMENT DE PLANCHE (manuel souris/tactile OU auto) pendant l'auto-scroll : on remet le
   // compteur d'attente à ZÉRO → la pause de début s'applique aussi sur les changements manuels.
@@ -788,6 +684,7 @@ export default function EpubReader() {
               // Mode défilement : image ajustée à la largeur (× zoomPct), scroll vertical natif
               // (+ horizontal si la planche est agrandie au-delà de 100%)
               overflowY: 'auto', overflowX: zoomPct > 100 ? 'auto' : 'hidden',
+              overscrollBehavior: 'contain',   // pas de rebond/chaînage : sensation "appli", pas "bas de site"
               alignItems: 'flex-start',
               touchAction: zoomPct > 100 ? 'pan-x pan-y' : 'pan-y',
             }
@@ -828,7 +725,7 @@ export default function EpubReader() {
                 onLoad={markReady}
                 onError={() => setImgReady(true)}
                 draggable={false}
-                style={{ width: `${zoomPct}%`, height: 'auto', display: 'block', userSelect: 'none', margin: 'auto 0', flexShrink: 0 }}
+                style={{ width: `${zoomPct}%`, height: 'auto', display: 'block', userSelect: 'none', margin: fullscreen ? '0' : 'auto 0', flexShrink: 0 }}
               />
             </>
           ) : (
@@ -912,6 +809,28 @@ export default function EpubReader() {
             padding: '.3rem .7rem', cursor: 'pointer', fontSize: '1rem' }}>→</button>
       </div>
 
+      {/* Contrôle flottant d'auto-scroll : play/pause + multiplicateur de vitesse. Visible dès que
+          l'auto-scroll est activé, en mode normal comme en plein écran. */}
+      {autoScroll && settings.buttons.autoscroll && (
+        <div style={{ position: 'fixed', left: '50%', transform: 'translateX(-50%)', zIndex: 60,
+          bottom: fullscreen ? 18 : 54, display: 'flex', alignItems: 'center', gap: '.45rem',
+          background: 'rgba(20,20,24,.92)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 24,
+          padding: '.32rem .45rem', boxShadow: '0 4px 20px rgba(0,0,0,.5)' }}>
+          <button onClick={() => setScrollPaused((v) => !v)} title={scrollPaused ? 'Reprendre' : 'Pause'}
+            style={{ width: 34, height: 34, borderRadius: '50%', border: 'none', cursor: 'pointer',
+              background: '#e50914', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {scrollPaused
+              ? <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+              : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
+          </button>
+          <button onClick={cycleSpeedMult} title="Vitesse du défilement (multiplicateur)"
+            style={{ minWidth: 46, height: 34, borderRadius: 17, border: 'none', cursor: 'pointer',
+              background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.84rem', padding: '0 .7rem' }}>
+            ×{speedMult}
+          </button>
+        </div>
+      )}
+
       {showReaderMenu && profStore && (() => {
         const vis = profile?.visible || {}
         // Styles partagés du panneau (DRY)
@@ -941,15 +860,7 @@ export default function EpubReader() {
             </button>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '.7rem', flexShrink: 0 }}>
               <div style={{ fontWeight: 800, fontSize: '1.02rem' }}>Lecture</div>
-              <div style={{ display: 'flex', gap: '.3rem', alignItems: 'center' }}>
-                <button onClick={() => setSheetExpanded((v) => !v)} title={sheetExpanded ? 'Replier' : 'Étendre'}
-                  style={{ background: 'rgba(255,255,255,.08)', border: 'none', borderRadius: 6, color: 'rgba(255,255,255,.7)', cursor: 'pointer', padding: '.25rem .4rem', display: 'flex' }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    {sheetExpanded ? <polyline points="6 15 12 9 18 15"/> : <polyline points="6 9 12 15 18 9"/>}
-                  </svg>
-                </button>
-                <button onClick={() => setShowReaderMenu(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.6)', fontSize: '1.2rem', cursor: 'pointer', padding: '0 .2rem' }}>✕</button>
-              </div>
+              <button onClick={() => setShowReaderMenu(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.6)', fontSize: '1.2rem', cursor: 'pointer', padding: '0 .2rem' }}>✕</button>
             </div>
 
             <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingRight: '.2rem' }}>
@@ -968,75 +879,60 @@ export default function EpubReader() {
                 </div>
               </div>
 
-              {/* Bascules d'affichage/lecture */}
-              {vis.fitwidth && (
-                <button onClick={toggleFitWidth} style={toggleRow(fitWidth)}>
-                  <span>Mode défilement (fit largeur)</span><span style={pill(fitWidth)}>{fitWidth ? 'ON' : 'OFF'}</span>
-                </button>
-              )}
-              {vis.scrollnav && (
-                <button onClick={toggleScrollNav} style={toggleRow(scrollNav)}>
-                  <span>Navigation à la molette</span><span style={pill(scrollNav)}>{scrollNav ? 'ON' : 'OFF'}</span>
-                </button>
-              )}
-              {vis.flip && (
-                <button onClick={togglePageFlip} style={toggleRow(pageFlip)}>
-                  <span>Animation page qui se tourne</span><span style={pill(pageFlip)}>{pageFlip ? 'ON' : 'OFF'}</span>
-                </button>
-              )}
+              {/* Échelle — MÉCA DE BASE : le % change (le pincement zoome librement au-delà) */}
+              <div style={section}>
+                <div style={label}>Taille de planche (pincer pour zoomer librement)</div>
+                <div style={chipRow}>
+                  {settings.scaleLevels.map((v) => (
+                    <button key={v} onClick={() => setScaleValue(v)} style={chip(zoomPct === v)}>{v}%</button>
+                  ))}
+                  {!settings.scaleLevels.includes(zoomPct) && (
+                    <span style={{ ...chip(true), cursor: 'default' }}>{zoomPct}%</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Défilement automatique + multiplicateur de vitesse + temps de pause */}
               {vis.autoscroll && (
                 <button onClick={toggleAutoScroll} style={toggleRow(autoScroll)}>
-                  <span>Défilement auto</span><span style={pill(autoScroll)}>{autoScroll ? 'ON' : 'OFF'}</span>
+                  <span>Défilement automatique</span><span style={pill(autoScroll)}>{autoScroll ? 'ON' : 'OFF'}</span>
                 </button>
               )}
-
-              {/* Vitesses (liées au défilement auto) */}
               {vis.autoscroll && (
                 <div style={section}>
-                  <div style={label}>Vitesse du défilement auto</div>
+                  <div style={label}>Vitesse (× multiplicateur)</div>
                   <div style={chipRow}>
-                    {settings.speedLevels.map((v, i) => (
-                      <button key={v} onClick={() => setSpeedValue(v)} style={chip(autoLevel === i + 1)}>V{i + 1}</button>
+                    {settings.speedMults.map((m) => (
+                      <button key={m} onClick={() => setSpeedMultValue(m)} style={chip(Math.abs(speedMult - m) < 0.001)}>×{m}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {vis.autoscroll && (
+                <div style={section}>
+                  <div style={label}>Temps de pause entre planches</div>
+                  <div style={chipRow}>
+                    {settings.pauseLevels.map((s) => (
+                      <button key={s} onClick={() => setPauseValue(s)} style={chip(Math.abs(pauseSec - s) < 0.001)}>{s === 0 ? 'Aucune' : `${s}s`}</button>
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* Échelle de planche */}
-              {vis.scale && (
-                <div style={section}>
-                  <div style={label}>Taille de planche</div>
-                  <div style={chipRow}>
-                    {settings.scaleLevels.map((v) => (
-                      <button key={v} onClick={() => setScaleValue(v)} style={chip(zoomPct === v)}>{v}%</button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Sensibilité de déplacement en zoom */}
-              {vis.sensitivity && (
-                <div style={section}>
-                  <div style={label}>Sensibilité en zoom</div>
-                  <div style={chipRow}>
-                    {settings.sensLevels.map((v) => (
-                      <button key={v} onClick={() => setSensValue(v)} style={chip(Math.abs(panSens - v) < 0.001)}>×{v}</button>
-                    ))}
-                  </div>
-                </div>
+              {/* Navigation molette / liseuse */}
+              {vis.scrollnav && (
+                <button onClick={toggleScrollNav} style={toggleRow(scrollNav)}>
+                  <span>Navigation à la molette / liseuse</span><span style={pill(scrollNav)}>{scrollNav ? 'ON' : 'OFF'}</span>
+                </button>
               )}
 
               {/* Plein écran — toujours disponible */}
-              <div style={section}>
-                <div style={label}>Affichage</div>
-                <button onClick={() => { fullscreen ? exitFullscreen() : enterFullscreen(); }} style={{ ...toggleRow(fullscreen), marginBottom: 0 }}>
-                  <span>Plein écran immersif</span><span style={pill(fullscreen)}>{fullscreen ? 'ON' : 'OFF'}</span>
-                </button>
-              </div>
+              <button onClick={() => { fullscreen ? exitFullscreen() : enterFullscreen() }} style={{ ...toggleRow(fullscreen), marginBottom: '.5rem' }}>
+                <span>Plein écran immersif</span><span style={pill(fullscreen)}>{fullscreen ? 'ON' : 'OFF'}</span>
+              </button>
 
               <div style={{ fontSize: '.75rem', color: 'rgba(255,255,255,.4)', lineHeight: 1.7, marginTop: '.4rem' }}>
-                Geste de zoom : <b>{zoomGesture === 'doubletap' ? 'Double-tap' : zoomGesture === 'pinch' ? 'Pincement' : 'Double-tap + pincement'}</b>.
-                Choix des options visibles, valeurs et geste dans <b onClick={() => navigate('/settings')} style={{ cursor: 'pointer', textDecoration: 'underline' }}>Réglages</b>.
+                Options visibles et valeurs proposées : <b onClick={() => navigate('/settings')} style={{ cursor: 'pointer', textDecoration: 'underline' }}>Réglages</b>.
               </div>
             </div>
           </div>

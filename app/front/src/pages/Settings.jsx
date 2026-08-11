@@ -1,10 +1,8 @@
 import React, { useContext, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AuthCtx } from '../contexts'
-import { SCALE_CHOICES, SENS_CHOICES, SPEED_CHOICES } from '../readerSettings'
-import {
-  OPTION_KEYS, ZOOM_GESTURES, makeProfile, loadProfiles, saveProfiles,
-} from '../readerProfiles'
+import { SCALE_CHOICES, SPEED_MULT_CHOICES, PAUSE_CHOICES } from '../readerSettings'
+import { OPTION_KEYS, makeProfile, loadProfiles, saveProfiles } from '../readerProfiles'
 
 function Toggle({ on, onChange, label }) {
   return (
@@ -133,7 +131,7 @@ export default function Settings() {
       {/* Options visibles */}
       <div className="set-panel">
         <div className="set-title">Options affichées dans le lecteur (⚙️)</div>
-        <div className="set-hint">Le plein écran reste toujours visible.</div>
+        <div className="set-hint">Le mode « mise à l'échelle » et le plein écran sont toujours présents.</div>
         <div className="set-toggles">
           {OPTION_KEYS.map((o) => (
             <Toggle key={o.key} label={o.label} on={!!prof.visible[o.key]} onChange={(v) => setVisible(o.key, v)} />
@@ -141,38 +139,28 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Geste de zoom */}
-      <div className="set-panel">
-        <div className="set-title">Geste de zoom</div>
-        <div className="set-chips">
-          {ZOOM_GESTURES.map(([v, label]) => (
-            <button key={v} type="button" className={`set-chip ${prof.zoomGesture === v ? 'on' : ''}`}
-              onClick={() => patchProfile({ zoomGesture: v })}>{label}</button>
-          ))}
-        </div>
-      </div>
-
-      {/* Vitesses (défilement auto) */}
-      <div className="set-panel">
-        <div className="set-title">Vitesses de défilement auto (px/s)</div>
-        <div className="set-hint">Proposées par le bouton vitesse (si le défilement auto est visible).</div>
-        <ChipMulti choices={SPEED_CHOICES} selected={prof.values.speedLevels}
-          onToggle={(v) => toggleValue('speedLevels', SPEED_CHOICES, v)} />
-      </div>
-
       {/* Échelle */}
       <div className="set-panel">
         <div className="set-title">Tailles de planche (échelle)</div>
-        <div className="set-hint">Proposées par le bouton échelle (100 % = ajusté largeur).</div>
+        <div className="set-hint">Proposées par les chips (100 % = ajusté largeur). Le pincement zoome librement au-delà.</div>
         <ChipMulti choices={SCALE_CHOICES} selected={prof.values.scaleLevels} fmt={(c) => `${c}%`}
           onToggle={(v) => toggleValue('scaleLevels', SCALE_CHOICES, v)} />
       </div>
 
-      {/* Sensibilité */}
+      {/* Vitesses (multiplicateurs) */}
       <div className="set-panel">
-        <div className="set-title">Sensibilité de déplacement en zoom</div>
-        <ChipMulti choices={SENS_CHOICES} selected={prof.values.sensLevels} fmt={(c) => `×${c}`}
-          onToggle={(v) => toggleValue('sensLevels', SENS_CHOICES, v)} />
+        <div className="set-title">Vitesses de défilement auto (× multiplicateur)</div>
+        <div className="set-hint">Proposées par le contrôle de vitesse quand le défilement auto est visible.</div>
+        <ChipMulti choices={SPEED_MULT_CHOICES} selected={prof.values.speedMults} fmt={(c) => `×${c}`}
+          onToggle={(v) => toggleValue('speedMults', SPEED_MULT_CHOICES, v)} />
+      </div>
+
+      {/* Temps de pause entre planches */}
+      <div className="set-panel">
+        <div className="set-title">Temps de pause entre planches (s)</div>
+        <div className="set-hint">Proposés dans le lecteur quand le défilement auto est visible.</div>
+        <ChipMulti choices={PAUSE_CHOICES} selected={prof.values.pauseLevels} fmt={(c) => (c === 0 ? 'Aucune' : `${c}s`)}
+          onToggle={(v) => toggleValue('pauseLevels', PAUSE_CHOICES, v)} />
       </div>
 
       <div className="set-actions">
