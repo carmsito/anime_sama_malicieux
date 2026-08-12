@@ -44,6 +44,8 @@ export default function EpubReader() {
   const [speedMult, setSpeedMult] = useState(1)          // multiplicateur de vitesse d'auto-scroll
   const [pauseSec, setPauseSec] = useState(0)            // temps de pause entre planches (s)
   const [panSens, setPanSens] = useState(DEFAULT_SENS)   // sensibilité de déplacement quand on double-tap (loupe)
+  const [readFilter, setReadFilter] = useState('none')   // confort : none | sepia | night
+  const [brightness, setBrightness] = useState(100)      // luminosité de lecture (%)
   const fitWidthRef = useRef(true)
   const speedMultRef = useRef(speedMult)
   const sensRef = useRef(panSens)
@@ -188,6 +190,8 @@ export default function EpubReader() {
     setSpeedMult(st.speedMult > 0 ? st.speedMult : 1)
     setPauseSec(st.pause >= 0 ? st.pause : 0)
     setPanSens(st.sens > 0 ? st.sens : DEFAULT_SENS)
+    setReadFilter(st.filter || 'none')
+    setBrightness(st.brightness >= 40 && st.brightness <= 100 ? st.brightness : 100)
     appliedProfRef.current = activeProfileId
   }, [profile, activeProfileId])
 
@@ -206,6 +210,15 @@ export default function EpubReader() {
   const setPauseValue = (val) => { setPauseSec(val); autoEdgePauseRef.current = val; patchActiveState({ pause: val }) }
   // Sensibilité de déplacement quand on a double-tapé (loupe).
   const setSensValue = (val) => { setPanSens(val); patchActiveState({ sens: val }) }
+  // Confort de lecture : filtre (sépia/nuit) + luminosité, appliqués en CSS sur la planche.
+  const setFilterValue = (val) => { setReadFilter(val); patchActiveState({ filter: val }) }
+  const setBrightnessValue = (val) => { setBrightness(val); patchActiveState({ brightness: val }) }
+  const cssReadFilter = (() => {
+    const b = (brightness || 100) / 100
+    if (readFilter === 'sepia') return `sepia(.55) saturate(.9) brightness(${b})`
+    if (readFilter === 'night') return `sepia(.35) hue-rotate(-8deg) contrast(.95) brightness(${b * 0.9})`
+    return b !== 1 ? `brightness(${b})` : 'none'
+  })()
   // Plein écran immersif : masque header/footer + plein écran natif (F11) sur desktop
   const enterFullscreen = () => {
     setFullscreen(true)
@@ -738,6 +751,7 @@ export default function EpubReader() {
         style={{
           flex: 1, position: 'relative', background: '#000',
           display: 'flex', justifyContent: 'center',
+          filter: cssReadFilter,   // confort de lecture (sépia/nuit + luminosité)
           ...(fitWidth
             ? (zoomed
               ? {
@@ -1008,6 +1022,24 @@ export default function EpubReader() {
                   </div>
                 </div>
               )}
+
+              {/* Confort de lecture : filtre + luminosité */}
+              <div style={section}>
+                <div style={label}>Confort (filtre)</div>
+                <div style={chipRow}>
+                  {[['none', 'Aucun'], ['sepia', 'Sépia'], ['night', 'Nuit']].map(([v, lbl]) => (
+                    <button key={v} onClick={() => setFilterValue(v)} style={chip(readFilter === v)}>{lbl}</button>
+                  ))}
+                </div>
+              </div>
+              <div style={section}>
+                <div style={label}>Luminosité</div>
+                <div style={chipRow}>
+                  {[100, 85, 70, 55, 40].map((v) => (
+                    <button key={v} onClick={() => setBrightnessValue(v)} style={chip(brightness === v)}>{v}%</button>
+                  ))}
+                </div>
+              </div>
 
               {/* Navigation molette / liseuse */}
               {vis.scrollnav && (
