@@ -44,6 +44,7 @@ function WorkRow({ w, onReset, onOpen }) {
 export default function Stats() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [heatMonths, setHeatMonths] = useState(1)   // fenêtre de la heatmap (mois)
   const [goal, setGoalState] = useState(() => Number(localStorage.getItem('reading_goal')) || 10)
   const setGoal = (g) => { const v = Math.max(1, Math.min(200, g || 1)); setGoalState(v); localStorage.setItem('reading_goal', String(v)) }
   const navigate = useNavigate()
@@ -75,13 +76,15 @@ export default function Stats() {
 
   // Heatmap d'activité : palette + alignement (lundi en haut)
   const act = data.activity || []
-  const maxDay = act.reduce((m, d) => Math.max(m, d.count), 0)
+  const HEAT_DAYS = { 1: 31, 3: 92, 6: 183, 12: 371 }
+  const heatAct = act.slice(-(HEAT_DAYS[heatMonths] || 31))
+  const maxDay = heatAct.reduce((m, d) => Math.max(m, d.count), 0)
   const heat = (c) => {
     if (!c) return 'rgba(255,255,255,.06)'
     const r = c / (maxDay || 1)
     return r > 0.66 ? '#1f9d55' : r > 0.33 ? '#2ecc71' : 'rgba(46,204,113,.45)'
   }
-  const firstRow = act.length ? (new Date(act[0].date + 'T00:00:00').getDay() + 6) % 7 : 0
+  const firstRow = heatAct.length ? (new Date(heatAct[0].date + 'T00:00:00').getDay() + 6) % 7 : 0
   const wMax = Math.max(1, ...(data.by_weekday || [0]))
   const hMax = Math.max(1, ...(data.by_hour || [0]))
 
@@ -179,14 +182,26 @@ export default function Stats() {
         </div>
       </div>
 
-      {/* Activité — heatmap ~12 mois */}
-      {act.length > 0 && (
+      {/* Activité — heatmap avec fenêtre 1/3/6/12 mois */}
+      {heatAct.length > 0 && (
         <div className="stats-section">
-          <div className="stats-panel-title">Activité de lecture <span style={{ color: 'var(--text3)', fontWeight: 400 }}>· 12 derniers mois</span></div>
-          <div style={{ overflowX: 'auto', paddingBottom: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '.5rem' }}>
+            <div className="stats-panel-title" style={{ margin: 0 }}>Activité de lecture</div>
+            <div style={{ display: 'flex', gap: '.35rem' }}>
+              {[[1, '1 mois'], [3, '3 mois'], [6, '6 mois'], [12, '1 an']].map(([m, lbl]) => (
+                <button key={m} onClick={() => setHeatMonths(m)}
+                  style={{ padding: '.28rem .6rem', borderRadius: 13, border: 'none', cursor: 'pointer',
+                    fontSize: '.76rem', fontWeight: 700,
+                    background: heatMonths === m ? '#2ecc71' : 'rgba(255,255,255,.1)', color: '#fff' }}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ overflowX: 'auto', paddingBottom: 6, marginTop: '.6rem' }}>
             <div style={{ display: 'grid', gridTemplateRows: 'repeat(7, 11px)', gridAutoFlow: 'column', gap: 3, width: 'max-content' }}>
               {Array.from({ length: firstRow }).map((_, i) => <div key={`pad${i}`} />)}
-              {act.map((d) => (
+              {heatAct.map((d) => (
                 <div key={d.date} title={`${d.date} — ${d.count} chapitre(s)`}
                   style={{ width: 11, height: 11, borderRadius: 2, background: heat(d.count) }} />
               ))}

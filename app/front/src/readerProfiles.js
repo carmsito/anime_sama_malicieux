@@ -11,13 +11,15 @@ export const OPTION_KEYS = [
   { key: 'scrollnav', label: 'Navigation à la molette / liseuse' },
   { key: 'autoscroll', label: 'Défilement automatique' },
   { key: 'sensitivity', label: 'Sensibilité de déplacement en zoom (double-tap)' },
+  { key: 'chapnav', label: 'Boutons chapitre précédent / suivant' },
+  { key: 'restart', label: 'Bouton « Début » (reprendre au début)' },
 ]
 
 export function makeProfile(id, name, allVisible = true) {
   return {
     id,
     name,
-    visible: { scrollnav: allVisible, autoscroll: allVisible, sensitivity: allVisible },
+    visible: { scrollnav: allVisible, autoscroll: allVisible, sensitivity: allVisible, chapnav: allVisible, restart: allVisible },
     values: {
       scaleLevels: [...DEFAULTS.scaleLevels],   // % d'échelle proposés (le pincement va au-delà)
       speedMults: [...DEFAULTS.speedMults],     // multiplicateurs de vitesse d'auto-scroll
@@ -51,6 +53,8 @@ export function ensureState(p) {
   if (typeof vis.autoscroll !== 'boolean') vis.autoscroll = true
   if (typeof vis.scrollnav !== 'boolean') vis.scrollnav = true
   if (typeof vis.sensitivity !== 'boolean') vis.sensitivity = true
+  if (typeof vis.chapnav !== 'boolean') vis.chapnav = true
+  if (typeof vis.restart !== 'boolean') vis.restart = true
   return p
 }
 

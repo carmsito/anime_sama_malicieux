@@ -72,6 +72,11 @@ export default function EpubReader() {
   const [activeProfileId, setActiveProfileId] = useState('default')
   const [showReaderMenu, setShowReaderMenu] = useState(false)
   const [sheetExpanded, setSheetExpanded] = useState(false)   // bottom-sheet plié (55vh) ⇄ étendu (92vh)
+  // Dock flottant (play/pause + vitesse + échelle + plein écran) : déplaçable, masquable sur le côté.
+  const [dockPos, setDockPos] = useState(() => { try { return JSON.parse(localStorage.getItem('reader_dock_pos')) } catch { return null } })
+  const [dockHidden, setDockHidden] = useState(() => localStorage.getItem('reader_dock_hidden') === '1')
+  const dockRef = useRef(null)
+  const dockDragRef = useRef(null)
   useEffect(() => {
     let alive = true
     loadProfiles(uid).then((st) => {
@@ -182,7 +187,7 @@ export default function EpubReader() {
     const st = profile.state || {}
     setScrollNav(!!st.scrollnav)
     setAutoScroll(!!st.autoscroll)
-    setScrollPaused(false)
+    setScrollPaused(!!st.autoscroll)   // si l'auto-scroll est actif, on ouvre le chapitre EN PAUSE
     const baseScale = st.scale >= 40 ? st.scale : 100
     baseScaleRef.current = baseScale
     setZoomPct(baseScale)
@@ -199,6 +204,11 @@ export default function EpubReader() {
   // Échelle de BASE : les chips la posent (persistée). Le pincement zoome LIBREMENT par-dessus
   // (transitoire) ; le double-tap ramène à cette base. Poser une base annule la loupe/pincement.
   const setScaleValue = (val) => { baseScaleRef.current = val; setZoomPct(val); setZoom(1); setPan({ x: 0, y: 0 }); patchActiveState({ scale: val }) }
+  const cycleScale = () => {
+    const levels = settings.scaleLevels.length ? settings.scaleLevels : [100]
+    const i = levels.indexOf(baseScaleRef.current)
+    setScaleValue(levels[(i + 1) % levels.length])
+  }
   // Vitesse d'auto-scroll : multiplicateur (× BASE). Chips + cycle.
   const setSpeedMultValue = (val) => { setSpeedMult(val); patchActiveState({ speedMult: val }) }
   const cycleSpeedMult = () => {
@@ -213,6 +223,33 @@ export default function EpubReader() {
   // Confort de lecture : filtre (sépia/nuit) + luminosité, appliqués en CSS sur la planche.
   const setFilterValue = (val) => { setReadFilter(val); patchActiveState({ filter: val }) }
   const setBrightnessValue = (val) => { setBrightness(val); patchActiveState({ brightness: val }) }
+  // ── Dock flottant : déplacement + aimantation au bord (façon bulle utilitaire d'OS mobile) ──
+  const onDockDown = (e) => {
+    const el = dockRef.current; if (!el) return
+    const r = el.getBoundingClientRect()
+    dockDragRef.current = { dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height }
+    try { el.setPointerCapture(e.pointerId) } catch { /* noop */ }
+  }
+  const onDockMove = (e) => {
+    const d = dockDragRef.current; if (!d) return
+    let x = e.clientX - d.dx, y = e.clientY - d.dy
+    x = Math.max(6, Math.min(window.innerWidth - d.w - 6, x))
+    y = Math.max(6, Math.min(window.innerHeight - d.h - 6, y))
+    setDockPos({ x, y })
+  }
+  const onDockUp = () => {
+    const d = dockDragRef.current; if (!d) return
+    dockDragRef.current = null
+    setDockPos((p) => {
+      if (!p) return p
+      const x = (p.x + d.w / 2 < window.innerWidth / 2) ? 8 : window.innerWidth - d.w - 8  // aimante au bord le plus proche
+      const np = { x, y: p.y }
+      localStorage.setItem('reader_dock_pos', JSON.stringify(np))
+      return np
+    })
+  }
+  const setDockHiddenP = (v) => { setDockHidden(v); localStorage.setItem('reader_dock_hidden', v ? '1' : '0') }
+  const dockOnRight = !dockPos || (dockPos.x + 30 > window.innerWidth / 2)   // côté d'aimantation (pour l'onglet masqué)
   const cssReadFilter = (() => {
     const b = (brightness || 100) / 100
     if (readFilter === 'sepia') return `sepia(.55) saturate(.9) brightness(${b})`
@@ -683,7 +720,7 @@ export default function EpubReader() {
           flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {manga?.name} — Chap. {chapterNum}
         </span>
-        {loaded && images.length > 0 && current > 0 && (
+        {settings.buttons.restart && loaded && images.length > 0 && current > 0 && (
           <button onClick={() => { setCurrent(0); setImgReady(false); slide(-1) }}
             title="Reprendre depuis le début"
             style={{ color: 'rgba(255,255,255,.6)', fontSize: '.78rem', padding: '.25rem .55rem',
@@ -721,7 +758,7 @@ export default function EpubReader() {
         <span className="reader-hcount" style={{ color: 'rgba(255,255,255,.35)', fontSize: '.78rem' }}>
           {loaded ? `${current + 1} / ${images.length}` : '…'}
         </span>
-        <div style={{ display: 'flex', gap: '.3rem' }}>
+        {settings.buttons.chapnav && <div style={{ display: 'flex', gap: '.3rem' }}>
           {prevChap && (
             <button onClick={() => navigate(`/manga/${mangaId}/read/${prevChap.number}`)}
               style={{ color: 'rgba(255,255,255,.6)', fontSize: '.8rem', padding: '.25rem .5rem',
@@ -736,7 +773,7 @@ export default function EpubReader() {
               {nextChap.number} ›
             </button>
           )}
-        </div>
+        </div>}
       </div>
 
       {/* Image area */}
@@ -895,27 +932,57 @@ export default function EpubReader() {
             padding: '.3rem .7rem', cursor: 'pointer', fontSize: '1rem' }}>→</button>
       </div>
 
-      {/* Contrôle flottant d'auto-scroll, compact À DROITE : play/pause + vitesse (re-cliquer la
-          vitesse la fait cycler). En plein écran → en haut ; sinon → au-dessus de la barre. */}
+      {/* Dock flottant : play/pause + vitesse + échelle + plein écran. Déplaçable (poignée),
+          aimanté au bord au relâchement, masquable en onglet sur le côté (façon bulle d'OS). */}
       {autoScroll && settings.buttons.autoscroll && (
-        <div style={{ position: 'fixed', right: 10, zIndex: 60,
-          bottom: fullscreen ? 18 : 54,   // toujours en bas à droite (évite les boutons quitter/⚙️ en haut)
-          display: 'flex', alignItems: 'center', gap: '.4rem',
-          background: 'rgba(20,20,24,.92)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 24,
-          padding: '.32rem .4rem', boxShadow: '0 4px 20px rgba(0,0,0,.5)' }}>
-          <button onClick={() => setScrollPaused((v) => !v)} title={scrollPaused ? 'Reprendre' : 'Pause'}
-            style={{ width: 34, height: 34, borderRadius: '50%', border: 'none', cursor: 'pointer',
-              background: '#e50914', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {scrollPaused
-              ? <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
-              : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
+        dockHidden ? (
+          <button onClick={() => setDockHiddenP(false)} title="Afficher les contrôles"
+            style={{ position: 'fixed', zIndex: 61, [dockOnRight ? 'right' : 'left']: 0,
+              top: dockPos ? dockPos.y : undefined, bottom: dockPos ? undefined : (fullscreen ? 40 : 76),
+              width: 26, height: 46, border: 'none', cursor: 'pointer', color: '#fff',
+              background: 'rgba(20,20,24,.92)', boxShadow: '0 2px 12px rgba(0,0,0,.5)',
+              borderRadius: dockOnRight ? '12px 0 0 12px' : '0 12px 12px 0',
+              display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              {dockOnRight ? <polyline points="15 18 9 12 15 6"/> : <polyline points="9 18 15 12 9 6"/>}
+            </svg>
           </button>
-          <button onClick={cycleSpeedMult} title="Vitesse (re-cliquer pour changer)"
-            style={{ minWidth: 44, height: 34, borderRadius: 17, border: 'none', cursor: 'pointer',
-              background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.84rem', padding: '0 .7rem' }}>
-            ×{speedMult}
-          </button>
-        </div>
+        ) : (
+          <div ref={dockRef}
+            style={{ position: 'fixed', zIndex: 61,
+              ...(dockPos ? { left: dockPos.x, top: dockPos.y } : { right: 10, bottom: fullscreen ? 18 : 54 }),
+              width: 96, background: 'rgba(20,20,24,.94)', border: '1px solid rgba(255,255,255,.12)',
+              borderRadius: 16, boxShadow: '0 4px 22px rgba(0,0,0,.55)', padding: 6, touchAction: 'none' }}>
+            {/* Poignée de déplacement + bouton masquer */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5, cursor: 'grab' }}
+              onPointerDown={onDockDown} onPointerMove={onDockMove} onPointerUp={onDockUp}>
+              <span style={{ display: 'flex', gap: 2, paddingLeft: 4 }}>
+                {[0, 1, 2].map((i) => <span key={i} style={{ width: 3, height: 3, borderRadius: '50%', background: 'rgba(255,255,255,.4)' }} />)}
+              </span>
+              <button onClick={() => setDockHiddenP(true)} title="Masquer sur le côté"
+                style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.55)', cursor: 'pointer', padding: '0 2px', fontSize: '.9rem', lineHeight: 1 }}>⤫</button>
+            </div>
+            {/* Grille 2×2 de contrôles */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
+              <button onClick={() => setScrollPaused((v) => !v)} title={scrollPaused ? 'Reprendre' : 'Pause'}
+                style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: '#e50914', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {scrollPaused
+                  ? <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+                  : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
+              </button>
+              <button onClick={cycleSpeedMult} title="Vitesse (re-cliquer pour changer)"
+                style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.8rem' }}>×{speedMult}</button>
+              <button onClick={cycleScale} title="Taille de planche (re-cliquer pour changer)"
+                style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,.1)', color: zoomPct === baseScaleRef.current ? '#fff' : '#e50914', fontWeight: 800, fontSize: '.8rem' }}>{baseScaleRef.current}%</button>
+              <button onClick={() => { fullscreen ? exitFullscreen() : enterFullscreen() }} title="Plein écran"
+                style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: fullscreen ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        )
       )}
 
       {showReaderMenu && profStore && (() => {
