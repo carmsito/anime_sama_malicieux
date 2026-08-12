@@ -885,7 +885,7 @@ export default function EpubReader() {
           vitesse la fait cycler). En plein écran → en haut ; sinon → au-dessus de la barre. */}
       {autoScroll && settings.buttons.autoscroll && (
         <div style={{ position: 'fixed', right: 10, zIndex: 60,
-          top: fullscreen ? 12 : 'auto', bottom: fullscreen ? 'auto' : 54,
+          bottom: fullscreen ? 18 : 54,   // toujours en bas à droite (évite les boutons quitter/⚙️ en haut)
           display: 'flex', alignItems: 'center', gap: '.4rem',
           background: 'rgba(20,20,24,.92)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 24,
           padding: '.32rem .4rem', boxShadow: '0 4px 20px rgba(0,0,0,.5)' }}>
