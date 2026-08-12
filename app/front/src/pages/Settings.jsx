@@ -1,7 +1,7 @@
 import React, { useContext, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AuthCtx } from '../contexts'
-import { SCALE_CHOICES, SPEED_MULT_CHOICES, PAUSE_CHOICES } from '../readerSettings'
+import { SCALE_CHOICES, SENS_CHOICES, SPEED_MULT_CHOICES, PAUSE_CHOICES } from '../readerSettings'
 import { OPTION_KEYS, makeProfile, loadProfiles, saveProfiles } from '../readerProfiles'
 
 function Toggle({ on, onChange, label }) {
@@ -23,6 +23,41 @@ function ChipMulti({ choices, selected, onToggle, fmt }) {
           {fmt ? fmt(c) : c}
         </button>
       ))}
+    </div>
+  )
+}
+
+// Éditeur de valeurs : chips sélectionnées (cliquer = retirer) + presets à ajouter + ajout d'une
+// valeur CUSTOM. Sert aux vitesses (× multiplicateur) et aux temps de pause.
+function ValueChips({ presets, selected, onChange, fmt, min, max, step }) {
+  const [val, setVal] = useState('')
+  const sorted = [...selected].sort((a, b) => a - b)
+  const add = (n) => {
+    if (Number.isNaN(n) || n < min || n > max) return
+    if (selected.some((x) => Math.abs(x - n) < 1e-9)) return
+    onChange([...selected, n].sort((a, b) => a - b))
+  }
+  const remove = (n) => { if (selected.length > 1) onChange(selected.filter((x) => x !== n)) }
+  return (
+    <div>
+      <div className="set-chips">
+        {sorted.map((c) => (
+          <button key={c} type="button" className="set-chip on" title="Retirer" onClick={() => remove(c)}>
+            {fmt ? fmt(c) : c} ✕
+          </button>
+        ))}
+      </div>
+      <div className="set-chips" style={{ marginTop: '.4rem' }}>
+        {presets.filter((p) => !selected.some((x) => Math.abs(x - p) < 1e-9)).map((p) => (
+          <button key={p} type="button" className="set-chip" onClick={() => add(p)}>+ {fmt ? fmt(p) : p}</button>
+        ))}
+      </div>
+      <div className="set-inline" style={{ marginTop: '.5rem', gap: '.4rem' }}>
+        <input type="number" value={val} min={min} max={max} step={step} placeholder="valeur perso…"
+          onChange={(e) => setVal(e.target.value)} style={{ width: 120 }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { add(Number(val)); setVal('') } }} />
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => { add(Number(val)); setVal('') }}>Ajouter</button>
+      </div>
     </div>
   )
 }
@@ -147,20 +182,28 @@ export default function Settings() {
           onToggle={(v) => toggleValue('scaleLevels', SCALE_CHOICES, v)} />
       </div>
 
-      {/* Vitesses (multiplicateurs) */}
+      {/* Vitesses (multiplicateurs) — ajout de valeurs custom possible */}
       <div className="set-panel">
         <div className="set-title">Vitesses de défilement auto (× multiplicateur)</div>
-        <div className="set-hint">Proposées par le contrôle de vitesse quand le défilement auto est visible.</div>
-        <ChipMulti choices={SPEED_MULT_CHOICES} selected={prof.values.speedMults} fmt={(c) => `×${c}`}
-          onToggle={(v) => toggleValue('speedMults', SPEED_MULT_CHOICES, v)} />
+        <div className="set-hint">Proposées par le contrôle de vitesse. Ajoute tes propres multiplicateurs (0.1 → 10).</div>
+        <ValueChips presets={SPEED_MULT_CHOICES} selected={prof.values.speedMults} fmt={(c) => `×${c}`}
+          min={0.1} max={10} step={0.25} onChange={(next) => patchProfile({ values: { ...prof.values, speedMults: next } })} />
       </div>
 
-      {/* Temps de pause entre planches */}
+      {/* Temps de pause entre planches — ajout de valeurs custom possible */}
       <div className="set-panel">
         <div className="set-title">Temps de pause entre planches (s)</div>
-        <div className="set-hint">Proposés dans le lecteur quand le défilement auto est visible.</div>
-        <ChipMulti choices={PAUSE_CHOICES} selected={prof.values.pauseLevels} fmt={(c) => (c === 0 ? 'Aucune' : `${c}s`)}
-          onToggle={(v) => toggleValue('pauseLevels', PAUSE_CHOICES, v)} />
+        <div className="set-hint">Proposés dans le lecteur (auto-scroll). Ajoute tes propres durées (0 → 30 s).</div>
+        <ValueChips presets={PAUSE_CHOICES} selected={prof.values.pauseLevels} fmt={(c) => (c === 0 ? 'Aucune' : `${c}s`)}
+          min={0} max={30} step={0.5} onChange={(next) => patchProfile({ values: { ...prof.values, pauseLevels: next } })} />
+      </div>
+
+      {/* Sensibilité de déplacement (loupe double-tap) */}
+      <div className="set-panel">
+        <div className="set-title">Sensibilité de déplacement en zoom (double-tap)</div>
+        <div className="set-hint">Vitesse de déplacement de la loupe quand tu as double-tapé.</div>
+        <ChipMulti choices={SENS_CHOICES} selected={prof.values.sensLevels} fmt={(c) => `×${c}`}
+          onToggle={(v) => toggleValue('sensLevels', SENS_CHOICES, v)} />
       </div>
 
       <div className="set-actions">

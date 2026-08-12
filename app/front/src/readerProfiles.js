@@ -10,22 +10,25 @@ import { DEFAULTS } from './readerSettings'
 export const OPTION_KEYS = [
   { key: 'scrollnav', label: 'Navigation à la molette / liseuse' },
   { key: 'autoscroll', label: 'Défilement automatique' },
+  { key: 'sensitivity', label: 'Sensibilité de déplacement en zoom (double-tap)' },
 ]
 
 export function makeProfile(id, name, allVisible = true) {
   return {
     id,
     name,
-    visible: { scrollnav: allVisible, autoscroll: allVisible },
+    visible: { scrollnav: allVisible, autoscroll: allVisible, sensitivity: allVisible },
     values: {
       scaleLevels: [...DEFAULTS.scaleLevels],   // % d'échelle proposés (le pincement va au-delà)
       speedMults: [...DEFAULTS.speedMults],     // multiplicateurs de vitesse d'auto-scroll
       pauseLevels: [...DEFAULTS.pauseLevels],   // temps de pause entre planches (s)
+      sensLevels: [...DEFAULTS.sensLevels],     // sensibilité de déplacement quand on double-tap
     },
-    // État VIVANT : ce qui est réellement ACTIF (échelle, auto-scroll, ×vitesse, pause…).
+    // État VIVANT : ce qui est réellement ACTIF (échelle, auto-scroll, ×vitesse, pause, sens…).
     // Synchronisé par compte → retrouvé tel quel sur tout appareil / manga du profil, sans
-    // ré-activation. Réécrit à chaque changement dans le lecteur.
-    state: { scale: 100, scrollnav: false, autoscroll: false, speedMult: 1, pause: 0 },
+    // ré-activation. Réécrit à chaque changement dans le lecteur. (Le pincement, zoom LIBRE, est
+    // transitoire : il ne modifie pas `scale`, qui reste l'échelle de BASE posée par les chips.)
+    state: { scale: 100, scrollnav: false, autoscroll: false, speedMult: 1, pause: 0, sens: 1 },
     defaults: {},
   }
 }
@@ -33,7 +36,7 @@ export function makeProfile(id, name, allVisible = true) {
 // Garantit qu'un profil a un `state` + des `values` complets (auto-upgrade des anciens schémas).
 export function ensureState(p) {
   if (!p) return p
-  const base = { scale: 100, scrollnav: false, autoscroll: false, speedMult: 1, pause: 0 }
+  const base = { scale: 100, scrollnav: false, autoscroll: false, speedMult: 1, pause: 0, sens: 1 }
   p.state = { ...base, ...(p.state || {}) }
   const old = p.defaults || {}
   if (!(p.state.pause > 0) && typeof old.autoEdgePause === 'number' && old.autoEdgePause > 0) {
@@ -43,9 +46,11 @@ export function ensureState(p) {
   if (!Array.isArray(V.scaleLevels) || !V.scaleLevels.length) V.scaleLevels = [...DEFAULTS.scaleLevels]
   if (!Array.isArray(V.speedMults) || !V.speedMults.length) V.speedMults = [...DEFAULTS.speedMults]
   if (!Array.isArray(V.pauseLevels) || !V.pauseLevels.length) V.pauseLevels = [...DEFAULTS.pauseLevels]
+  if (!Array.isArray(V.sensLevels) || !V.sensLevels.length) V.sensLevels = [...DEFAULTS.sensLevels]
   const vis = (p.visible = p.visible || {})
   if (typeof vis.autoscroll !== 'boolean') vis.autoscroll = true
   if (typeof vis.scrollnav !== 'boolean') vis.scrollnav = true
+  if (typeof vis.sensitivity !== 'boolean') vis.sensitivity = true
   return p
 }
 

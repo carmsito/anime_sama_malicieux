@@ -43,8 +43,11 @@ export default function EpubReader() {
   const [scrollPaused, setScrollPaused] = useState(false) // pause manuelle (bouton play/pause flottant)
   const [speedMult, setSpeedMult] = useState(1)          // multiplicateur de vitesse d'auto-scroll
   const [pauseSec, setPauseSec] = useState(0)            // temps de pause entre planches (s)
+  const [panSens, setPanSens] = useState(DEFAULT_SENS)   // sensibilité de déplacement quand on double-tap (loupe)
   const fitWidthRef = useRef(true)
   const speedMultRef = useRef(speedMult)
+  const sensRef = useRef(panSens)
+  const baseScaleRef = useRef(100)      // échelle de BASE (chips) — le double-tap y ramène
   const zoomPctRef = useRef(zoomPct)
   const autoPausedRef = useRef(false)   // pause momentanée (toucher l'écran, panneau ouvert)
   const scrollPausedRef = useRef(false) // pause manuelle (play/pause)
@@ -54,6 +57,7 @@ export default function EpubReader() {
   const autoScrollRef = useRef(false)          // lecture de autoScroll sans re-déclencher les effets
   const wheelPauseTimer = useRef()
   useEffect(() => { speedMultRef.current = speedMult }, [speedMult])
+  useEffect(() => { sensRef.current = panSens }, [panSens])
   useEffect(() => { zoomPctRef.current = zoomPct }, [zoomPct])
   useEffect(() => { autoScrollRef.current = autoScroll }, [autoScroll])
   useEffect(() => { scrollPausedRef.current = scrollPaused }, [scrollPaused])
@@ -81,6 +85,7 @@ export default function EpubReader() {
       scaleLevels: profile.values.scaleLevels || [],
       speedMults: profile.values.speedMults || [],
       pauseLevels: profile.values.pauseLevels || [],
+      sensLevels: profile.values.sensLevels || [],
       autoEdgePause: profile.state?.pause || 0,
     }
   }, [profile, uid])
@@ -182,15 +187,20 @@ export default function EpubReader() {
     setScrollNav(!!st.scrollnav)
     setAutoScroll(!!st.autoscroll)
     setScrollPaused(false)
-    setZoomPct(st.scale >= 40 ? st.scale : 100)
+    const baseScale = st.scale >= 40 ? st.scale : 100
+    baseScaleRef.current = baseScale
+    setZoomPct(baseScale)
+    setZoom(1); setPan({ x: 0, y: 0 })
     setSpeedMult(st.speedMult > 0 ? st.speedMult : 1)
     setPauseSec(st.pause >= 0 ? st.pause : 0)
+    setPanSens(st.sens > 0 ? st.sens : DEFAULT_SENS)
     appliedProfRef.current = activeProfileId
   }, [profile, activeProfileId])
 
   const toggleAutoScroll = () => setAutoScroll((v) => { patchActiveState({ autoscroll: !v }); if (v) setScrollPaused(false); return !v })
-  // Échelle : les chips posent une valeur, le pincement zoome LIBREMENT (persisté dans le profil).
-  const setScaleValue = (val) => { setZoomPct(val); patchActiveState({ scale: val }) }
+  // Échelle de BASE : les chips la posent (persistée). Le pincement zoome LIBREMENT par-dessus
+  // (transitoire) ; le double-tap ramène à cette base. Poser une base annule la loupe/pincement.
+  const setScaleValue = (val) => { baseScaleRef.current = val; setZoomPct(val); setZoom(1); setPan({ x: 0, y: 0 }); patchActiveState({ scale: val }) }
   // Vitesse d'auto-scroll : multiplicateur (× BASE). Chips + cycle.
   const setSpeedMultValue = (val) => { setSpeedMult(val); patchActiveState({ speedMult: val }) }
   const cycleSpeedMult = () => {
@@ -200,6 +210,8 @@ export default function EpubReader() {
   }
   // Temps de pause entre planches (comme une option du profil).
   const setPauseValue = (val) => { setPauseSec(val); autoEdgePauseRef.current = val; patchActiveState({ pause: val }) }
+  // Sensibilité de déplacement quand on a double-tapé (loupe).
+  const setSensValue = (val) => { setPanSens(val); patchActiveState({ sens: val }) }
   // Plein écran immersif : masque header/footer + plein écran natif (F11) sur desktop
   const enterFullscreen = () => {
     setFullscreen(true)
@@ -286,8 +298,12 @@ export default function EpubReader() {
     if (im && im.complete && im.naturalWidth > 0) markReady()
   }, [current, chapterNum, images, fitWidth, markReady])
 
-  const toggleZoomAt = (clientX, clientY) => {
-    if (zoomed) { setZoom(1); setPan({ x: 0, y: 0 }); return }
+  // Double-tap : loupe rapide ×ZOOM_LEVEL au point touché. Si on est DÉJÀ zoomé (loupe) OU si le
+  // pincement a changé l'échelle par rapport à la BASE → le double-tap RAMÈNE à l'échelle de base.
+  const doubleTapZoom = (clientX, clientY) => {
+    if (zoom > 1 || Math.abs(zoomPctRef.current - baseScaleRef.current) > 0.5) {
+      setZoom(1); setPan({ x: 0, y: 0 }); setZoomPct(baseScaleRef.current); return
+    }
     const img = imgRef.current
     if (!img) return
     const r = img.getBoundingClientRect()
@@ -421,6 +437,7 @@ export default function EpubReader() {
       // Défilement natif dans la planche ; on ne change de page qu'en début/fin de planche,
       // et seulement si le mode molette est actif (cohabitation des deux mécaniques).
       if (!scrollNav) return
+      if (zoomPctRef.current > 100) return   // planche agrandie (>100 %) → molette = scroll libre, pas de nav
       if (!imgReadyRef.current) return   // planche pas encore chargée → pas de saut de page
       const el = scrollRef.current
       if (!el) return
@@ -441,18 +458,22 @@ export default function EpubReader() {
   }, [scrollNav, zoomed, fitWidth, goNext, goPrev])
 
   // ── Gestes tactiles (mode fit-largeur, toujours actif) ──
-  // 1 doigt = scroll natif + swipe pour changer de planche (si molette active).
-  // 2 doigts = PINCEMENT → zoom LIBRE de l'échelle (autant qu'on veut), figé dans le profil.
+  // • 2 doigts = PINCEMENT → zoom LIBRE de l'échelle (transitoire, ne touche pas la base).
+  // • double-tap = loupe rapide + pan à la sensibilité ; re-double-tap = retour à l'échelle de base.
+  // • 1 doigt sinon = scroll natif + swipe pour changer de planche (si molette active).
   const onTouchStart = useCallback((e) => {
     const t = e.touches[0]
     touchStartRef.current = { x: t.clientX, y: t.clientY }
+    touchMovedRef.current = false
     autoPausedRef.current = true   // toucher l'écran → pause l'auto-scroll
     if (e.touches.length === 2) {
       const a = e.touches[0], b = e.touches[1]
       const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
       pinchRef.current = { d0: d || 1, base: zoomPctRef.current, z: zoomPctRef.current }
+      return
     }
-  }, [])
+    if (zoomed) panStartRef.current = { px: pan.x, py: pan.y, tx: t.clientX, ty: t.clientY }
+  }, [zoomed, pan])
 
   const onTouchMove = useCallback((e) => {
     if (pinchRef.current && e.touches.length === 2) {
@@ -462,34 +483,55 @@ export default function EpubReader() {
       z = Math.max(40, Math.min(500, z))   // zoom libre 40 %..500 %
       pinchRef.current.z = z
       setZoomPct(z)
+      return
     }
-  }, [])
+    // Déplacement de la loupe (double-tap) : pan à la sensibilité réglable.
+    if (zoomed && panStartRef.current) {
+      const t = e.touches[0]
+      const dx = t.clientX - panStartRef.current.tx
+      const dy = t.clientY - panStartRef.current.ty
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) touchMovedRef.current = true
+      const s = sensRef.current
+      setPan({ x: panStartRef.current.px + dx * s, y: panStartRef.current.py + dy * s })
+    }
+  }, [zoomed])
 
   const onTouchEnd = useCallback((e) => {
     const t = e.changedTouches[0]
+    const now = Date.now()
     // reprise de l'auto-scroll après un court délai (laisse retomber l'inertie iOS)
     clearTimeout(wheelPauseTimer.current)
     wheelPauseTimer.current = setTimeout(() => { autoPausedRef.current = false }, 350)
-    // Fin d'un pincement → fige l'échelle atteinte dans le profil (synchronisé).
-    if (pinchRef.current) {
-      const z = pinchRef.current.z
-      pinchRef.current = null
-      if (e.touches.length === 0) { setZoomPct(z); patchActiveState({ scale: z }) }
-      return
+    // Fin d'un pincement → on garde l'échelle atteinte (transitoire, non persistée : la BASE reste).
+    if (pinchRef.current) { pinchRef.current = null; return }
+    // Fin d'un pan de loupe → pas un tap.
+    if (zoomed && touchMovedRef.current) { panStartRef.current = null; return }
+
+    const dx = t.clientX - touchStartRef.current.x
+    const dy = t.clientY - touchStartRef.current.y
+    const moved = Math.abs(dx) > 12 || Math.abs(dy) > 12
+
+    // Détection du double-tap (loupe / reset base) — n'importe où.
+    if (!moved) {
+      const last = lastTapRef.current
+      const isDouble = (now - last.t < 300) && Math.abs(t.clientX - last.x) < 45 && Math.abs(t.clientY - last.y) < 45
+      if (isDouble) { lastTapRef.current = { t: 0, x: 0, y: 0 }; doubleTapZoom(t.clientX, t.clientY); return }
+      lastTapRef.current = { t: now, x: t.clientX, y: t.clientY }
     }
+    if (zoomed) return   // zoomé : le tap simple ne navigue pas
+
     // Swipe vertical → changer de planche (aux extrémités / si la planche tient), molette active.
     if (!scrollNav) return
     if (!imgReadyRef.current) return
     const el = scrollRef.current
     if (!el) return
-    const dy = t.clientY - touchStartRef.current.y
     if (Math.abs(dy) < 40) return   // tap → onAreaClick
     const fits = el.scrollHeight <= el.clientHeight + 3
     const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 3
     const atTop = el.scrollTop <= 3
     if (dy < 0 && (fits || atBottom)) goNext()        // swipe vers le haut → suivant
     else if (dy > 0 && (fits || atTop)) goPrev()      // swipe vers le bas → précédent
-  }, [scrollNav, goNext, goPrev]) // eslint-disable-line
+  }, [scrollNav, zoomed, goNext, goPrev]) // eslint-disable-line
 
   // Clic latéral = changement de page
   const onAreaClick = useCallback((e) => {
@@ -507,9 +549,9 @@ export default function EpubReader() {
     else if (x > r.width * 0.67) goNext()
   }, [zoomed, scrollNav, fitWidth, goPrev, goNext])
   const onAreaDblClick = useCallback((e) => {
-    if (IS_TOUCH || fitWidth) return   // pas de zoom double-clic en mode défilement
-    toggleZoomAt(e.clientX, e.clientY)
-  }, [zoomed, fitWidth]) // eslint-disable-line
+    if (IS_TOUCH) return
+    doubleTapZoom(e.clientX, e.clientY)
+  }, [zoomed]) // eslint-disable-line
 
   // ── Auto-scroll (mode fit-largeur) : défilement doux, pause au toucher, avance de page ──
   // On modifie scrollTop par pixels ENTIERS (source de vérité = scrollTop) → respecte les
@@ -680,14 +722,19 @@ export default function EpubReader() {
           flex: 1, position: 'relative', background: '#000',
           display: 'flex', justifyContent: 'center',
           ...(fitWidth
-            ? {
-              // Mode défilement : image ajustée à la largeur (× zoomPct), scroll vertical natif
-              // (+ horizontal si la planche est agrandie au-delà de 100%)
-              overflowY: 'auto', overflowX: zoomPct > 100 ? 'auto' : 'hidden',
-              overscrollBehavior: 'contain',   // pas de rebond/chaînage : sensation "appli", pas "bas de site"
-              alignItems: 'flex-start',
-              touchAction: zoomPct > 100 ? 'pan-x pan-y' : 'pan-y',
-            }
+            ? (zoomed
+              ? {
+                // Loupe (double-tap) active : on gère nous-mêmes le pan, pas de scroll natif.
+                overflow: 'hidden', alignItems: 'center', touchAction: 'none',
+              }
+              : {
+                // Mise à l'échelle : image ajustée à la largeur (× zoomPct), scroll vertical natif
+                // (+ horizontal si la planche est agrandie au-delà de 100 %).
+                overflowY: 'auto', overflowX: zoomPct > 100 ? 'auto' : 'hidden',
+                overscrollBehavior: 'contain',   // pas de rebond/chaînage : sensation "appli", pas "bas de site"
+                alignItems: 'flex-start',
+                touchAction: zoomPct > 100 ? 'pan-x pan-y' : 'pan-y',
+              })
             : {
               overflow: 'hidden', alignItems: 'center',
               touchAction: 'none',    // on gère nous-mêmes zoom/pan
@@ -725,7 +772,15 @@ export default function EpubReader() {
                 onLoad={markReady}
                 onError={() => setImgReady(true)}
                 draggable={false}
-                style={{ width: `${zoomPct}%`, height: 'auto', display: 'block', userSelect: 'none', margin: fullscreen ? '0' : 'auto 0', flexShrink: 0 }}
+                style={{
+                  width: `${zoomPct}%`, height: 'auto', display: 'block', userSelect: 'none',
+                  margin: 'auto 0', flexShrink: 0,   // centré verticalement quand la planche tient (plein écran inclus)
+                  ...(zoomed ? {
+                    transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
+                    transformOrigin: `${origin.x}px ${origin.y}px`,
+                    transition: 'none', willChange: 'transform', cursor: 'grab',
+                  } : null),
+                }}
               />
             </>
           ) : (
@@ -809,25 +864,29 @@ export default function EpubReader() {
             padding: '.3rem .7rem', cursor: 'pointer', fontSize: '1rem' }}>→</button>
       </div>
 
-      {/* Contrôle flottant d'auto-scroll : play/pause + multiplicateur de vitesse. Visible dès que
-          l'auto-scroll est activé, en mode normal comme en plein écran. */}
+      {/* Contrôle flottant d'auto-scroll, À DROITE : play/pause AU-DESSUS des multiplicateurs de
+          vitesse. En plein écran → en HAUT ; sinon → en bas (au-dessus de la barre). */}
       {autoScroll && settings.buttons.autoscroll && (
-        <div style={{ position: 'fixed', left: '50%', transform: 'translateX(-50%)', zIndex: 60,
-          bottom: fullscreen ? 18 : 54, display: 'flex', alignItems: 'center', gap: '.45rem',
-          background: 'rgba(20,20,24,.92)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 24,
-          padding: '.32rem .45rem', boxShadow: '0 4px 20px rgba(0,0,0,.5)' }}>
+        <div style={{ position: 'fixed', right: 10, zIndex: 60,
+          top: fullscreen ? 12 : 'auto', bottom: fullscreen ? 'auto' : 54,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '.4rem',
+          background: 'rgba(20,20,24,.92)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 20,
+          padding: '.4rem .35rem', boxShadow: '0 4px 20px rgba(0,0,0,.5)' }}>
           <button onClick={() => setScrollPaused((v) => !v)} title={scrollPaused ? 'Reprendre' : 'Pause'}
-            style={{ width: 34, height: 34, borderRadius: '50%', border: 'none', cursor: 'pointer',
+            style={{ width: 36, height: 36, borderRadius: '50%', border: 'none', cursor: 'pointer',
               background: '#e50914', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {scrollPaused
-              ? <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
-              : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
+              ? <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+              : <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
           </button>
-          <button onClick={cycleSpeedMult} title="Vitesse du défilement (multiplicateur)"
-            style={{ minWidth: 46, height: 34, borderRadius: 17, border: 'none', cursor: 'pointer',
-              background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.84rem', padding: '0 .7rem' }}>
-            ×{speedMult}
-          </button>
+          {settings.speedMults.map((m) => (
+            <button key={m} onClick={() => setSpeedMultValue(m)} title={`Vitesse ×${m}`}
+              style={{ minWidth: 40, height: 28, borderRadius: 14, border: 'none', cursor: 'pointer',
+                fontWeight: 800, fontSize: '.76rem', padding: '0 .5rem',
+                background: Math.abs(speedMult - m) < 0.001 ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff' }}>
+              ×{m}
+            </button>
+          ))}
         </div>
       )}
 
@@ -914,6 +973,18 @@ export default function EpubReader() {
                   <div style={chipRow}>
                     {settings.pauseLevels.map((s) => (
                       <button key={s} onClick={() => setPauseValue(s)} style={chip(Math.abs(pauseSec - s) < 0.001)}>{s === 0 ? 'Aucune' : `${s}s`}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Sensibilité de déplacement (loupe après double-tap) */}
+              {vis.sensitivity && (
+                <div style={section}>
+                  <div style={label}>Sensibilité de déplacement (double-tap)</div>
+                  <div style={chipRow}>
+                    {settings.sensLevels.map((v) => (
+                      <button key={v} onClick={() => setSensValue(v)} style={chip(Math.abs(panSens - v) < 0.001)}>×{v}</button>
                     ))}
                   </div>
                 </div>
