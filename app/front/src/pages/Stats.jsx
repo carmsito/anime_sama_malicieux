@@ -44,6 +44,8 @@ function WorkRow({ w, onReset, onOpen }) {
 export default function Stats() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [goal, setGoalState] = useState(() => Number(localStorage.getItem('reading_goal')) || 10)
+  const setGoal = (g) => { const v = Math.max(1, Math.min(200, g || 1)); setGoalState(v); localStorage.setItem('reading_goal', String(v)) }
   const navigate = useNavigate()
 
   const load = () => api.getStats().then(setData).catch(() => {}).finally(() => setLoading(false))
@@ -83,6 +85,15 @@ export default function Stats() {
   const wMax = Math.max(1, ...(data.by_weekday || [0]))
   const hMax = Math.max(1, ...(data.by_hour || [0]))
 
+  // Objectif hebdo (7 derniers jours) + récap de l'année en cours
+  const thisYear = String(new Date().getFullYear())
+  const yearActs = act.filter((d) => d.date.startsWith(thisYear))
+  const chaptersThisWeek = act.slice(-7).reduce((s, d) => s + d.count, 0)
+  const chaptersThisYear = yearActs.reduce((s, d) => s + d.count, 0)
+  const activeDaysYear = yearActs.filter((d) => d.count > 0).length
+  const goalPct = Math.min(100, Math.round((chaptersThisWeek / goal) * 100))
+  const topWork = (data.top || [])[0]
+
   return (
     <div className="page stats-page">
       <div className="stats-head">
@@ -99,6 +110,43 @@ export default function Stats() {
         <StatCard value={t.favorites} label="Favoris" />
         {data.streak && <StatCard value={`${data.streak.current} j`} label="Série en cours" accent />}
         {data.streak && <StatCard value={`${data.streak.best} j`} label="Record de série" />}
+      </div>
+
+      {/* Objectif hebdo + récap de l'année */}
+      <div className="stats-two">
+        <div className="stats-panel">
+          <div className="stats-panel-title">Objectif de la semaine</div>
+          <div className="stats-ring-wrap">
+            <div className="stats-ring" style={{ background: `conic-gradient(#2ecc71 ${goalPct * 3.6}deg, rgba(255,255,255,.08) 0deg)` }}>
+              <div className="stats-ring-hole">{chaptersThisWeek}/{goal}</div>
+            </div>
+            <div className="stats-ring-legend">
+              <div>{chaptersThisWeek} chapitre{chaptersThisWeek > 1 ? 's' : ''} sur 7 jours</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '.4rem', marginTop: '.5rem' }}>
+                <span style={{ color: 'var(--text2)', fontSize: '.8rem' }}>Objectif</span>
+                <button className="btn btn-ghost btn-sm" onClick={() => setGoal(goal - 1)}>−</button>
+                <b>{goal}</b>
+                <button className="btn btn-ghost btn-sm" onClick={() => setGoal(goal + 1)}>+</button>
+                <span style={{ color: 'var(--text2)', fontSize: '.8rem' }}>/sem.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="stats-panel">
+          <div className="stats-panel-title">Cette année {thisYear}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '.7rem', marginTop: '.3rem' }}>
+            <div><div className="stat-value" style={{ fontSize: '1.5rem' }}>{chaptersThisYear}</div><div className="stat-label">chapitres lus</div></div>
+            <div><div className="stat-value" style={{ fontSize: '1.5rem' }}>{activeDaysYear}</div><div className="stat-label">jours de lecture</div></div>
+            <div><div className="stat-value" style={{ fontSize: '1.5rem' }}>{data.streak?.best || 0} j</div><div className="stat-label">plus longue série</div></div>
+            <div><div className="stat-value" style={{ fontSize: '1.5rem' }}>{data.totals.works_completed}</div><div className="stat-label">œuvres terminées</div></div>
+          </div>
+          {topWork && (
+            <div style={{ marginTop: '.8rem', fontSize: '.82rem', color: 'var(--text2)' }}>
+              Œuvre phare : <b style={{ color: 'var(--text)' }}>{topWork.name}</b>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="stats-two">
