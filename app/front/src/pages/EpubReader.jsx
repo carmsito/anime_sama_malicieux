@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import { AuthCtx } from '../contexts'
 import { loadReaderSettings, BASE_AUTO_SPEED } from '../readerSettings'
 import { loadProfiles, resolveProfileId, getProfile, saveProfiles } from '../readerProfiles'
+import { detectPanels } from '../panelDetect'
 import { createAmbienceEngine } from '../ambienceAudio'
 
 const IS_TOUCH = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches
@@ -77,6 +78,13 @@ export default function EpubReader() {
   const [dockHidden, setDockHidden] = useState(() => localStorage.getItem('reader_dock_hidden') === '1')
   const dockRef = useRef(null)
   const dockDragRef = useRef(null)
+  // Mode Cinéma (bêta) : détection des cases + caméra qui glisse de case en case (sens manga).
+  const [cinema, setCinema] = useState(() => localStorage.getItem('reader_cinema') === '1')
+  const [panels, setPanels] = useState([])
+  const [panelIdx, setPanelIdx] = useState(0)
+  const [camXform, setCamXform] = useState('none')
+  const cinemaWrapRef = useRef(null)
+  const cinemaImgRef = useRef(null)
   useEffect(() => {
     let alive = true
     loadProfiles(uid).then((st) => {
@@ -262,6 +270,46 @@ export default function EpubReader() {
     })
   }
   const setDockHiddenP = (v) => { setDockHidden(v); localStorage.setItem('reader_dock_hidden', v ? '1' : '0') }
+  // ── Mode Cinéma ──
+  const toggleCinema = () => setCinema((v) => { const n = !v; localStorage.setItem('reader_cinema', n ? '1' : '0'); return n })
+  const runDetect = () => {
+    const im = cinemaImgRef.current
+    const ps = im ? detectPanels(im) : null
+    setPanels(ps && ps.length ? ps : [{ x: 0, y: 0, w: 1, h: 1 }])
+    setPanelIdx(0)
+  }
+  useEffect(() => { setPanelIdx(0) }, [current, chapterNum])   // nouvelle planche → 1re case
+  useEffect(() => {   // image déjà en cache → onLoad ne se déclenche pas : on détecte quand même
+    if (!cinema) return
+    const im = cinemaImgRef.current
+    if (im && im.complete && im.naturalWidth) runDetect()
+  }, [cinema, current, chapterNum]) // eslint-disable-line
+  // Calcule la transformation caméra pour cadrer la case courante (zoom + recentrage, easé en CSS).
+  useLayoutEffect(() => {
+    if (!cinema) return
+    const wrap = cinemaWrapRef.current, im = cinemaImgRef.current
+    if (!wrap || !im || !im.naturalWidth || !panels.length) return
+    const CW = wrap.clientWidth, CH = wrap.clientHeight
+    const dispW = CW, dispH = CW * (im.naturalHeight / im.naturalWidth)
+    const p = panels[Math.min(panelIdx, panels.length - 1)] || { x: 0, y: 0, w: 1, h: 1 }
+    const pw = p.w * dispW, ph = p.h * dispH
+    const cx = (p.x + p.w / 2) * dispW, cy = (p.y + p.h / 2) * dispH
+    const k = Math.max(1, Math.min((CW / pw) * 0.94, (CH / ph) * 0.94))   // jamais moins large que fit
+    setCamXform(`translate(${CW / 2 - k * cx}px, ${CH / 2 - k * cy}px) scale(${k})`)
+  }, [cinema, panels, panelIdx, current, fullscreen])
+  useEffect(() => {
+    if (!cinema) return
+    const onR = () => setPanelIdx((i) => i)   // force un recalcul de caméra au resize/rotation
+    window.addEventListener('resize', onR)
+    window.addEventListener('orientationchange', onR)
+    return () => { window.removeEventListener('resize', onR); window.removeEventListener('orientationchange', onR) }
+  }, [cinema])
+  const cinemaTap = (e) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - r.left
+    if (x < r.width * 0.26) { setPanelIdx((i) => Math.max(0, i - 1)); return }   // tiers gauche → case précédente
+    setPanelIdx((i) => { if (i < panels.length - 1) return i + 1; goNext(); return i })  // sinon → suivante / page suivante
+  }
   const dockOnRight = !dockPos || (dockPos.x + 30 > window.innerWidth / 2)   // côté d'aimantation (pour l'onglet masqué)
   // Garde le dock dans l'écran quand on tourne le téléphone (paysage ⇄ portrait) ou qu'on redimensionne.
   useEffect(() => {
@@ -917,6 +965,28 @@ export default function EpubReader() {
             </>
           )
         )}
+
+        {/* ── Calque Mode Cinéma : caméra qui cadre la case courante (sens manga) ── */}
+        {cinema && loaded && images.length > 0 && (
+          <div ref={cinemaWrapRef} onClick={cinemaTap}
+            style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: '#0a0a0a',
+              zIndex: 20, cursor: 'pointer', touchAction: 'none' }}>
+            <div style={{ position: 'absolute', top: 0, left: 0, width: '100%',
+              transform: camXform, transformOrigin: '0 0',
+              transition: 'transform .6s cubic-bezier(.4,0,.2,1)', willChange: 'transform' }}>
+              <img ref={cinemaImgRef} src={images[current]} alt="" draggable={false}
+                onLoad={runDetect} style={{ width: '100%', display: 'block' }} />
+            </div>
+            {/* léger vignettage pour l'ambiance cinéma */}
+            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none',
+              boxShadow: 'inset 0 0 120px 30px rgba(0,0,0,.55)' }} />
+            <div style={{ position: 'absolute', bottom: 8, left: 0, right: 0, textAlign: 'center',
+              color: 'rgba(255,255,255,.7)', fontSize: '.72rem', pointerEvents: 'none',
+              textShadow: '0 1px 3px #000' }}>
+              🎬 case {Math.min(panelIdx + 1, panels.length)} / {panels.length} · tape à droite = suivante, à gauche = précédente
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Plein écran : boutons flottants (quitter + ⚙️ options). Tout le reste est dans le sheet. */}
@@ -1068,6 +1138,11 @@ export default function EpubReader() {
               {/* Plein écran immersif — EN PREMIER */}
               <button onClick={() => { fullscreen ? exitFullscreen() : enterFullscreen() }} style={toggleRow(fullscreen)}>
                 <span>Plein écran immersif</span><span style={pill(fullscreen)}>{fullscreen ? 'ON' : 'OFF'}</span>
+              </button>
+
+              {/* Mode Cinéma (bêta) : lecture case par case en sens manga */}
+              <button onClick={toggleCinema} style={toggleRow(cinema)}>
+                <span>🎬 Mode Cinéma <span style={{ opacity: .6, fontWeight: 400 }}>(bêta)</span></span><span style={pill(cinema)}>{cinema ? 'ON' : 'OFF'}</span>
               </button>
 
               {/* Échelle — MÉCA DE BASE : le % change (le pincement zoome librement au-delà) */}
