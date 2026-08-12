@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import SearchModal from '../components/SearchModal'
 import PlaylistModal from '../components/PlaylistModal'
 import { loadProfiles, saveProfiles } from '../readerProfiles'
+import { STATUSES } from '../readingStatus'
 import { JobsCtx, AuthCtx } from '../contexts'
 
 const PlayIcon = ({ size = 15 }) => (
@@ -157,6 +158,7 @@ export default function MangaDetail() {
   const [progressMap, setProgressMap] = useState({})
   const [lastProgress, setLastProgress] = useState(null)  // {chapter_number, page, total_pages}
   const [isFav, setIsFav] = useState(false)
+  const [status, setStatus] = useState('')   // reading|completed|on_hold|plan|''
   const [info, setInfo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showExtract, setShowExtract] = useState(false)
@@ -269,13 +271,22 @@ export default function MangaDetail() {
       if (list.length) setLastProgress(list[0])
     }).catch(() => {})
     // état favori
-    api.userStates().then((s) => setIsFav((s.favorites || []).includes(mangaId))).catch(() => {})
+    api.userStates().then((s) => {
+      setIsFav((s.favorites || []).includes(mangaId))
+      setStatus((s.statuses || {})[mangaId] || '')
+    }).catch(() => {})
   }, [mangaId])
 
   const toggleFav = async () => {
     const next = !isFav
     setIsFav(next)
     try { await api.setFavorite(mangaId, next) } catch { setIsFav(!next) }
+  }
+  const pickStatus = async (key) => {
+    const next = status === key ? '' : key   // re-cliquer le statut actif le retire
+    const prev = status
+    setStatus(next)
+    try { await api.setStatus(mangaId, next) } catch { setStatus(prev) }
   }
 
   useEffect(() => {
@@ -699,6 +710,20 @@ export default function MangaDetail() {
                 <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
               </svg>
             </button>
+          </div>
+
+          {/* Statut de lecture (par utilisateur) — re-cliquer le statut actif le retire */}
+          <div style={{ display: 'flex', gap: '.4rem', flexWrap: 'wrap', marginTop: '.7rem' }}>
+            {STATUSES.map((s) => (
+              <button key={s.key} onClick={() => pickStatus(s.key)}
+                style={{ padding: '.32rem .7rem', borderRadius: 15, cursor: 'pointer',
+                  fontSize: '.8rem', fontWeight: 700,
+                  border: `1px solid ${status === s.key ? s.color : 'rgba(255,255,255,.18)'}`,
+                  background: status === s.key ? s.color : 'transparent',
+                  color: status === s.key ? '#fff' : 'rgba(255,255,255,.7)' }}>
+                {s.label}
+              </button>
+            ))}
           </div>
 
           {activeJob && (

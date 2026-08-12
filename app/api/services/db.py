@@ -65,6 +65,16 @@ CREATE TABLE IF NOT EXISTS favorites (
 );
 CREATE INDEX IF NOT EXISTS idx_fav_user ON favorites (user_id);
 
+-- Statut de lecture par utilisateur/manga : reading | completed | on_hold | plan
+CREATE TABLE IF NOT EXISTS manga_status (
+    user_id    TEXT NOT NULL,
+    manga_id   TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, manga_id)
+);
+CREATE INDEX IF NOT EXISTS idx_status_user ON manga_status (user_id);
+
 -- Profils de lecture par utilisateur (blob JSON : profiles + defaultId + perManga + activeId).
 -- Synchronisé par compte → multi-appareils, aucune gestion de cache locale.
 CREATE TABLE IF NOT EXISTS reader_profiles (
@@ -315,6 +325,39 @@ def list_favorites(user_id: str) -> list[str]:
             (user_id,),
         ).fetchall()
         return [r["manga_id"] for r in rows]
+    finally:
+        conn.close()
+
+
+# ── Statut de lecture (reading | completed | on_hold | plan) ──────────────────
+_STATUSES = {"reading", "completed", "on_hold", "plan"}
+
+def set_manga_status(user_id: str, manga_id: str, status: str) -> None:
+    """Pose le statut ; une valeur vide/inconnue retire le statut (retour à « aucun »)."""
+    init()
+    conn = _connect()
+    try:
+        if status in _STATUSES:
+            conn.execute(
+                "INSERT INTO manga_status (user_id, manga_id, status, updated_at) VALUES (?,?,?,?) "
+                "ON CONFLICT(user_id, manga_id) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at",
+                (user_id, manga_id, status, _now()),
+            )
+        else:
+            conn.execute("DELETE FROM manga_status WHERE user_id=? AND manga_id=?", (user_id, manga_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_manga_statuses(user_id: str) -> dict:
+    init()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT manga_id, status FROM manga_status WHERE user_id=?", (user_id,)
+        ).fetchall()
+        return {r["manga_id"]: r["status"] for r in rows}
     finally:
         conn.close()
 

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { gsap } from 'gsap'
 import { api } from '../api/client'
 import { JobsCtx, SearchCtx } from '../contexts'
+import { STATUSES } from '../readingStatus'
 
 // ── Manga Card ─────────────────────────────────────────────────────────────
 
@@ -277,6 +278,8 @@ export default function Home() {
   const [filterOpen, setFilterOpen] = useState(false)
   const [selectedGenres, setSelectedGenres] = useState(new Set())
   const [allGenres, setAllGenres] = useState([])
+  const [statusMap, setStatusMap] = useState({})       // { manga_id: status }
+  const [statusFilter, setStatusFilter] = useState('') // '' = tous, 'fav', ou une clé de statut
   const navigate = useNavigate()
   const gridRef = useRef()
   const filterRef = useRef()
@@ -300,6 +303,7 @@ export default function Home() {
     api.userStates().then((s) => {
       setFavSet(new Set(s.favorites || []))
       setProgressMap(s.progress || {})
+      setStatusMap(s.statuses || {})
     }).catch(() => {})
   }, [])
 
@@ -423,6 +427,8 @@ export default function Home() {
       const genres = infoCache[m.id]?.genres || []
       if (!genres.some((g) => selectedGenres.has(g))) return false
     }
+    if (statusFilter === 'fav') { if (!favSet.has(m.id)) return false }
+    else if (statusFilter && statusMap[m.id] !== statusFilter) return false
     return true
   })
 
@@ -541,9 +547,21 @@ export default function Home() {
               ))}
             </div>
           )}
+          {/* Filtres par statut de lecture (+ favoris) */}
+          <div style={{ display: 'flex', gap: '.4rem', flexWrap: 'wrap', margin: '0 0 .9rem' }}>
+            {[{ key: '', label: 'Tous' }, { key: 'fav', label: '★ Favoris' }, ...STATUSES].map((s) => (
+              <button key={s.key || 'all'} onClick={() => setStatusFilter(s.key)}
+                style={{ padding: '.34rem .8rem', borderRadius: 16, border: 'none', cursor: 'pointer',
+                  fontSize: '.82rem', fontWeight: 700,
+                  background: statusFilter === s.key ? (s.color || 'var(--accent)') : 'rgba(255,255,255,.1)',
+                  color: '#fff' }}>
+                {s.label}
+              </button>
+            ))}
+          </div>
           {!filtered.length ? (
             <div className="empty" style={{ padding: '2rem 0' }}>
-              <p>Aucun manga ne correspond à « {query} »</p>
+              <p>{statusFilter ? 'Aucun manga dans ce filtre.' : `Aucun manga ne correspond à « ${query} »`}</p>
             </div>
           ) : (
             <div className="manga-grid" ref={gridRef}>

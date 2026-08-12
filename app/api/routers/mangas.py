@@ -554,7 +554,8 @@ def user_states(response: Response, user: dict = Depends(_require_user)):
         rows = prog_by_manga.get(m["id"])
         if rows:
             progress[m["id"]] = _manga_percent(rows, m.get("chapter_count", 0))
-    return {"favorites": list(favs), "progress": progress}
+    statuses = db.get_manga_statuses(user["id"])
+    return {"favorites": list(favs), "progress": progress, "statuses": statuses}
 
 
 @router.put("/{manga_id}/favorite", summary="Ajouter/retirer un manga des favoris")
@@ -563,6 +564,14 @@ def toggle_favorite(manga_id: str, body: dict, user: dict = Depends(_require_use
     on = bool(body.get("favorite", True))
     db.set_favorite(user["id"], manga_id, on)
     return {"manga_id": manga_id, "favorite": on}
+
+
+@router.put("/{manga_id}/status", summary="Statut de lecture (reading|completed|on_hold|plan, vide = aucun)")
+def set_status(manga_id: str, body: dict, user: dict = Depends(_require_user)):
+    from ..services import db
+    status = (body.get("status") or "").strip()
+    db.set_manga_status(user["id"], manga_id, status)
+    return {"manga_id": manga_id, "status": status if status in db._STATUSES else ""}
 
 
 @router.get("/stats/overview", summary="Statistiques de lecture de l'utilisateur")
