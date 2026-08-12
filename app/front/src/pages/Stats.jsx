@@ -71,6 +71,18 @@ export default function Stats() {
   const srcTotal = sources.reduce((s, [, n]) => s + n, 0) || 1
   const completionRate = t.works_started ? Math.round((t.works_completed / t.works_started) * 100) : 0
 
+  // Heatmap d'activité : palette + alignement (lundi en haut)
+  const act = data.activity || []
+  const maxDay = act.reduce((m, d) => Math.max(m, d.count), 0)
+  const heat = (c) => {
+    if (!c) return 'rgba(255,255,255,.06)'
+    const r = c / (maxDay || 1)
+    return r > 0.66 ? '#1f9d55' : r > 0.33 ? '#2ecc71' : 'rgba(46,204,113,.45)'
+  }
+  const firstRow = act.length ? (new Date(act[0].date + 'T00:00:00').getDay() + 6) % 7 : 0
+  const wMax = Math.max(1, ...(data.by_weekday || [0]))
+  const hMax = Math.max(1, ...(data.by_hour || [0]))
+
   return (
     <div className="page stats-page">
       <div className="stats-head">
@@ -85,6 +97,8 @@ export default function Stats() {
         <StatCard value={t.chapters_read} label="Chapitres lus" />
         <StatCard value={t.pages_read.toLocaleString('fr-FR')} label="Planches lues" />
         <StatCard value={t.favorites} label="Favoris" />
+        {data.streak && <StatCard value={`${data.streak.current} j`} label="Série en cours" accent />}
+        {data.streak && <StatCard value={`${data.streak.best} j`} label="Record de série" />}
       </div>
 
       <div className="stats-two">
@@ -116,6 +130,50 @@ export default function Stats() {
           ))}
         </div>
       </div>
+
+      {/* Activité — heatmap ~12 mois */}
+      {act.length > 0 && (
+        <div className="stats-section">
+          <div className="stats-panel-title">Activité de lecture <span style={{ color: 'var(--text3)', fontWeight: 400 }}>· 12 derniers mois</span></div>
+          <div style={{ overflowX: 'auto', paddingBottom: 6 }}>
+            <div style={{ display: 'grid', gridTemplateRows: 'repeat(7, 11px)', gridAutoFlow: 'column', gap: 3, width: 'max-content' }}>
+              {Array.from({ length: firstRow }).map((_, i) => <div key={`pad${i}`} />)}
+              {act.map((d) => (
+                <div key={d.date} title={`${d.date} — ${d.count} chapitre(s)`}
+                  style={{ width: 11, height: 11, borderRadius: 2, background: heat(d.count) }} />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quand tu lis : jour de semaine + heure */}
+      {(data.by_weekday || data.by_hour) && (
+        <div className="stats-two">
+          <div className="stats-panel">
+            <div className="stats-panel-title">Par jour de la semaine</div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 92, marginTop: 10 }}>
+              {(data.by_weekday || []).map((n, i) => (
+                <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
+                  <div title={`${n} chapitre(s)`} style={{ width: '100%', maxWidth: 26, height: `${(n / wMax) * 66}px`, minHeight: n ? 4 : 0, background: '#e50914', borderRadius: 3, transition: 'height .3s' }} />
+                  <span style={{ fontSize: '.68rem', color: 'var(--text2)' }}>{['L', 'M', 'M', 'J', 'V', 'S', 'D'][i]}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="stats-panel">
+            <div className="stats-panel-title">Par heure</div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 92, marginTop: 10 }}>
+              {(data.by_hour || []).map((n, i) => (
+                <div key={i} title={`${i}h — ${n} chapitre(s)`} style={{ flex: 1, height: `${(n / hMax) * 66}px`, minHeight: n ? 3 : 0, background: '#8b5cf6', borderRadius: 2, transition: 'height .3s' }} />
+              ))}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '.66rem', color: 'var(--text3)', marginTop: 5 }}>
+              <span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>23h</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Top œuvres */}
       {data.top?.length > 0 && (

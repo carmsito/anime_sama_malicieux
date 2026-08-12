@@ -609,7 +609,48 @@ def stats_overview(response: Response, user: dict = Depends(_require_user)):
     completed_works = sum(1 for w in works if w["percent"] >= 100)
     recent = sorted(works, key=lambda w: w["updated_at"], reverse=True)
     top = sorted(works, key=lambda w: (w["completed_chapters"], w["percent"]), reverse=True)[:6]
+
+    # ── Activité temporelle (dérivée des updated_at) : heatmap, streak, jour/heure ──
+    from datetime import datetime, timezone, date as _date, timedelta
+    day_counts: dict[str, int] = defaultdict(int)
+    weekday = [0] * 7   # lundi..dimanche
+    hour = [0] * 24
+    for rs in by_manga.values():
+        for r in rs:
+            ts = r.get("updated_at") or ""
+            try:
+                dt = datetime.fromisoformat(ts)
+            except Exception:
+                continue
+            day_counts[dt.date().isoformat()] += 1
+            weekday[dt.weekday()] += 1
+            hour[dt.hour] += 1
+
+    today = datetime.now(timezone.utc).date()
+    activity = [{"date": (today - timedelta(days=i)).isoformat(),
+                 "count": day_counts.get((today - timedelta(days=i)).isoformat(), 0)}
+                for i in range(370, -1, -1)]   # ~53 semaines
+
+    active_dates = set(day_counts.keys())
+    def _run_from(d: _date) -> int:
+        n = 0
+        while d.isoformat() in active_dates:
+            n += 1; d = d - timedelta(days=1)
+        return n
+    current_streak = _run_from(today) or _run_from(today - timedelta(days=1))  # tolère « pas encore lu aujourd'hui »
+    best_streak = 0
+    if active_dates:
+        ds = sorted(_date.fromisoformat(x) for x in active_dates)
+        run = best_streak = 1
+        for a, b in zip(ds, ds[1:]):
+            run = run + 1 if (b - a).days == 1 else 1
+            best_streak = max(best_streak, run)
+
     return {
+        "activity": activity,
+        "streak": {"current": current_streak, "best": best_streak},
+        "by_weekday": weekday,
+        "by_hour": hour,
         "totals": {
             "works_started": started,
             "works_completed": completed_works,
