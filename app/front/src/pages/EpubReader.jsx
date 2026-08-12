@@ -178,6 +178,17 @@ export default function EpubReader() {
       return next
     })
   }
+  // Visibilité d'options (ex. boutons chapitre / « Début ») directement depuis le reader.
+  const patchActiveVisible = (patch) => {
+    setProfStore((prev) => {
+      if (!prev) return prev
+      const id = activeProfileIdRef.current
+      const p = prev.profiles[id]; if (!p) return prev
+      const next = { ...prev, profiles: { ...prev.profiles, [id]: { ...p, visible: { ...(p.visible || {}), ...patch } } } }
+      scheduleSave(next)
+      return next
+    })
+  }
   // Applique l'état du profil aux commandes — SEULEMENT au 1er chargement / changement de profil
   // (garde `appliedProfRef`), pour ne pas écraser un réglage qu'on vient de toucher en direct.
   const appliedProfRef = useRef(null)
@@ -1135,6 +1146,14 @@ export default function EpubReader() {
                   <span>Navigation à la molette / liseuse</span><span style={pill(scrollNav)}>{scrollNav ? 'ON' : 'OFF'}</span>
                 </button>
               )}
+
+              {/* Affichage des boutons de la barre (chapitre / Début) */}
+              <button onClick={() => patchActiveVisible({ chapnav: !vis.chapnav })} style={toggleRow(!!vis.chapnav)}>
+                <span>Boutons chapitre préc./suiv.</span><span style={pill(!!vis.chapnav)}>{vis.chapnav ? 'ON' : 'OFF'}</span>
+              </button>
+              <button onClick={() => patchActiveVisible({ restart: !vis.restart })} style={toggleRow(!!vis.restart)}>
+                <span>Bouton « Début »</span><span style={pill(!!vis.restart)}>{vis.restart ? 'ON' : 'OFF'}</span>
+              </button>
 
               <div style={{ fontSize: '.75rem', color: 'rgba(255,255,255,.4)', lineHeight: 1.7, marginTop: '.4rem' }}>
                 Options visibles et valeurs proposées : <b onClick={() => navigate('/settings')} style={{ cursor: 'pointer', textDecoration: 'underline' }}>Réglages</b>.
