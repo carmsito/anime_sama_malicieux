@@ -51,6 +51,7 @@ export default function EpubReader() {
   const zoomPctRef = useRef(zoomPct)
   const autoPausedRef = useRef(false)   // pause momentanée (toucher l'écran, panneau ouvert)
   const scrollPausedRef = useRef(false) // pause manuelle (play/pause)
+  const showMenuRef = useRef(false)     // panneau ⚙️ ouvert → on gèle scroll/molette/tactile du lecteur
   const autoCooldownRef = useRef(0)     // pause de bord de planche (survit au redémarrage d'effet)
   const autoAdvancePendingRef = useRef(false)  // en pause "fin de planche", avant d'avancer
   const autoStartPauseRef = useRef(false)      // pause de DÉBUT à armer quand la planche devient visible
@@ -89,17 +90,10 @@ export default function EpubReader() {
       autoEdgePause: profile.state?.pause || 0,
     }
   }, [profile, uid])
-  // Change de profil pour CE manga (propre à l'utilisateur, persisté backend).
-  const selectProfile = (id) => {
-    setActiveProfileId(id)
-    setProfStore((prev) => {
-      if (!prev) return prev
-      const next = { ...prev, activeId: id, perManga: { ...prev.perManga, [mangaId]: id } }
-      saveProfiles(next)
-      return next
-    })
-    // On NE ferme PAS : les commandes du profil sont dans ce même panneau (comme NeoReader).
-  }
+  // Change de profil POUR LA SESSION en cours seulement : on N'ÉCRIT PAS `perManga` → ça n'impacte
+  // pas le profil assigné au manga via la cover. (L'assignation persistante se fait dans la cover.)
+  // On NE ferme PAS le panneau : les commandes du profil sont dedans (comme NeoReader).
+  const selectProfile = (id) => { setActiveProfileId(id) }
   const autoEdgePauseRef = useRef(settings.autoEdgePause)
   useEffect(() => { autoEdgePauseRef.current = settings.autoEdgePause }, [settings])
   const scrollRef = useRef()        // conteneur scrollable (mode fit largeur)
@@ -428,6 +422,8 @@ export default function EpubReader() {
   // Navigation à la molette (liseuse/PC) : bas = suivant, haut = précédent. Sous toggle.
   const wheelLock = useRef(0)
   const onWheel = useCallback((e) => {
+    if (e.ctrlKey) return          // pincement trackpad : géré par le listener natif (zoom échelle)
+    if (showMenuRef.current) return // panneau ⚙️ ouvert : le lecteur ne défile pas
     if (zoomed) return
     if (fitWidth) {
       // molette manuelle → pause l'auto-scroll un instant, puis reprise
@@ -462,6 +458,7 @@ export default function EpubReader() {
   // • double-tap = loupe rapide + pan à la sensibilité ; re-double-tap = retour à l'échelle de base.
   // • 1 doigt sinon = scroll natif + swipe pour changer de planche (si molette active).
   const onTouchStart = useCallback((e) => {
+    if (showMenuRef.current) return
     const t = e.touches[0]
     touchStartRef.current = { x: t.clientX, y: t.clientY }
     touchMovedRef.current = false
@@ -476,6 +473,7 @@ export default function EpubReader() {
   }, [zoomed, pan])
 
   const onTouchMove = useCallback((e) => {
+    if (showMenuRef.current) return
     if (pinchRef.current && e.touches.length === 2) {
       const a = e.touches[0], b = e.touches[1]
       const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
@@ -497,6 +495,7 @@ export default function EpubReader() {
   }, [zoomed])
 
   const onTouchEnd = useCallback((e) => {
+    if (showMenuRef.current) return
     const t = e.changedTouches[0]
     const now = Date.now()
     // reprise de l'auto-scroll après un court délai (laisse retomber l'inertie iOS)
@@ -519,6 +518,7 @@ export default function EpubReader() {
       lastTapRef.current = { t: now, x: t.clientX, y: t.clientY }
     }
     if (zoomed) return   // zoomé : le tap simple ne navigue pas
+    if (zoomPctRef.current > 100) return   // planche agrandie (>100 %) → pas de changement de page
 
     // Swipe vertical → changer de planche (aux extrémités / si la planche tient), molette active.
     if (!scrollNav) return
@@ -535,7 +535,8 @@ export default function EpubReader() {
 
   // Clic latéral = changement de page
   const onAreaClick = useCallback((e) => {
-    if (zoomed) return
+    if (zoomed || showMenuRef.current) return
+    if (zoomPctRef.current > 100) return   // planche agrandie (>100 %) → pas de changement de page
     const r = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - r.left
     if (fitWidth) {   // mode défilement
@@ -592,12 +593,28 @@ export default function EpubReader() {
     return () => cancelAnimationFrame(raf)
   }, [autoScroll, fitWidth, current, images.length, nextChapNum, goNext])
 
-  // Panneau ⚙️ ouvert → auto-scroll en pause (on ne défile pas pendant qu'on règle).
+  // Panneau ⚙️ ouvert → auto-scroll en pause ET plus aucun scroll/molette/tactile du lecteur.
   useEffect(() => {
+    showMenuRef.current = showReaderMenu
     if (showReaderMenu) { autoPausedRef.current = true; return }
     const t = setTimeout(() => { autoPausedRef.current = false }, 250)
     return () => clearTimeout(t)
   }, [showReaderMenu])
+
+  // Pincement TRACKPAD (ctrl+molette) → zoom de l'ÉCHELLE (pas le zoom du navigateur). Listener
+  // natif non-passif pour pouvoir preventDefault. Sépare clairement pincement et molette.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onWheelNative = (e) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      const z = Math.max(40, Math.min(500, Math.round(zoomPctRef.current * (1 - e.deltaY * 0.01))))
+      setZoomPct(z)
+    }
+    el.addEventListener('wheel', onWheelNative, { passive: false })
+    return () => el.removeEventListener('wheel', onWheelNative)
+  }, [])
 
   // CHANGEMENT DE PLANCHE (manuel souris/tactile OU auto) pendant l'auto-scroll : on remet le
   // compteur d'attente à ZÉRO → la pause de début s'applique aussi sur les changements manuels.
@@ -922,7 +939,7 @@ export default function EpubReader() {
               <button onClick={() => setShowReaderMenu(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.6)', fontSize: '1.2rem', cursor: 'pointer', padding: '0 .2rem' }}>✕</button>
             </div>
 
-            <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingRight: '.2rem' }}>
+            <div style={{ overflowY: 'auto', overscrollBehavior: 'contain', flex: 1, minHeight: 0, paddingRight: '.2rem' }}>
               {/* Profil actif pour CE manga (propre à l'utilisateur, synchronisé) */}
               <div style={section}>
                 <div style={{ ...label, display: 'flex', justifyContent: 'space-between' }}>
