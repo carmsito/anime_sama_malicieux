@@ -148,6 +148,7 @@ export const api = {
   // Profils de lecture (synchronisés par compte)
   getReaderProfiles: () => req('/me/reader-profiles'),
   setReaderProfiles: (store) => req('/me/reader-profiles', { method: 'PUT', body: JSON.stringify(store) }),
+  savePanelDebug: (name, image) => req('/reader/panel-debug', { method: 'POST', body: JSON.stringify({ name, image }) }),
 
   // Jobs
   listJobs: () => req('/jobs'),

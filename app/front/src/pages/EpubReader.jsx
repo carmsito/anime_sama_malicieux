@@ -305,6 +305,33 @@ export default function EpubReader() {
     window.addEventListener('orientationchange', onR)
     return () => { window.removeEventListener('resize', onR); window.removeEventListener('orientationchange', onR) }
   }, [cinema])
+  // Rend la découpe (planche + contours rouges + n°) et l'enregistre sur le serveur pour analyse.
+  const [panelSaved, setPanelSaved] = useState('')
+  const savePanelDebug = async () => {
+    const im = cinemaImgRef.current
+    if (!im || !im.naturalWidth) return
+    const W = Math.min(900, im.naturalWidth)
+    const sc = W / im.naturalWidth
+    const H = Math.round(im.naturalHeight * sc)
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H
+    const ctx = cv.getContext('2d')
+    ctx.drawImage(im, 0, 0, W, H)
+    ctx.lineWidth = 3; ctx.strokeStyle = '#e50914'; ctx.font = 'bold 22px sans-serif'
+    panels.forEach((p, i) => {
+      const x = p.x * W, y = p.y * H, pw = p.w * W, ph = p.h * H
+      ctx.strokeRect(x, y, pw, ph)
+      const tag = String(i + 1)
+      ctx.fillStyle = '#e50914'; ctx.fillRect(x + 2, y + 2, 14 + tag.length * 13, 28)
+      ctx.fillStyle = '#fff'; ctx.fillText(tag, x + 7, y + 23)
+    })
+    let url
+    try { url = cv.toDataURL('image/png') } catch { setPanelSaved('erreur (image protégée)'); return }
+    const name = `${mangaId}_${chapterNum}_p${String(current).padStart(2, '0')}_n${panels.length}`
+    setPanelSaved('…')
+    try { const r = await api.savePanelDebug(name, url); setPanelSaved(r?.ok ? `enregistré : ${r.name}` : 'échec') }
+    catch { setPanelSaved('échec réseau') }
+    setTimeout(() => setPanelSaved(''), 4000)
+  }
   const cinemaTap = (e) => {
     if (panelDebug) return
     const r = e.currentTarget.getBoundingClientRect()
@@ -996,6 +1023,16 @@ export default function EpubReader() {
               style={{ position: 'absolute', top: 8, left: 8, zIndex: 3, border: 'none', cursor: 'pointer',
                 background: panelDebug ? '#e50914' : 'rgba(0,0,0,.55)', color: '#fff', borderRadius: 6,
                 padding: '.25rem .5rem', fontSize: '.72rem', fontWeight: 700 }}>⧉ {panels.length}</button>
+            {panelDebug && (
+              <button onClick={(e) => { e.stopPropagation(); savePanelDebug() }} title="Enregistrer cette découpe sur le serveur"
+                style={{ position: 'absolute', top: 8, left: 58, zIndex: 3, border: 'none', cursor: 'pointer',
+                  background: 'rgba(0,0,0,.55)', color: '#fff', borderRadius: 6, padding: '.25rem .5rem',
+                  fontSize: '.72rem', fontWeight: 700 }}>💾 Enregistrer</button>
+            )}
+            {panelSaved && (
+              <div style={{ position: 'absolute', top: 40, left: 8, zIndex: 3, background: 'rgba(0,0,0,.7)',
+                color: '#fff', borderRadius: 6, padding: '.2rem .5rem', fontSize: '.7rem' }}>{panelSaved}</div>
+            )}
             <div style={{ position: 'absolute', bottom: 8, left: 0, right: 0, textAlign: 'center',
               color: 'rgba(255,255,255,.7)', fontSize: '.72rem', pointerEvents: 'none',
               textShadow: '0 1px 3px #000' }}>
