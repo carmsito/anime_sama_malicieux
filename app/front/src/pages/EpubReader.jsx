@@ -881,29 +881,26 @@ export default function EpubReader() {
             padding: '.3rem .7rem', cursor: 'pointer', fontSize: '1rem' }}>→</button>
       </div>
 
-      {/* Contrôle flottant d'auto-scroll, À DROITE : play/pause AU-DESSUS des multiplicateurs de
-          vitesse. En plein écran → en HAUT ; sinon → en bas (au-dessus de la barre). */}
+      {/* Contrôle flottant d'auto-scroll, compact À DROITE : play/pause + vitesse (re-cliquer la
+          vitesse la fait cycler). En plein écran → en haut ; sinon → au-dessus de la barre. */}
       {autoScroll && settings.buttons.autoscroll && (
         <div style={{ position: 'fixed', right: 10, zIndex: 60,
           top: fullscreen ? 12 : 'auto', bottom: fullscreen ? 'auto' : 54,
-          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '.4rem',
-          background: 'rgba(20,20,24,.92)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 20,
-          padding: '.4rem .35rem', boxShadow: '0 4px 20px rgba(0,0,0,.5)' }}>
+          display: 'flex', alignItems: 'center', gap: '.4rem',
+          background: 'rgba(20,20,24,.92)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 24,
+          padding: '.32rem .4rem', boxShadow: '0 4px 20px rgba(0,0,0,.5)' }}>
           <button onClick={() => setScrollPaused((v) => !v)} title={scrollPaused ? 'Reprendre' : 'Pause'}
-            style={{ width: 36, height: 36, borderRadius: '50%', border: 'none', cursor: 'pointer',
+            style={{ width: 34, height: 34, borderRadius: '50%', border: 'none', cursor: 'pointer',
               background: '#e50914', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {scrollPaused
-              ? <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
-              : <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
+              ? <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+              : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
           </button>
-          {settings.speedMults.map((m) => (
-            <button key={m} onClick={() => setSpeedMultValue(m)} title={`Vitesse ×${m}`}
-              style={{ minWidth: 40, height: 28, borderRadius: 14, border: 'none', cursor: 'pointer',
-                fontWeight: 800, fontSize: '.76rem', padding: '0 .5rem',
-                background: Math.abs(speedMult - m) < 0.001 ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff' }}>
-              ×{m}
-            </button>
-          ))}
+          <button onClick={cycleSpeedMult} title="Vitesse (re-cliquer pour changer)"
+            style={{ minWidth: 44, height: 34, borderRadius: 17, border: 'none', cursor: 'pointer',
+              background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.84rem', padding: '0 .7rem' }}>
+            ×{speedMult}
+          </button>
         </div>
       )}
 
