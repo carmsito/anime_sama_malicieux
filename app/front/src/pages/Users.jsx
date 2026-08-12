@@ -212,23 +212,44 @@ function CacheMaintenance() {
       </div>
 
       {stats && (() => {
-        const free = stats.disk?.free || 0
+        const col = (p) => (p >= 90 ? '#e50914' : p >= 70 ? '#e6a100' : '#2ecc71')
+        const Bar = ({ title, used, cap, extra }) => {
+          const pct = cap ? Math.min(100, Math.round((used / cap) * 100)) : 0
+          return (
+            <div style={{ marginBottom: '.7rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '.82rem', marginBottom: '.25rem' }}>
+                <span>{title}</span>
+                <span><b>{fmtBytes(used)}</b> / {fmtBytes(cap)} ({pct}%)</span>
+              </div>
+              <div style={{ height: 9, borderRadius: 5, background: 'rgba(255,255,255,.1)', overflow: 'hidden' }}>
+                <div style={{ width: `${pct}%`, height: '100%', background: col(pct), transition: 'width .3s' }} />
+              </div>
+              {extra && <div style={{ fontSize: '.72rem', color: 'var(--text2)', marginTop: '.2rem' }}>{extra}</div>}
+            </div>
+          )
+        }
+        const dTotal = stats.disk?.total || 0, dUsed = stats.disk?.used || 0, dFree = stats.disk?.free || 0
+        const dPct = dTotal ? Math.round((dUsed / dTotal) * 100) : 0
         const app = stats.app_bytes || 0
-        const denom = app + free
-        const pct = denom ? Math.round((app / denom) * 100) : 0
-        const color = pct >= 90 ? '#e50914' : pct >= 70 ? '#e6a100' : '#2ecc71'
         return (
           <div className="maint-results">
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '.82rem', marginBottom: '.3rem' }}>
-              <span>Disque utilisé par l'app <span style={{ opacity: .55 }}>(hors OS/système)</span></span>
-              <span><b>{fmtBytes(app)}</b> / {fmtBytes(denom)} dispo ({pct}%)</span>
+            {/* Ce qu'on CONTRÔLE réellement : les caches, bornés par leur plafond (LRU + TTL) */}
+            <Bar title="Cache EPUB (lecture)" used={stats.epub.bytes} cap={stats.epub.cap}
+              extra={`${stats.epub.count} fichier(s) — plafond ${fmtBytes(stats.epub.cap)}, éviction LRU auto`} />
+            <Bar title="Cache vignettes" used={stats.covers.bytes} cap={stats.covers.cap}
+              extra={`${stats.covers.count} fichier(s)`} />
+            {/* Réalité du disque ENTIER (inclut OS + build cache Docker : hors application) */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '.82rem', marginBottom: '.25rem', marginTop: '.4rem' }}>
+              <span>Disque (entier, système inclus)</span>
+              <span><b>{fmtBytes(dUsed)}</b> / {fmtBytes(dTotal)} · {fmtBytes(dFree)} libre ({dPct}%)</span>
             </div>
-            <div style={{ height: 10, borderRadius: 5, background: 'rgba(255,255,255,.1)', overflow: 'hidden' }}>
-              <div style={{ width: `${pct}%`, height: '100%', background: color, transition: 'width .3s' }} />
+            <div style={{ height: 9, borderRadius: 5, background: 'rgba(255,255,255,.1)', overflow: 'hidden' }}>
+              <div style={{ width: `${dPct}%`, height: '100%', background: col(dPct), transition: 'width .3s' }} />
             </div>
-            <div style={{ fontSize: '.75rem', color: 'var(--text2)', marginTop: '.5rem', lineHeight: 1.7 }}>
-              Détail : Cache EPUB <b>{fmtBytes(stats.epub.bytes)}</b> · Vignettes <b>{fmtBytes(stats.covers.bytes)}</b> · Autres <b>{fmtBytes(stats.other_bytes)}</b> <span style={{ opacity: .55 }}>(DB, sessions…)</span><br />
-              Disque libre : <b>{fmtBytes(free)}</b> sur {fmtBytes(stats.disk.total)}
+            <div style={{ fontSize: '.75rem', color: 'var(--text2)', marginTop: '.55rem', lineHeight: 1.7 }}>
+              Empreinte totale de l'app : <b>{fmtBytes(app)}</b> (caches + DB, sessions, extraction).<br />
+              <span style={{ opacity: .7 }}>Le reste du disque = système + <b>build cache Docker</b> (accumulé par les rebuilds).
+              Ce dernier n'est pas géré par l'app : le purger côté hôte avec <code>docker builder prune -f</code>.</span>
             </div>
           </div>
         )
