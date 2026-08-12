@@ -1,57 +1,19 @@
-// Détection des cases (panels) d'une planche de MANGA, ordonnées en sens de lecture
-// droite→gauche puis haut→bas. Analyse en canvas (images même origine → pas de taint),
-// algorithme X-Y cut : on coupe récursivement le long des gouttières (bandes blanches).
-// Sans ML, volontairement robuste et dégradant proprement (repli = planche entière).
-
-// Table des sommes cumulées (summed-area table) du masque "contenu" → somme d'un rectangle en O(1).
-function buildSAT(content, w, h) {
-  const sat = new Int32Array((w + 1) * (h + 1))
-  const sw = w + 1
-  for (let y = 0; y < h; y++) {
-    let rowSum = 0
-    for (let x = 0; x < w; x++) {
-      rowSum += content[y * w + x]
-      sat[(y + 1) * sw + (x + 1)] = sat[y * sw + (x + 1)] + rowSum
-    }
-  }
-  return sat
-}
-function rectSum(sat, sw, x0, y0, x1, y1) {
-  return sat[y1 * sw + x1] - sat[y0 * sw + x1] - sat[y1 * sw + x0] + sat[y0 * sw + x0]
-}
-
-// Plus large "trou" intérieur (run où isEmpty(i) est vrai), ne touchant pas les bords [lo,hi).
-function biggestGap(lo, hi, isEmpty, minRun) {
-  let best = null, i = lo
-  while (i < hi) {
-    if (!isEmpty(i)) { i++; continue }
-    let j = i
-    while (j < hi && isEmpty(j)) j++
-    const touchesBorder = (i === lo) || (j === hi)
-    const size = j - i
-    if (!touchesBorder && size >= minRun && (!best || size > best.size)) {
-      best = { start: i, end: j, size }
-    }
-    i = j
-  }
-  return best
-}
-
-// Rogne un rectangle sur son contenu réel (enlève les marges blanches). null si vide.
-function trim(sat, sw, w, h, r) {
-  const colHas = (x) => rectSum(sat, sw, x, r.y0, x + 1, r.y1) > 0
-  const rowHas = (y) => rectSum(sat, sw, r.x0, y, r.x1, y + 1) > 0
-  let x0 = r.x0, x1 = r.x1, y0 = r.y0, y1 = r.y1
-  while (x0 < x1 && !colHas(x0)) x0++
-  while (x1 > x0 && !colHas(x1 - 1)) x1--
-  while (y0 < y1 && !rowHas(y0)) y0++
-  while (y1 > y0 && !rowHas(y1 - 1)) y1--
-  if (x1 - x0 < 2 || y1 - y0 < 2) return null
-  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
-}
+// Détection des cases (panels) d'une planche de MANGA, en sens de lecture droite→gauche
+// puis haut→bas. Analyse canvas (images même origine → pas de taint), SANS ML, SANS son.
+//
+// Approche par SEGMENTATION (façon Kumiko), bien plus robuste que l'X-Y cut pour les mises
+// en page complexes du manga (cases qui en chevauchent d'autres, gouttières diagonales) :
+//   1) couleur de fond = moyenne du cadre extérieur (marche gouttière blanche OU sombre) ;
+//   2) flood-fill du fond depuis les bords → masque « gouttière » (l'espace entre les cases) ;
+//   3) composantes connexes des pixels NON-gouttière = les cases (chaque case est un bloc
+//      plein bordé de gouttière, quelle que soit sa forme) ;
+//   4) filtres (taille, taux de remplissage → élimine le cadre fin), fusion des imbriquées ;
+//   5) regroupement en RANGÉES par chevauchement vertical → ordre manga (rangée haut→bas,
+//      droite→gauche dans la rangée).
+// Repli propre : si on ne trouve pas ≥2 cases fiables → planche entière (1 case).
 
 export function detectPanels(img, opts = {}) {
-  const maxW = opts.maxW || 820
+  const maxW = opts.maxW || 700
   const iw = img.naturalWidth, ih = img.naturalHeight
   if (!iw || !ih) return null
   const s = Math.min(1, maxW / iw)
@@ -60,57 +22,95 @@ export function detectPanels(img, opts = {}) {
   const ctx = cv.getContext('2d', { willReadFrequently: true })
   try { ctx.drawImage(img, 0, 0, w, h) } catch { return null }
   let px
-  try { px = ctx.getImageData(0, 0, w, h).data } catch { return null }  // cross-origin taint → abandon
+  try { px = ctx.getImageData(0, 0, w, h).data } catch { return null }   // cross-origin → abandon
+  const N = w * h
+  const whole = [{ x: 0, y: 0, w: 1, h: 1 }]
 
-  // "contenu" = pixel ni quasi-blanc uni (gouttière) : sombre OU coloré.
-  const content = new Uint8Array(w * h)
-  for (let k = 0; k < w * h; k++) {
-    const i = k * 4
-    const r = px[i], g = px[i + 1], b = px[i + 2]
-    const mx = Math.max(r, g, b), mn = Math.min(r, g, b)
-    content[k] = (mx < 232 || (mx - mn) > 28) ? 1 : 0
+  // 1) couleur de fond (gouttière) = moyenne du cadre extérieur
+  let br = 0, bg = 0, bb = 0, bn = 0
+  const acc = (x, y) => { const i = (y * w + x) * 4; br += px[i]; bg += px[i + 1]; bb += px[i + 2]; bn++ }
+  for (let x = 0; x < w; x++) { acc(x, 0); acc(x, h - 1) }
+  for (let y = 0; y < h; y++) { acc(0, y); acc(w - 1, y) }
+  br /= bn; bg /= bn; bb /= bn
+  const TOL = 48
+  const isBg = (k) => { const i = k * 4; return Math.abs(px[i] - br) < TOL && Math.abs(px[i + 1] - bg) < TOL && Math.abs(px[i + 2] - bb) < TOL }
+
+  // 2) flood-fill du fond depuis tous les bords → masque gouttière
+  const gutter = new Uint8Array(N)
+  const st = new Int32Array(N)
+  let sp = 0
+  const seed = (k) => { if (!gutter[k] && isBg(k)) { gutter[k] = 1; st[sp++] = k } }
+  for (let x = 0; x < w; x++) { seed(x); seed((h - 1) * w + x) }
+  for (let y = 0; y < h; y++) { seed(y * w); seed(y * w + w - 1) }
+  while (sp > 0) {
+    const k = st[--sp], x = k % w, y = (k / w) | 0
+    if (x > 0) seed(k - 1)
+    if (x < w - 1) seed(k + 1)
+    if (y > 0) seed(k - w)
+    if (y < h - 1) seed(k + w)
   }
-  const sat = buildSAT(content, w, h)
-  const sw = w + 1
 
-  const minSide = Math.min(w, h)
-  const minPanel = minSide * 0.12
-  const gutterFrac = 0.010                        // ligne/colonne "vide" si < 1% de contenu
-  const minGutter = Math.max(4, Math.round(minSide * 0.012))
-
-  const out = []
-  const stack = [{ x0: 0, y0: 0, x1: w, y1: h, depth: 0 }]
-  while (stack.length) {
-    const r = stack.pop()
-    const bw = r.x1 - r.x0, bh = r.y1 - r.y0
-    if (bw < minPanel || bh < minPanel || r.depth > 9) { out.push(r); continue }
-    const rowThresh = bw * gutterFrac
-    const colThresh = bh * gutterFrac
-    const hGap = biggestGap(r.y0, r.y1, (y) => rectSum(sat, sw, r.x0, y, r.x1, y + 1) <= rowThresh, minGutter)
-    const vGap = biggestGap(r.x0, r.x1, (x) => rectSum(sat, sw, x, r.y0, x + 1, r.y1) <= colThresh, minGutter)
-    if (hGap && (!vGap || hGap.size >= vGap.size)) {
-      stack.push({ x0: r.x0, y0: r.y0, x1: r.x1, y1: hGap.start, depth: r.depth + 1 })
-      stack.push({ x0: r.x0, y0: hGap.end, x1: r.x1, y1: r.y1, depth: r.depth + 1 })
-    } else if (vGap) {
-      stack.push({ x0: r.x0, y0: r.y0, x1: vGap.start, y1: r.y1, depth: r.depth + 1 })
-      stack.push({ x0: vGap.end, y0: r.y0, x1: r.x1, y1: r.y1, depth: r.depth + 1 })
-    } else {
-      out.push(r)
+  // 3) composantes connexes des pixels NON-gouttière = cases candidates
+  const seen = new Uint8Array(N)
+  const q = new Int32Array(N)
+  const minArea = N * 0.010
+  const minSide = Math.min(w, h) * 0.09
+  let rects = []
+  for (let k0 = 0; k0 < N; k0++) {
+    if (gutter[k0] || seen[k0]) continue
+    let head = 0, tail = 0
+    q[tail++] = k0; seen[k0] = 1
+    let x0 = w, y0 = h, x1 = 0, y1 = 0, area = 0
+    while (head < tail) {
+      const k = q[head++], x = k % w, y = (k / w) | 0
+      area++
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y
+      if (x > 0 && !gutter[k - 1] && !seen[k - 1]) { seen[k - 1] = 1; q[tail++] = k - 1 }
+      if (x < w - 1 && !gutter[k + 1] && !seen[k + 1]) { seen[k + 1] = 1; q[tail++] = k + 1 }
+      if (y > 0 && !gutter[k - w] && !seen[k - w]) { seen[k - w] = 1; q[tail++] = k - w }
+      if (y < h - 1 && !gutter[k + w] && !seen[k + w]) { seen[k + w] = 1; q[tail++] = k + w }
+    }
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1
+    const fill = area / (bw * bh)
+    // 4) filtres : assez grande, pas un trait fin (cadre → faible remplissage)
+    if (area >= minArea && bw >= minSide && bh >= minSide && fill >= 0.35) {
+      rects.push({ x: x0, y: y0, w: bw, h: bh, area })
     }
   }
 
-  let panels = out.map((r) => trim(sat, sw, w, h, r)).filter(Boolean)
-  // fusion des micro-cases dans un voisin (bruit) : on jette les trop petites
-  panels = panels.filter((p) => p.w >= minPanel * 0.6 && p.h >= minPanel * 0.6)
-  if (panels.length === 0) panels = [{ x: 0, y: 0, w, h }]
+  if (rects.length < 2) return whole   // rien de fiable (bleed, borderless…) → planche entière
 
-  // ORDRE MANGA : bande par bande (haut→bas), droite→gauche dans une bande.
-  panels.sort((a, b) => {
-    const ca = a.y + a.h / 2, cb = b.y + b.h / 2
-    if (Math.abs(ca - cb) > Math.min(a.h, b.h) * 0.5) return ca - cb   // bandes différentes → plus haut d'abord
-    return (b.x + b.w / 2) - (a.x + a.w / 2)                           // même bande → plus à droite d'abord
-  })
+  // 4b) jette une case qui couvre quasi toute la page (fond/cadre résiduel), et les imbriquées
+  const pageArea = w * h
+  rects = rects.filter((r) => r.w * r.h < pageArea * 0.92)
+  rects.sort((a, b) => b.area - a.area)
+  const kept = []
+  for (const r of rects) {
+    const inside = kept.some((o) => r.x >= o.x - 2 && r.y >= o.y - 2 && r.x + r.w <= o.x + o.w + 2 && r.y + r.h <= o.y + o.h + 2)
+    if (!inside) kept.push(r)
+  }
+  if (kept.length < 2) return whole
 
-  // fractions [0..1] de l'image (indépendant de l'échelle d'affichage)
-  return panels.map((p) => ({ x: p.x / w, y: p.y / h, w: p.w / w, h: p.h / h }))
+  // 5) regroupement en rangées (chevauchement vertical) → ordre manga
+  const byTop = [...kept].sort((a, b) => a.y - b.y)
+  const rows = []
+  for (const p of byTop) {
+    const pb = p.y + p.h
+    let row = null
+    for (const r of rows) {
+      const ov = Math.min(pb, r.y1) - Math.max(p.y, r.y0)
+      if (ov > 0.5 * Math.min(p.h, r.y1 - r.y0)) { row = r; break }
+    }
+    if (row) { row.items.push(p); row.y0 = Math.min(row.y0, p.y); row.y1 = Math.max(row.y1, pb) }
+    else rows.push({ y0: p.y, y1: pb, items: [p] })
+  }
+  rows.sort((a, b) => a.y0 - b.y0)
+  const ordered = []
+  for (const r of rows) {
+    r.items.sort((a, b) => (b.x + b.w) - (a.x + a.w))   // droite→gauche (sens manga)
+    ordered.push(...r.items)
+  }
+
+  // fractions [0..1] de l'image
+  return ordered.map((p) => ({ x: p.x / w, y: p.y / h, w: p.w / w, h: p.h / h }))
 }
