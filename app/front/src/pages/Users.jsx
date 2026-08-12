@@ -168,7 +168,7 @@ function CacheMaintenance() {
 
   const fmt = (iso) => iso ? new Date(iso).toLocaleString('fr-FR') : '—'
   const res = st?.result
-  const stats = res?.stats
+  const stats = st?.stats   // stats LIVE (disque/caches calculés à chaque GET), pas le snapshot du dernier job
 
   return (
     <div className="maint-panel">
