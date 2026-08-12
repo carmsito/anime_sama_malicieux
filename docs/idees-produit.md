@@ -79,3 +79,59 @@ Exploitent nos atouts uniques : le **moteur d'ambiance** et le **pipeline vision
 
 > Feature signature recommandée : **détection de cases + ambiance adaptative + ambilight** =
 > une **« lecture cinématique »** qu'aucun lecteur (Mihon/Tachiyomi, lecteurs web) n'offre.
+
+---
+
+## 3. Dynamic comic / « lecture cinématique » — rendre la lecture VIVANTE (détail)
+
+Transformer des planches statiques en une expérience semi-animée. Brique de base : la
+**détection des cases (panels)** par page (vision : détection des gouttières/contours, sans
+ML au départ ; option modèle ensuite). Elle débloque tout le reste.
+
+### Caméra & mouvement
+- **Guided View 2.0** : avance case par case, mais la caméra **glisse et zoome en douceur**
+  d'une case à l'autre (easing) au lieu de sauter.
+- **Ken Burns par case** : léger pan/zoom lent PENDANT qu'une case est à l'écran → une image
+  fixe « respire ».
+- **Transitions cinématiques** : whip-pan rapide sur l'action, fondu lent sur le calme —
+  choisi selon le **score d'action** du classifieur.
+- **Pacing adaptatif** : cases dramatiques tenues plus longtemps ; pages denses lues plus
+  lentement (durée dérivée de la taille/du nombre de cases).
+- **Focus / spotlight** : assombrit tout sauf la case active.
+- **Parallaxe 2.5D** : séparer bulles/avant-plan du fond → légère profondeur au scroll ou au
+  **gyroscope** du téléphone (on incline, ça bouge).
+- **Bulles séquencées** : révéler les bulles dans l'ordre de lecture avec un petit pop timé.
+
+### Le monde qui vit (ambiance)
+- **Soundscape adaptatif** (proto étudié) : décor par scène + couche action qui suit le score,
+  crossfades Web Audio.
+- **SFX réactifs** : one-shot (impact, whoosh, pluie qui monte) déclenché sur la révélation
+  d'une grosse case d'action.
+- **Ambilight / halo** : glow autour de la page repris des **couleurs dominantes de la case**,
+  qui change de case en case. Peu coûteux, gros effet.
+- **Tinte dynamique** : fond/tinte du reader qui épouse le mood de la scène (coucher de soleil
+  chaud, nuit froide).
+- **Haptique** : tap léger sur les cases d'impact (mobile).
+- **Couche musique** optionnelle sous l'ambiance, calée sur la scène.
+
+### Micro-vie partout (petits gains)
+- **Covers animées** : parallaxe/inclinaison subtile dans la bibliothèque (gyro/hover).
+- **Overlay météo** : si décor = pluie, fines particules animées + son (via le label du
+  classifieur).
+- **Respiration** de la case courante (oscillation d'échelle imperceptible).
+
+### Comment ça s'assemble (pipeline)
+Détection de cases → métadonnées par case (bbox, score d'action, label décor via le
+classifieur) → le reader joue une **« piste caméra »** à travers les cases avec pacing +
+ambiance + ambilight + SFX. C'est un **mode motion-comic auto-play** (bouton « Cinéma »),
+distinct de la lecture normale.
+
+### Ordre de construction conseillé (MVP → riche)
+1. **MVP** : détection de cases (CV, sans ML) → Guided View avec pan/zoom easé + focus dimming
+   + ambilight. À lui seul, ça « prend vie ».
+2. **+** Ken Burns par case + couche ambiance adaptative + pacing.
+3. **+** parallaxe/gyro, SFX one-shots, haptique, overlay météo.
+
+> Réutilise l'existant : le **classifieur d'ambiance** fournit déjà scène + score d'action →
+> il pilote le pacing, l'ambilight et les déclencheurs SFX. Le gros nouveau chantier =
+> la **détection de cases**.
