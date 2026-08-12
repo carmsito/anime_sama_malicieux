@@ -124,12 +124,17 @@ def list_mangas() -> list[dict]:
                 manga_id = _make_manga_id(manga_dir.name, cat_dir.name)
                 chapters = _list_chapters(cat_dir, manga_id)
                 meta = _read_meta(cat_dir)
+                try:
+                    added_at = cat_dir.stat().st_mtime   # proxy « ajouté le » (extraction)
+                except OSError:
+                    added_at = 0
                 mangas.append({
                     "id": manga_id,
                     "name": manga_dir.name,
                     "category": cat_dir.name,
                     "cover_url": _cover_url(manga_id, meta),
                     "chapter_count": len(chapters),
+                    "added_at": added_at,
                     "meta": meta,
                 })
     c["data"] = mangas

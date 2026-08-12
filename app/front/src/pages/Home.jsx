@@ -417,6 +417,8 @@ export default function Home() {
     })
   }
 
+  const recentlyAdded = [...mangas].filter((m) => m.added_at).sort((a, b) => b.added_at - a.added_at).slice(0, 12)
+
   const filtered = mangas.filter((m) => {
     if (query && !m.name.toLowerCase().includes(query.toLowerCase())) return false
     if (selectedGenres.size > 0) {
@@ -498,6 +500,25 @@ export default function Home() {
                 </div>
                 <div className="continue-name">{it.name}</div>
                 <div className="continue-sub">{it.category} · {it.percent}%</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!query && recentlyAdded.length > 0 && (
+        <div className="continue-section">
+          <div className="continue-title">Récemment ajoutés</div>
+          <div className="continue-row">
+            {recentlyAdded.map((m) => (
+              <div key={m.id} className="continue-card" onClick={() => navigate(`/manga/${m.id}`)}>
+                <div className="continue-thumb">
+                  {m.cover_url
+                    ? <img src={m.cover_url} alt={m.name} onError={(e) => { e.target.style.display = 'none' }} />
+                    : <div className="continue-ph">📖</div>}
+                </div>
+                <div className="continue-name">{m.name}</div>
+                <div className="continue-sub">{m.category} · {m.chapter_count} ch.</div>
               </div>
             ))}
           </div>
