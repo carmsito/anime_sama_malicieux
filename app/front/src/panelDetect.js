@@ -1,16 +1,16 @@
 // Détection des cases (panels) de MANGA, ordre de lecture droite→gauche puis haut→bas.
-// Analyse canvas (images même origine → pas de taint), SANS ML, SANS son.
+// Analyse canvas (images même origine → pas de taint), léger & rapide, SANS ML, SANS son.
 //
-// HYBRIDE (deux méthodes complémentaires) :
-//  • SEGMENTATION (flood-fill façon Kumiko) : robuste pour les mises en page complexes à MARGE
-//    blanche (cases en L, chevauchements, gouttières diagonales). Dilatation d'encre pour ne pas
-//    absorber les cases à fond clair/texturé.
-//  • X-Y CUT (projection) EN REPLI : quand la segmentation ne trouve rien (planche à FOND PERDU,
-//    l'art touche les bords → pas de fond au bord pour amorcer le flood) — ces pages sont des
-//    grilles à gouttières droites que la projection découpe bien.
+// COMBO de deux détecteurs complémentaires (choisi automatiquement) :
+//  • SEGMENTATION (flood-fill façon Kumiko) — PRINCIPAL : robuste pour les mises en page à
+//    MARGE/gouttières BLANCHES, y compris complexes (cases en L, chevauchements, diagonales).
+//    Dilatation d'encre pour ne pas absorber les cases à fond clair/texturé.
+//  • CARTE DE CONTOURS + X-Y cut — REPLI (quand le flood ne trouve rien) : indépendant du fond
+//    → gère les planches à FOND PERDU et à gouttières NOIRES (Vagabond, Dr-Stone…). Une gouttière
+//    = bande SANS contour (uniforme, blanche ou noire) ; le contenu = beaucoup de contours.
 // Repli ultime : planche entière (1 case).
 
-// ── Ordonnancement en sens manga : rangées (chevauchement vertical) haut→bas, droite→gauche ──
+// ── Ordre manga : rangées (chevauchement vertical) haut→bas, droite→gauche dans la rangée ──
 function orderManga(rects, w, h) {
   const rows = []
   for (const p of [...rects].sort((a, b) => a.y - b.y)) {
@@ -29,18 +29,17 @@ function orderManga(rects, w, h) {
   return out.map((p) => ({ x: p.x / w, y: p.y / h, w: p.w / w, h: p.h / h }))
 }
 
-// ── X-Y cut sur le masque d'encre `raw` (1 = encre). Table cumulée → somme rectangle O(1). ──
-function xyCut(raw, w, h) {
+// ── X-Y cut générique sur un masque binaire (1 = contenu). Table cumulée → somme O(1). ──
+function projCut(mask, w, h, minSideF, minGutF, gapFrac) {
   const sw = w + 1
   const sat = new Int32Array(sw * (h + 1))
   for (let y = 0; y < h; y++) {
     let rs = 0
-    for (let x = 0; x < w; x++) { rs += raw[y * w + x]; sat[(y + 1) * sw + (x + 1)] = sat[y * sw + (x + 1)] + rs }
+    for (let x = 0; x < w; x++) { rs += mask[y * w + x]; sat[(y + 1) * sw + (x + 1)] = sat[y * sw + (x + 1)] + rs }
   }
   const S = (x0, y0, x1, y1) => sat[y1 * sw + x1] - sat[y0 * sw + x1] - sat[y1 * sw + x0] + sat[y0 * sw + x0]
-  const minSide = Math.min(w, h) * 0.08
-  const minGut = Math.max(4, Math.round(Math.min(w, h) * 0.014))
-  const gapFrac = 0.012
+  const minSide = Math.min(w, h) * minSideF
+  const minGut = Math.max(4, Math.round(Math.min(w, h) * minGutF))
   const gap = (lo, hi, empty) => {
     let best = null, i = lo
     while (i < hi) {
@@ -56,7 +55,7 @@ function xyCut(raw, w, h) {
   const stack = [{ x0: 0, y0: 0, x1: w, y1: h, d: 0 }]
   while (stack.length) {
     const r = stack.pop(), bw = r.x1 - r.x0, bh = r.y1 - r.y0
-    if (bw < minSide || bh < minSide || r.d > 9) { out.push(r); continue }
+    if (bw < minSide || bh < minSide || r.d > 10) { out.push(r); continue }
     const rt = bw * gapFrac, ct = bh * gapFrac
     const hG = gap(r.y0, r.y1, (y) => S(r.x0, y, r.x1, y + 1) <= rt)
     const vG = gap(r.x0, r.x1, (x) => S(x, r.y0, x + 1, r.y1) <= ct)
@@ -81,6 +80,30 @@ function xyCut(raw, w, h) {
   return ps.length >= 2 ? orderManga(ps, w, h) : null
 }
 
+// ── Détecteur par CARTE DE CONTOURS (fond perdu / gouttières noires) ──
+function detectEdges(img) {
+  const maxW = 760
+  const iw = img.naturalWidth, ih = img.naturalHeight
+  if (!iw || !ih) return null
+  const s = Math.min(1, maxW / iw), w = Math.max(1, Math.round(iw * s)), h = Math.max(1, Math.round(ih * s))
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h
+  const ctx = cv.getContext('2d', { willReadFrequently: true })
+  try { ctx.drawImage(img, 0, 0, w, h) } catch { return null }
+  let px
+  try { px = ctx.getImageData(0, 0, w, h).data } catch { return null }
+  const g = new Int16Array(w * h)
+  for (let k = 0; k < w * h; k++) { const i = k * 4; g[k] = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000 | 0 }
+  const EDGE = 24
+  const E = new Uint8Array(w * h)
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const k = y * w + x
+    const gx = Math.abs(g[k] - (x > 0 ? g[k - 1] : g[k]))
+    const gy = Math.abs(g[k] - (y > 0 ? g[k - w] : g[k]))
+    E[k] = (gx + gy) > EDGE ? 1 : 0
+  }
+  return projCut(E, w, h, 0.07, 0.010, 0.020)
+}
+
 export function detectPanels(img, opts = {}) {
   const maxW = opts.maxW || 700
   const iw = img.naturalWidth, ih = img.naturalHeight
@@ -95,7 +118,6 @@ export function detectPanels(img, opts = {}) {
   const N = w * h
   const whole = [{ x: 0, y: 0, w: 1, h: 1 }]
 
-  // couleur de fond = moyenne du cadre extérieur (gouttière blanche OU sombre)
   let br = 0, bg = 0, bb = 0, bn = 0
   const acc = (x, y) => { const i = (y * w + x) * 4; br += px[i]; bg += px[i + 1]; bb += px[i + 2]; bn++ }
   for (let x = 0; x < w; x++) { acc(x, 0); acc(x, h - 1) }
@@ -103,15 +125,13 @@ export function detectPanels(img, opts = {}) {
   br /= bn; bg /= bn; bb /= bn
   const TOL = 48
 
-  // masque d'encre brut (1 = pas le fond) — sert au repli X-Y cut
-  const raw = new Uint8Array(N)
+  // masque d'encre + DILATATION (soude les trames → fonds clairs non absorbés)
+  const DIL = 2
+  let content = new Uint8Array(N)
   for (let k = 0; k < N; k++) {
     const i = k * 4
-    raw[k] = (Math.abs(px[i] - br) < TOL && Math.abs(px[i + 1] - bg) < TOL && Math.abs(px[i + 2] - bb) < TOL) ? 0 : 1
+    content[k] = (Math.abs(px[i] - br) < TOL && Math.abs(px[i + 1] - bg) < TOL && Math.abs(px[i + 2] - bb) < TOL) ? 0 : 1
   }
-  // DILATATION de l'encre → soude les trames (fonds clairs/texturés ne sont plus traversables)
-  const DIL = 2
-  let content = raw
   for (let it = 0; it < DIL; it++) {
     const nx = new Uint8Array(N)
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
@@ -121,7 +141,7 @@ export function detectPanels(img, opts = {}) {
     content = nx
   }
 
-  // 2) flood-fill du fond depuis les bords → masque gouttière
+  // flood-fill du fond depuis les bords → masque gouttière
   const gutter = new Uint8Array(N)
   const st = new Int32Array(N)
   let sp = 0
@@ -134,7 +154,7 @@ export function detectPanels(img, opts = {}) {
     if (y > 0) seed(k - w); if (y < h - 1) seed(k + w)
   }
 
-  // 3) composantes connexes des pixels NON-gouttière = cases candidates
+  // composantes connexes des pixels NON-gouttière = cases candidates
   const seen = new Uint8Array(N)
   const q = new Int32Array(N)
   const minArea = N * 0.008, minSide = Math.min(w, h) * 0.05
@@ -158,7 +178,7 @@ export function detectPanels(img, opts = {}) {
   }
   rects = rects.filter((r) => r.w * r.h < w * h * 0.96)
 
-  // Choix : la segmentation si elle a trouvé ≥2 cases, sinon repli X-Y cut (fond perdu), sinon planche entière
+  // Choix : segmentation si ≥2 cases (marge blanche), sinon repli carte de contours (fond perdu)
   if (rects.length >= 2) return orderManga(rects, w, h)
-  return xyCut(raw, w, h) || whole
+  return detectEdges(img) || whole
 }
