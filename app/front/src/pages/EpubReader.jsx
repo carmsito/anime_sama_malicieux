@@ -955,6 +955,11 @@ export default function EpubReader() {
                 </div>
               </div>
 
+              {/* Plein écran immersif — EN PREMIER */}
+              <button onClick={() => { fullscreen ? exitFullscreen() : enterFullscreen() }} style={toggleRow(fullscreen)}>
+                <span>Plein écran immersif</span><span style={pill(fullscreen)}>{fullscreen ? 'ON' : 'OFF'}</span>
+              </button>
+
               {/* Échelle — MÉCA DE BASE : le % change (le pincement zoome librement au-delà) */}
               <div style={section}>
                 <div style={label}>Taille de planche (pincer pour zoomer librement)</div>
@@ -1013,11 +1018,6 @@ export default function EpubReader() {
                   <span>Navigation à la molette / liseuse</span><span style={pill(scrollNav)}>{scrollNav ? 'ON' : 'OFF'}</span>
                 </button>
               )}
-
-              {/* Plein écran — toujours disponible */}
-              <button onClick={() => { fullscreen ? exitFullscreen() : enterFullscreen() }} style={{ ...toggleRow(fullscreen), marginBottom: '.5rem' }}>
-                <span>Plein écran immersif</span><span style={pill(fullscreen)}>{fullscreen ? 'ON' : 'OFF'}</span>
-              </button>
 
               <div style={{ fontSize: '.75rem', color: 'rgba(255,255,255,.4)', lineHeight: 1.7, marginTop: '.4rem' }}>
                 Options visibles et valeurs proposées : <b onClick={() => navigate('/settings')} style={{ cursor: 'pointer', textDecoration: 'underline' }}>Réglages</b>.
