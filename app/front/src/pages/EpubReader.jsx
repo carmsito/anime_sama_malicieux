@@ -83,6 +83,7 @@ export default function EpubReader() {
   const [panels, setPanels] = useState([])
   const [panelIdx, setPanelIdx] = useState(0)
   const [camXform, setCamXform] = useState('none')
+  const [panelDebug, setPanelDebug] = useState(false)   // vue debug : dessine les cases détectées + ordre
   const cinemaWrapRef = useRef(null)
   const cinemaImgRef = useRef(null)
   useEffect(() => {
@@ -305,6 +306,7 @@ export default function EpubReader() {
     return () => { window.removeEventListener('resize', onR); window.removeEventListener('orientationchange', onR) }
   }, [cinema])
   const cinemaTap = (e) => {
+    if (panelDebug) return
     const r = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - r.left
     if (x < r.width * 0.26) { setPanelIdx((i) => Math.max(0, i - 1)); return }   // tiers gauche → case précédente
@@ -972,18 +974,34 @@ export default function EpubReader() {
             style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: '#0a0a0a',
               zIndex: 20, cursor: 'pointer', touchAction: 'none' }}>
             <div style={{ position: 'absolute', top: 0, left: 0, width: '100%',
-              transform: camXform, transformOrigin: '0 0',
-              transition: 'transform .6s cubic-bezier(.4,0,.2,1)', willChange: 'transform' }}>
+              transform: panelDebug ? 'none' : camXform, transformOrigin: '0 0',
+              transition: panelDebug ? 'none' : 'transform .6s cubic-bezier(.4,0,.2,1)', willChange: 'transform' }}>
               <img ref={cinemaImgRef} src={images[current]} alt="" draggable={false}
                 onLoad={runDetect} style={{ width: '100%', display: 'block' }} />
+              {/* Vue debug : rectangles + numéro d'ordre de lecture, calés sur l'image */}
+              {panelDebug && panels.map((p, i) => (
+                <div key={i} style={{ position: 'absolute', left: `${p.x * 100}%`, top: `${p.y * 100}%`,
+                  width: `${p.w * 100}%`, height: `${p.h * 100}%`, boxSizing: 'border-box',
+                  border: '2px solid #e50914', background: 'rgba(229,9,20,.10)' }}>
+                  <span style={{ position: 'absolute', top: 2, right: 2, background: '#e50914', color: '#fff',
+                    fontSize: '.7rem', fontWeight: 800, padding: '1px 5px', borderRadius: 4 }}>{i + 1}</span>
+                </div>
+              ))}
             </div>
-            {/* léger vignettage pour l'ambiance cinéma */}
-            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none',
-              boxShadow: 'inset 0 0 120px 30px rgba(0,0,0,.55)' }} />
+            {/* léger vignettage pour l'ambiance cinéma (masqué en debug) */}
+            {!panelDebug && <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none',
+              boxShadow: 'inset 0 0 120px 30px rgba(0,0,0,.55)' }} />}
+            {/* Bouton debug (ne déclenche pas le tap de navigation) */}
+            <button onClick={(e) => { e.stopPropagation(); setPanelDebug((v) => !v) }} title="Voir les cases détectées"
+              style={{ position: 'absolute', top: 8, left: 8, zIndex: 3, border: 'none', cursor: 'pointer',
+                background: panelDebug ? '#e50914' : 'rgba(0,0,0,.55)', color: '#fff', borderRadius: 6,
+                padding: '.25rem .5rem', fontSize: '.72rem', fontWeight: 700 }}>⧉ {panels.length}</button>
             <div style={{ position: 'absolute', bottom: 8, left: 0, right: 0, textAlign: 'center',
               color: 'rgba(255,255,255,.7)', fontSize: '.72rem', pointerEvents: 'none',
               textShadow: '0 1px 3px #000' }}>
-              🎬 case {Math.min(panelIdx + 1, panels.length)} / {panels.length} · tape à droite = suivante, à gauche = précédente
+              {panelDebug
+                ? `${panels.length} case(s) détectée(s) — ordre de lecture affiché`
+                : `🎬 case ${Math.min(panelIdx + 1, panels.length)} / ${panels.length} · tape à droite = suivante, à gauche = précédente`}
             </div>
           </div>
         )}

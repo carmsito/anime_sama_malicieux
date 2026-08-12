@@ -53,8 +53,8 @@ export function detectPanels(img, opts = {}) {
   // 3) composantes connexes des pixels NON-gouttière = cases candidates
   const seen = new Uint8Array(N)
   const q = new Int32Array(N)
-  const minArea = N * 0.010
-  const minSide = Math.min(w, h) * 0.09
+  const minArea = N * 0.008
+  const minSide = Math.min(w, h) * 0.05   // tolère les cases fines (bandeaux larges, longues verticales)
   let rects = []
   for (let k0 = 0; k0 < N; k0++) {
     if (gutter[k0] || seen[k0]) continue
@@ -72,27 +72,25 @@ export function detectPanels(img, opts = {}) {
     }
     const bw = x1 - x0 + 1, bh = y1 - y0 + 1
     const fill = area / (bw * bh)
-    // 4) filtres : assez grande, pas un trait fin (cadre → faible remplissage)
-    if (area >= minArea && bw >= minSide && bh >= minSide && fill >= 0.35) {
+    // 4) filtres : assez grande, et pas un contour fin creux (cadre → très faible remplissage).
+    // fill bas toléré (0.18) pour garder les cases claires/peu encrées ou en L ; le cadre de page
+    // a un remplissage quasi nul (< 0.05) → écarté quand même.
+    if (area >= minArea && bw >= minSide && bh >= minSide && fill >= 0.18) {
       rects.push({ x: x0, y: y0, w: bw, h: bh, area })
     }
   }
 
   if (rects.length < 2) return whole   // rien de fiable (bleed, borderless…) → planche entière
 
-  // 4b) jette une case qui couvre quasi toute la page (fond/cadre résiduel), et les imbriquées
+  // 4b) jette seulement une case qui couvre quasi toute la page (cadre/fond résiduel).
+  // (Les composantes sont DÉJÀ disjointes → PAS de dé-doublonnage par imbrication : une grosse
+  //  case en L a une grande boîte qui peut contenir la boîte d'une vraie case voisine.)
   const pageArea = w * h
-  rects = rects.filter((r) => r.w * r.h < pageArea * 0.92)
-  rects.sort((a, b) => b.area - a.area)
-  const kept = []
-  for (const r of rects) {
-    const inside = kept.some((o) => r.x >= o.x - 2 && r.y >= o.y - 2 && r.x + r.w <= o.x + o.w + 2 && r.y + r.h <= o.y + o.h + 2)
-    if (!inside) kept.push(r)
-  }
-  if (kept.length < 2) return whole
+  rects = rects.filter((r) => r.w * r.h < pageArea * 0.96)
+  if (rects.length < 2) return whole
 
   // 5) regroupement en rangées (chevauchement vertical) → ordre manga
-  const byTop = [...kept].sort((a, b) => a.y - b.y)
+  const byTop = [...rects].sort((a, b) => a.y - b.y)
   const rows = []
   for (const p of byTop) {
     const pb = p.y + p.h
