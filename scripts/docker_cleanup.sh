@@ -29,8 +29,11 @@ mkdir -p "$(dirname "$LOG")"
 
   echo "[action] build cache → plafond ${KEEP_STORAGE}"
   # BuildKit : garde jusqu'à KEEP_STORAGE de cache, purge le reste (inutilisé).
-  docker builder prune -f --keep-storage "${KEEP_STORAGE}" 2>&1 || \
-    docker builder prune -f 2>&1 || true   # fallback si --keep-storage indisponible
+  # Le nom du flag a changé selon la version : --reserved-space (récent) ⇄ --keep-storage (ancien,
+  # déprécié). On tente le récent, puis l'ancien, puis un prune simple en dernier recours.
+  docker builder prune -f --reserved-space "${KEEP_STORAGE}" 2>&1 \
+    || docker builder prune -f --keep-storage "${KEEP_STORAGE}" 2>&1 \
+    || docker builder prune -f 2>&1 || true
 
   echo "[action] images dangling (sans tag, non utilisées)"
   docker image prune -f 2>&1 || true
