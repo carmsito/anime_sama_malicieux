@@ -33,13 +33,32 @@ export function detectPanels(img, opts = {}) {
   for (let y = 0; y < h; y++) { acc(0, y); acc(w - 1, y) }
   br /= bn; bg /= bn; bb /= bn
   const TOL = 48
-  const isBg = (k) => { const i = k * 4; return Math.abs(px[i] - br) < TOL && Math.abs(px[i + 1] - bg) < TOL && Math.abs(px[i + 2] - bb) < TOL }
+  // masque « encre » (tout ce qui n'est pas le fond) puis DILATATION : soude les trames des
+  // panneaux à fond clair/texturé → leur intérieur cesse d'être « traversable » par le flood,
+  // donc n'est plus absorbé dans la gouttière (fix cases claires manquantes). Les vraies
+  // gouttières (larges, sans encre) restent traversables.
+  const DIL = 2
+  let content = new Uint8Array(N)
+  for (let k = 0; k < N; k++) {
+    const i = k * 4
+    content[k] = (Math.abs(px[i] - br) < TOL && Math.abs(px[i + 1] - bg) < TOL && Math.abs(px[i + 2] - bb) < TOL) ? 0 : 1
+  }
+  for (let it = 0; it < DIL; it++) {
+    const nx = new Uint8Array(N)
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const k = y * w + x
+        if (content[k] || (x > 0 && content[k - 1]) || (x < w - 1 && content[k + 1]) || (y > 0 && content[k - w]) || (y < h - 1 && content[k + w])) nx[k] = 1
+      }
+    }
+    content = nx
+  }
 
-  // 2) flood-fill du fond depuis tous les bords → masque gouttière
+  // 2) flood-fill du fond depuis tous les bords → masque gouttière (à travers les zones vides)
   const gutter = new Uint8Array(N)
   const st = new Int32Array(N)
   let sp = 0
-  const seed = (k) => { if (!gutter[k] && isBg(k)) { gutter[k] = 1; st[sp++] = k } }
+  const seed = (k) => { if (!gutter[k] && content[k] === 0) { gutter[k] = 1; st[sp++] = k } }
   for (let x = 0; x < w; x++) { seed(x); seed((h - 1) * w + x) }
   for (let y = 0; y < h; y++) { seed(y * w); seed(y * w + w - 1) }
   while (sp > 0) {
