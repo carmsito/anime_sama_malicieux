@@ -228,7 +228,9 @@ export default function EpubReader() {
     const el = dockRef.current; if (!el) return
     const r = el.getBoundingClientRect()
     dockDragRef.current = { dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height }
-    try { el.setPointerCapture(e.pointerId) } catch { /* noop */ }
+    // Capture sur l'ÉLÉMENT qui reçoit les events (la poignée) → tous les move/up y arrivent = drag fluide.
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* noop */ }
+    e.preventDefault()
   }
   const onDockMove = (e) => {
     const d = dockDragRef.current; if (!d) return
@@ -250,6 +252,19 @@ export default function EpubReader() {
   }
   const setDockHiddenP = (v) => { setDockHidden(v); localStorage.setItem('reader_dock_hidden', v ? '1' : '0') }
   const dockOnRight = !dockPos || (dockPos.x + 30 > window.innerWidth / 2)   // côté d'aimantation (pour l'onglet masqué)
+  // Garde le dock dans l'écran quand on tourne le téléphone (paysage ⇄ portrait) ou qu'on redimensionne.
+  useEffect(() => {
+    const clampDock = () => setDockPos((p) => {
+      if (!p) return p
+      const x = Math.max(6, Math.min(window.innerWidth - 100, p.x))
+      const y = Math.max(6, Math.min(window.innerHeight - 130, p.y))
+      return (x === p.x && y === p.y) ? p : { x, y }
+    })
+    clampDock()
+    window.addEventListener('resize', clampDock)
+    window.addEventListener('orientationchange', clampDock)
+    return () => { window.removeEventListener('resize', clampDock); window.removeEventListener('orientationchange', clampDock) }
+  }, [])
   const cssReadFilter = (() => {
     const b = (brightness || 100) / 100
     if (readFilter === 'sepia') return `sepia(.55) saturate(.9) brightness(${b})`
@@ -285,6 +300,7 @@ export default function EpubReader() {
   const touchStartRef = useRef({ x: 0, y: 0 })
   const touchMovedRef = useRef(false)
   const pinchRef = useRef(null)             // pincement 2 doigts en cours : { d0, base, z }
+  const multiRef = useRef(false)            // un geste multi-touch a eu lieu → pas de nav de page dessus
 
   // Réinitialise le zoom à chaque changement de page / chapitre
   useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }) }, [current, chapterNum])
@@ -513,7 +529,9 @@ export default function EpubReader() {
     touchStartRef.current = { x: t.clientX, y: t.clientY }
     touchMovedRef.current = false
     autoPausedRef.current = true   // toucher l'écran → pause l'auto-scroll
-    if (e.touches.length === 2) {
+    if (e.touches.length === 1 && !pinchRef.current) multiRef.current = false   // nouveau geste 1 doigt
+    if (e.touches.length >= 2) {
+      multiRef.current = true
       const a = e.touches[0], b = e.touches[1]
       const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
       pinchRef.current = { d0: d || 1, base: zoomPctRef.current, z: zoomPctRef.current }
@@ -524,6 +542,7 @@ export default function EpubReader() {
 
   const onTouchMove = useCallback((e) => {
     if (showMenuRef.current) return
+    if (e.touches.length >= 2) multiRef.current = true
     if (pinchRef.current && e.touches.length === 2) {
       const a = e.touches[0], b = e.touches[1]
       const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
@@ -553,6 +572,8 @@ export default function EpubReader() {
     wheelPauseTimer.current = setTimeout(() => { autoPausedRef.current = false }, 350)
     // Fin d'un pincement → on garde l'échelle atteinte (transitoire, non persistée : la BASE reste).
     if (pinchRef.current) { pinchRef.current = null; return }
+    // Geste multi-touch (pincement) → n'est JAMAIS un tap/double-tap/swipe de page (fix molette+pincement).
+    if (multiRef.current) { if (e.touches.length === 0) multiRef.current = false; return }
     // Fin d'un pan de loupe → pas un tap.
     if (zoomed && touchMovedRef.current) { panStartRef.current = null; return }
 
@@ -954,7 +975,7 @@ export default function EpubReader() {
               width: 96, background: 'rgba(20,20,24,.94)', border: '1px solid rgba(255,255,255,.12)',
               borderRadius: 16, boxShadow: '0 4px 22px rgba(0,0,0,.55)', padding: 6, touchAction: 'none' }}>
             {/* Poignée de déplacement + bouton masquer */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5, cursor: 'grab' }}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5, cursor: 'grab', touchAction: 'none', padding: '2px 0' }}
               onPointerDown={onDockDown} onPointerMove={onDockMove} onPointerUp={onDockUp}>
               <span style={{ display: 'flex', gap: 2, paddingLeft: 4 }}>
                 {[0, 1, 2].map((i) => <span key={i} style={{ width: 3, height: 3, borderRadius: '50%', background: 'rgba(255,255,255,.4)' }} />)}
