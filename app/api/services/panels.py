@@ -210,10 +210,29 @@ def _center_in(outer, p):
     return outer["x"] <= cx <= outer["x"] + outer["w"] and outer["y"] <= cy <= outer["y"] + outer["h"]
 
 
+def _disk_path(key):
+    from pathlib import Path
+    from ..config import DATA_DIR
+    d = Path(DATA_DIR) / "panel_cache"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{key}.json"
+
+
 def detect(raw_bytes: bytes) -> list:
+    import json
     key = hashlib.sha1(raw_bytes).hexdigest()
     if key in _cache:
         return _cache[key]
+    # Cache PERSISTANT (disque) : une planche déjà découpée est instantanée à toute réouverture
+    # (y compris la reprise au marque-page), et partagée entre lectures/utilisateurs.
+    try:
+        f = _disk_path(key)
+        if f.exists():
+            res = json.loads(f.read_text())
+            _cache[key] = res
+            return res
+    except Exception:
+        pass
     img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
     W, H = img.size
     try:
@@ -237,6 +256,10 @@ def detect(raw_bytes: bytes) -> list:
         merged = [{"x": 0, "y": 0, "w": W, "h": H}]
     ordered = _order_manga(merged, W, H)
     res = [{"x": r["x"] / W, "y": r["y"] / H, "w": r["w"] / W, "h": r["h"] / H} for r in ordered]
+    try:
+        _disk_path(key).write_text(json.dumps(res))    # persiste sur disque
+    except Exception:
+        pass
     if len(_cache) > 800:
         _cache.clear()
     _cache[key] = res
