@@ -21,22 +21,32 @@ _CONF = 0.25
 _cache: dict[str, list] = {}
 
 
-def _order_manga(rects, w, h):
-    rows = []
-    for p in sorted(rects, key=lambda r: r["y"]):
-        pb = p["y"] + p["h"]; row = None
-        for r in rows:
-            ov = min(pb, r["y1"]) - max(p["y"], r["y0"])
-            if ov > 0.5 * min(p["h"], r["y1"] - r["y0"]):
-                row = r; break
-        if row:
-            row["items"].append(p); row["y0"] = min(row["y0"], p["y"]); row["y1"] = max(row["y1"], pb)
-        else:
-            rows.append({"y0": p["y"], "y1": pb, "items": [p]})
-    rows.sort(key=lambda r: r["y0"]); out = []
-    for r in rows:
-        r["items"].sort(key=lambda p: -(p["x"] + p["w"])); out += r["items"]
-    return out
+def _order_manga(rects, w=None, h=None):
+    """Ordre de lecture MANGA par COUPE SÉPARATRICE récursive (X-Y cut sur les cases) :
+    on coupe le long du plus grand « couloir » propre — vertical → DROITE d'abord, horizontal
+    → HAUT d'abord — puis on recurse. Une case pleine hauteur bloque toute coupe horizontale
+    (donc la colonne verticale à côté est lue en entier au bon endroit), etc."""
+    def rec(items):
+        n = len(items)
+        if n <= 1:
+            return list(items)
+        best = None  # (gap, groupeA_lu_avant, groupeB)
+        xs = sorted(items, key=lambda r: r["x"]); maxr = -1e18
+        for i in range(n - 1):
+            maxr = max(maxr, xs[i]["x"] + xs[i]["w"])
+            g = min(r["x"] for r in xs[i + 1:]) - maxr          # couloir vertical net ?
+            if g > 0 and (best is None or g > best[0]):
+                best = (g, xs[i + 1:], xs[:i + 1])              # A = droite (lue d'abord), B = gauche
+        ys = sorted(items, key=lambda r: r["y"]); maxb = -1e18
+        for i in range(n - 1):
+            maxb = max(maxb, ys[i]["y"] + ys[i]["h"])
+            g = min(r["y"] for r in ys[i + 1:]) - maxb          # couloir horizontal net ?
+            if g > 0 and (best is None or g > best[0]):
+                best = (g, ys[:i + 1], ys[i + 1:])              # A = haut (lue d'abord), B = bas
+        if best is None:                                        # interlocking : approx droite→gauche, haut→bas
+            return sorted(items, key=lambda r: (r["y"], -(r["x"] + r["w"])))
+        return rec(best[1]) + rec(best[2])
+    return rec(list(rects))
 
 
 # ── Heuristique (repli / complément) : renvoie des cases normalisées [0..1] ──

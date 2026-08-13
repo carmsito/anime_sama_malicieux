@@ -10,23 +10,34 @@
 //    = bande SANS contour (uniforme, blanche ou noire) ; le contenu = beaucoup de contours.
 // Repli ultime : planche entière (1 case).
 
-// ── Ordre manga : rangées (chevauchement vertical) haut→bas, droite→gauche dans la rangée ──
+// ── Ordre manga par COUPE SÉPARATRICE récursive : on coupe le long du plus grand couloir
+//    propre — vertical → DROITE d'abord, horizontal → HAUT d'abord — puis on recurse. Une case
+//    pleine hauteur bloque toute coupe horizontale (la colonne à côté est lue au bon endroit). ──
 function orderManga(rects, w, h) {
-  const rows = []
-  for (const p of [...rects].sort((a, b) => a.y - b.y)) {
-    const pb = p.y + p.h
-    let row = null
-    for (const r of rows) {
-      const ov = Math.min(pb, r.y1) - Math.max(p.y, r.y0)
-      if (ov > 0.5 * Math.min(p.h, r.y1 - r.y0)) { row = r; break }
+  const rec = (items) => {
+    const n = items.length
+    if (n <= 1) return items.slice()
+    let best = null
+    const xs = [...items].sort((a, b) => a.x - b.x)
+    let maxr = -1e18
+    for (let i = 0; i < n - 1; i++) {
+      maxr = Math.max(maxr, xs[i].x + xs[i].w)
+      let minl = Infinity; for (let j = i + 1; j < n; j++) minl = Math.min(minl, xs[j].x)
+      const g = minl - maxr
+      if (g > 0 && (!best || g > best.g)) best = { g, A: xs.slice(i + 1), B: xs.slice(0, i + 1) }  // A = droite (lue d'abord)
     }
-    if (row) { row.items.push(p); row.y0 = Math.min(row.y0, p.y); row.y1 = Math.max(row.y1, pb) }
-    else rows.push({ y0: p.y, y1: pb, items: [p] })
+    const ys = [...items].sort((a, b) => a.y - b.y)
+    let maxb = -1e18
+    for (let i = 0; i < n - 1; i++) {
+      maxb = Math.max(maxb, ys[i].y + ys[i].h)
+      let mint = Infinity; for (let j = i + 1; j < n; j++) mint = Math.min(mint, ys[j].y)
+      const g = mint - maxb
+      if (g > 0 && (!best || g > best.g)) best = { g, A: ys.slice(0, i + 1), B: ys.slice(i + 1) }  // A = haut (lue d'abord)
+    }
+    if (!best) return [...items].sort((a, b) => a.y - b.y || (b.x + b.w) - (a.x + a.w))
+    return rec(best.A).concat(rec(best.B))
   }
-  rows.sort((a, b) => a.y0 - b.y0)
-  const out = []
-  for (const r of rows) { r.items.sort((a, b) => (b.x + b.w) - (a.x + a.w)); out.push(...r.items) }
-  return out.map((p) => ({ x: p.x / w, y: p.y / h, w: p.w / w, h: p.h / h }))
+  return rec([...rects]).map((p) => ({ x: p.x / w, y: p.y / h, w: p.w / w, h: p.h / h }))
 }
 
 // ── X-Y cut générique sur un masque binaire (1 = contenu). Table cumulée → somme O(1). ──
