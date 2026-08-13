@@ -17,6 +17,8 @@
 }
 
 html, body, #root { height: 100%; }
+/* Pas de rebond/overscroll du document (feel APPLI, pas site) sur iOS/PWA */
+html, body { overscroll-behavior: none; }
 body {
   background: var(--bg);
   color: var(--text);
@@ -32,8 +34,10 @@ a { color: inherit; text-decoration: none; }
 /* ── LECTEUR : hauteur = zone visible réelle (100dvh), header+footer toujours visibles.
       dvh s'adapte à la taille de l'écran (iPhone 13, 17 Pro Max, etc.). ── */
 .reader-root {
+  position: fixed; top: 0; left: 0; right: 0;   /* pinné au viewport : aucun scroll de page */
   height: 100vh;              /* fallback anciens navigateurs */
   height: 100dvh;            /* zone visible dynamique → header ET footer visibles */
+  overflow: hidden;
 }
 .reader-bottombar {
   /* Remonte la barre au-dessus de la barre home iPhone */
