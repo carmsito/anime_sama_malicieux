@@ -84,6 +84,12 @@ export default function EpubReader() {
   const [panelIdx, setPanelIdx] = useState(0)
   const [camXform, setCamXform] = useState('none')
   const [panelDebug, setPanelDebug] = useState(false)   // vue debug : dessine les cases détectées + ordre
+  const [detecting, setDetecting] = useState(false)     // découpage en cours → on montre la planche entière
+  const [cinemaZoom, setCinemaZoom] = useState(1)       // mise à l'échelle UTILISATEUR par-dessus le cadrage
+  const [cinemaPan, setCinemaPan] = useState({ x: 0, y: 0 })
+  const camBaseRef = useRef(null)                        // { cx, cy, baseK } du cadrage caméra
+  const cinPinchRef = useRef(null)
+  const cinPanRef = useRef(null)
   const cinemaWrapRef = useRef(null)
   const cinemaImgRef = useRef(null)
   const panelCacheRef = useRef({})   // { "manga:chap:page": panels } — évite de re-détecter
@@ -282,6 +288,8 @@ export default function EpubReader() {
     const key = `${mangaId}:${chapterNum}:${current}`
     const cached = panelCacheRef.current[key]
     if (cached) { setPanels(cached); setPanelIdx(0); return }
+    // Pendant la détection : on montre la planche ENTIÈRE (jamais un mauvais découpage) + indicateur.
+    setPanels([{ x: 0, y: 0, w: 1, h: 1 }]); setPanelIdx(0); setDetecting(true)
     let ps = null
     try {
       const W = Math.min(860, im.naturalWidth), sc = W / im.naturalWidth, H = Math.round(im.naturalHeight * sc)
@@ -294,6 +302,7 @@ export default function EpubReader() {
     if (!ps) ps = detectPanels(im)                       // repli heuristique client
     if (!ps || !ps.length) ps = [{ x: 0, y: 0, w: 1, h: 1 }]
     panelCacheRef.current[key] = ps
+    setDetecting(false)
     setPanels(ps); setPanelIdx(0)
   }
   useEffect(() => { setPanelIdx(0) }, [current, chapterNum])   // nouvelle planche → 1re case
@@ -312,9 +321,12 @@ export default function EpubReader() {
     const p = panels[Math.min(panelIdx, panels.length - 1)] || { x: 0, y: 0, w: 1, h: 1 }
     const pw = p.w * dispW, ph = p.h * dispH
     const cx = (p.x + p.w / 2) * dispW, cy = (p.y + p.h / 2) * dispH
-    const k = Math.max(1, Math.min((CW / pw) * 0.94, (CH / ph) * 0.94))   // jamais moins large que fit
-    setCamXform(`translate(${CW / 2 - k * cx}px, ${CH / 2 - k * cy}px) scale(${k})`)
-  }, [cinema, panels, panelIdx, current, fullscreen])
+    const baseK = Math.max(1, Math.min((CW / pw) * 0.94, (CH / ph) * 0.94))   // cadrage : jamais moins large que fit
+    camBaseRef.current = { cx, cy, baseK }
+    const k = baseK * cinemaZoom                                              // + mise à l'échelle UTILISATEUR
+    setCamXform(`translate(${CW / 2 - k * cx + cinemaPan.x}px, ${CH / 2 - k * cy + cinemaPan.y}px) scale(${k})`)
+  }, [cinema, panels, panelIdx, current, fullscreen, cinemaZoom, cinemaPan])
+  useEffect(() => { setCinemaZoom(1); setCinemaPan({ x: 0, y: 0 }) }, [panelIdx, current, chapterNum])  // reset zoom user
   useEffect(() => {
     if (!cinema) return
     const onR = () => setPanelIdx((i) => i)   // force un recalcul de caméra au resize/rotation
@@ -349,12 +361,45 @@ export default function EpubReader() {
     catch { setPanelSaved('échec réseau') }
     setTimeout(() => setPanelSaved(''), 4000)
   }
-  const cinemaTap = (e) => {
+  // Navigation case par case : tiers gauche → précédente, sinon suivante (puis page suivante).
+  const cinemaStep = (clientX, el) => {
     if (panelDebug) return
-    const r = e.currentTarget.getBoundingClientRect()
-    const x = e.clientX - r.left
-    if (x < r.width * 0.26) { setPanelIdx((i) => Math.max(0, i - 1)); return }   // tiers gauche → case précédente
-    setPanelIdx((i) => { if (i < panels.length - 1) return i + 1; goNext(); return i })  // sinon → suivante / page suivante
+    const r = el.getBoundingClientRect()
+    if (clientX - r.left < r.width * 0.26) { setPanelIdx((i) => Math.max(0, i - 1)); return }
+    setPanelIdx((i) => { if (i < panels.length - 1) return i + 1; goNext(); return i })
+  }
+  const cinemaClick = (e) => { if (!IS_TOUCH) cinemaStep(e.clientX, e.currentTarget) }   // desktop
+  // Tactile : pincement = mise à l'échelle utilisateur (par-dessus le cadrage), glisser = pan,
+  // tap = navigation. Permet de zoomer soi-même une case (utile en paysage).
+  const onCinTouchStart = (e) => {
+    if (panelDebug) return
+    if (e.touches.length === 2) {
+      const a = e.touches[0], b = e.touches[1]
+      cinPinchRef.current = { d0: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1, base: cinemaZoom }
+      cinPanRef.current = null
+    } else if (e.touches.length === 1 && cinemaZoom > 1.01) {
+      const t = e.touches[0]
+      cinPanRef.current = { px: cinemaPan.x, py: cinemaPan.y, tx: t.clientX, ty: t.clientY, moved: false }
+    }
+  }
+  const onCinTouchMove = (e) => {
+    if (cinPinchRef.current && e.touches.length === 2) {
+      const a = e.touches[0], b = e.touches[1]
+      const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+      setCinemaZoom(Math.max(1, Math.min(5, cinPinchRef.current.base * (d / cinPinchRef.current.d0))))
+      return
+    }
+    if (cinPanRef.current && e.touches.length === 1) {
+      const t = e.touches[0], dx = t.clientX - cinPanRef.current.tx, dy = t.clientY - cinPanRef.current.ty
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) cinPanRef.current.moved = true
+      setCinemaPan({ x: cinPanRef.current.px + dx, y: cinPanRef.current.py + dy })
+    }
+  }
+  const onCinTouchEnd = (e) => {
+    if (cinPinchRef.current) { cinPinchRef.current = null; return }
+    if (cinPanRef.current) { const moved = cinPanRef.current.moved; cinPanRef.current = null; if (moved) return }
+    const t = e.changedTouches[0]
+    cinemaStep(t.clientX, e.currentTarget)
   }
   const dockOnRight = !dockPos || (dockPos.x + 30 > window.innerWidth / 2)   // côté d'aimantation (pour l'onglet masqué)
   // Garde le dock dans l'écran quand on tourne le téléphone (paysage ⇄ portrait) ou qu'on redimensionne.
@@ -1014,12 +1059,13 @@ export default function EpubReader() {
 
         {/* ── Calque Mode Cinéma : caméra qui cadre la case courante (sens manga) ── */}
         {cinema && loaded && images.length > 0 && (
-          <div ref={cinemaWrapRef} onClick={cinemaTap}
+          <div ref={cinemaWrapRef} onClick={cinemaClick}
+            onTouchStart={onCinTouchStart} onTouchMove={onCinTouchMove} onTouchEnd={onCinTouchEnd}
             style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: '#0a0a0a',
               zIndex: 20, cursor: 'pointer', touchAction: 'none' }}>
             <div style={{ position: 'absolute', top: 0, left: 0, width: '100%',
               transform: panelDebug ? 'none' : camXform, transformOrigin: '0 0',
-              transition: panelDebug ? 'none' : 'transform .6s cubic-bezier(.4,0,.2,1)', willChange: 'transform' }}>
+              transition: (panelDebug || cinPinchRef.current || cinPanRef.current) ? 'none' : 'transform .6s cubic-bezier(.4,0,.2,1)', willChange: 'transform' }}>
               <img ref={cinemaImgRef} src={images[current]} alt="" draggable={false}
                 onLoad={runDetect} style={{ width: '100%', display: 'block' }} />
               {/* Vue debug : rectangles + numéro d'ordre de lecture, calés sur l'image */}
@@ -1053,9 +1099,11 @@ export default function EpubReader() {
             <div style={{ position: 'absolute', bottom: 8, left: 0, right: 0, textAlign: 'center',
               color: 'rgba(255,255,255,.7)', fontSize: '.72rem', pointerEvents: 'none',
               textShadow: '0 1px 3px #000' }}>
-              {panelDebug
-                ? `${panels.length} case(s) détectée(s) — ordre de lecture affiché`
-                : `🎬 case ${Math.min(panelIdx + 1, panels.length)} / ${panels.length} · tape à droite = suivante, à gauche = précédente`}
+              {detecting
+                ? '🎬 découpage en cours… (planche entière en attendant)'
+                : panelDebug
+                  ? `${panels.length} case(s) détectée(s) — ordre de lecture affiché`
+                  : `🎬 case ${Math.min(panelIdx + 1, panels.length)} / ${panels.length}${cinemaZoom > 1.01 ? ` · ×${cinemaZoom.toFixed(1)}` : ''} · tape à droite = suivante, pince pour zoomer`}
             </div>
           </div>
         )}

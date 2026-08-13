@@ -11,6 +11,18 @@ from .services.scraper import warm_base_url
 from .services import job_queue, db
 
 
+def _warm_panels():
+    """Précharge la session ONNX du détecteur de cases au démarrage (sinon 1er appel ~2 s)."""
+    try:
+        import io
+        from PIL import Image
+        from .services import panels
+        buf = io.BytesIO(); Image.new("RGB", (64, 96), (255, 255, 255)).save(buf, "PNG")
+        panels.detect(buf.getvalue())
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     loop = asyncio.get_event_loop()
@@ -18,6 +30,7 @@ async def lifespan(app: FastAPI):
     from .auth import ensure_admin
     ensure_admin()     # migration rôles : garantit un admin
     loop.run_in_executor(None, warm_base_url)  # non-blocking warm-up
+    loop.run_in_executor(None, _warm_panels)   # charge le modèle de découpe (Cinéma) → 0 latence au 1er appel
     job_queue.start()  # démarre le pool de workers
     from .services import scenarios
     scenarios.start_scheduler()   # scénarios : vérif intégrité + balayage cache (auto 15 min + programmé)
