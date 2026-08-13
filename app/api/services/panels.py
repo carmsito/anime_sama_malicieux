@@ -205,6 +205,11 @@ def _overlap(a, m):
     return inter / (a["w"] * a["h"] + 1e-6)
 
 
+def _center_in(outer, p):
+    cx, cy = p["x"] + p["w"] / 2, p["y"] + p["h"] / 2
+    return outer["x"] <= cx <= outer["x"] + outer["w"] and outer["y"] <= cy <= outer["y"] + outer["h"]
+
+
 def detect(raw_bytes: bytes) -> list:
     key = hashlib.sha1(raw_bytes).hexdigest()
     if key in _cache:
@@ -221,8 +226,13 @@ def detect(raw_bytes: bytes) -> list:
     merged = list(M)
     for hf in Hpx:                                   # ajoute seulement les GRANDES cases non couvertes
         if hf["w"] * hf["h"] < 0.06 * W * H: continue
-        if max((_overlap(hf, m) for m in M), default=0) < 0.35:
-            merged.append(hf)
+        if max((_overlap(hf, m) for m in M), default=0) >= 0.35: continue   # déjà couverte par le modèle
+        if any(_center_in(hf, m) for m in M): continue                      # ENGLOBE une case modèle → super-boîte
+        merged.append(hf)
+    # Nettoyage : retire toute boîte qui contient le centre de ≥2 AUTRES boîtes (super-boîte résiduelle)
+    clean = [a for i, a in enumerate(merged)
+             if sum(1 for j, b in enumerate(merged) if i != j and _center_in(a, b)) < 2]
+    merged = clean or merged
     if not merged:
         merged = [{"x": 0, "y": 0, "w": W, "h": H}]
     ordered = _order_manga(merged, W, H)
