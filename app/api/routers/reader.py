@@ -48,3 +48,25 @@ def save_panel_debug(body: dict, user: dict = Depends(get_current_user)):
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{safe}.png").write_bytes(raw)
     return {"ok": True, "name": f"{safe}.png"}
+
+
+@router.post("/reader/panels", summary="Détecter les cases d'une planche (Mode Cinéma)")
+def detect_panels_ep(body: dict, user: dict = Depends(get_current_user)):
+    """Reçoit la planche courante (data URL, envoyée par le client) → renvoie les cases
+    détectées (modèle YOLO manga109 + heuristique), normalisées [0..1], en ordre de lecture."""
+    import base64, re
+    data = (body.get("image") or "")
+    m = re.match(r"^data:image/(?:png|jpeg);base64,(.+)$", data, re.DOTALL)
+    if not m:
+        return {"panels": []}
+    try:
+        raw = base64.b64decode(m.group(1))
+    except Exception:
+        return {"panels": []}
+    if len(raw) > 8_000_000:
+        return {"panels": []}
+    try:
+        from ..services import panels as panels_svc
+        return {"panels": panels_svc.detect(raw)}
+    except Exception as e:
+        return {"panels": [], "error": str(e)[:200]}

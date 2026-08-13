@@ -30,4 +30,12 @@ bgutil-ytdlp-pot-provider
 # PySocks : support des proxys socks5 (YTDLP_PROXY) pour yt-dlp ET le relais de flux.
 PySocks
 
+# Détection de cases (Mode Cinéma) : modèle YOLOv8 manga109 (deepghs) exécuté en ONNX direct
+# (CPU) — pas d'imgutils/opencv (trop lourd/instable). Modèle nano (~10 Mo) mis en cache dans
+# srv-data (HF_HOME) → persiste, pas de re-download.
+onnxruntime>=1.17
+numpy>=1.24
+Pillow>=10.0
+huggingface_hub>=0.23
+
 # Système requis (NON pip) : chromium, xvfb, imagemagick (voir deploy/Dockerfile)

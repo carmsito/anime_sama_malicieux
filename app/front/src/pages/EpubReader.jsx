@@ -86,6 +86,7 @@ export default function EpubReader() {
   const [panelDebug, setPanelDebug] = useState(false)   // vue debug : dessine les cases détectées + ordre
   const cinemaWrapRef = useRef(null)
   const cinemaImgRef = useRef(null)
+  const panelCacheRef = useRef({})   // { "manga:chap:page": panels } — évite de re-détecter
   useEffect(() => {
     let alive = true
     loadProfiles(uid).then((st) => {
@@ -273,11 +274,27 @@ export default function EpubReader() {
   const setDockHiddenP = (v) => { setDockHidden(v); localStorage.setItem('reader_dock_hidden', v ? '1' : '0') }
   // ── Mode Cinéma ──
   const toggleCinema = () => setCinema((v) => { const n = !v; localStorage.setItem('reader_cinema', n ? '1' : '0'); return n })
-  const runDetect = () => {
+  // Détection des cases : MODÈLE côté serveur (YOLO manga109) en priorité, repli sur le
+  // détecteur heuristique JS si le serveur est indisponible. Cache par planche.
+  const runDetect = async () => {
     const im = cinemaImgRef.current
-    const ps = im ? detectPanels(im) : null
-    setPanels(ps && ps.length ? ps : [{ x: 0, y: 0, w: 1, h: 1 }])
-    setPanelIdx(0)
+    if (!im || !im.naturalWidth) return
+    const key = `${mangaId}:${chapterNum}:${current}`
+    const cached = panelCacheRef.current[key]
+    if (cached) { setPanels(cached); setPanelIdx(0); return }
+    let ps = null
+    try {
+      const W = Math.min(860, im.naturalWidth), sc = W / im.naturalWidth, H = Math.round(im.naturalHeight * sc)
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = H
+      cv.getContext('2d').drawImage(im, 0, 0, W, H)
+      const url = cv.toDataURL('image/jpeg', 0.85)
+      const r = await api.detectPanels(url)
+      if (r && Array.isArray(r.panels) && r.panels.length) ps = r.panels
+    } catch { /* serveur KO → repli */ }
+    if (!ps) ps = detectPanels(im)                       // repli heuristique client
+    if (!ps || !ps.length) ps = [{ x: 0, y: 0, w: 1, h: 1 }]
+    panelCacheRef.current[key] = ps
+    setPanels(ps); setPanelIdx(0)
   }
   useEffect(() => { setPanelIdx(0) }, [current, chapterNum])   // nouvelle planche → 1re case
   useEffect(() => {   // image déjà en cache → onLoad ne se déclenche pas : on détecte quand même

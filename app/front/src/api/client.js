@@ -149,6 +149,7 @@ export const api = {
   getReaderProfiles: () => req('/me/reader-profiles'),
   setReaderProfiles: (store) => req('/me/reader-profiles', { method: 'PUT', body: JSON.stringify(store) }),
   savePanelDebug: (name, image) => req('/reader/panel-debug', { method: 'POST', body: JSON.stringify({ name, image }) }),
+  detectPanels: (image) => req('/reader/panels', { method: 'POST', body: JSON.stringify({ image }) }),
 
   // Jobs
   listJobs: () => req('/jobs'),

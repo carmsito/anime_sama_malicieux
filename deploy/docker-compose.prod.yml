@@ -17,6 +17,8 @@ services:
       FLARESOLVERR_URL: http://flaresolverr:8191/v1
       BGUTIL_BASE_URL: http://bgutil-provider:4416
       YT_EXTRACTOR_URL: http://yt-extractor:8080
+      # Cache HuggingFace dans srv-data (monté) → le modèle de détection de cases persiste
+      HF_HOME: /srv/app/api/data/hf_cache
     depends_on:
       - flaresolverr
       - bgutil-provider
