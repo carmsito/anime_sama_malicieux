@@ -85,14 +85,18 @@ export default function EpubReader() {
   const [camXform, setCamXform] = useState('none')
   const [panelDebug, setPanelDebug] = useState(false)   // vue debug : dessine les cases détectées + ordre
   const [detecting, setDetecting] = useState(false)     // découpage en cours → on montre la planche entière
-  const [cinemaZoom, setCinemaZoom] = useState(1)       // mise à l'échelle UTILISATEUR par-dessus le cadrage
+  // Mise à l'échelle UTILISATEUR en cinéma : PERSISTE d'une case/planche/session à l'autre.
+  const [cinemaZoom, setCinemaZoomState] = useState(() => { const v = Number(localStorage.getItem('reader_cinema_zoom')); return v >= 1 && v <= 5 ? v : 1 })
+  const setCinemaZoom = (z) => { const v = Math.max(1, Math.min(5, z)); localStorage.setItem('reader_cinema_zoom', String(v)); setCinemaZoomState(v) }
   const [cinemaPan, setCinemaPan] = useState({ x: 0, y: 0 })
+  const [cinInteract, setCinInteract] = useState(false) // pincement/glissement en cours → transition off
   const camBaseRef = useRef(null)                        // { cx, cy, baseK } du cadrage caméra
   const cinPinchRef = useRef(null)
   const cinPanRef = useRef(null)
   const cinemaWrapRef = useRef(null)
   const cinemaImgRef = useRef(null)
   const panelCacheRef = useRef({})   // { "manga:chap:page": panels } — évite de re-détecter
+  const detectKeyRef = useRef(null)  // planche en cours de détection (dédoublonnage)
   useEffect(() => {
     let alive = true
     loadProfiles(uid).then((st) => {
@@ -288,6 +292,8 @@ export default function EpubReader() {
     const key = `${mangaId}:${chapterNum}:${current}`
     const cached = panelCacheRef.current[key]
     if (cached) { setPanels(cached); setPanelIdx(0); return }
+    if (detectKeyRef.current === key) return          // déjà en cours (évite onLoad + effet en double)
+    detectKeyRef.current = key
     // Pendant la détection : on montre la planche ENTIÈRE (jamais un mauvais découpage) + indicateur.
     setPanels([{ x: 0, y: 0, w: 1, h: 1 }]); setPanelIdx(0); setDetecting(true)
     let ps = null
@@ -302,8 +308,27 @@ export default function EpubReader() {
     if (!ps) ps = detectPanels(im)                       // repli heuristique client
     if (!ps || !ps.length) ps = [{ x: 0, y: 0, w: 1, h: 1 }]
     panelCacheRef.current[key] = ps
+    if (detectKeyRef.current === key) detectKeyRef.current = null
     setDetecting(false)
     setPanels(ps); setPanelIdx(0)
+    prefetchDetect(current + 1)   // prépare la suivante en fond → navigation instantanée
+  }
+  // Détecte une planche EN FOND (sans toucher l'affichage) → mise en cache pour l'avance instantanée.
+  const prefetchDetect = (idx) => {
+    if (idx < 0 || idx >= images.length) return
+    const key = `${mangaId}:${chapterNum}:${idx}`
+    if (panelCacheRef.current[key]) return
+    const im = new Image()
+    im.onload = async () => {
+      try {
+        const W = Math.min(860, im.naturalWidth), sc = W / im.naturalWidth, H = Math.round(im.naturalHeight * sc)
+        const cv = document.createElement('canvas'); cv.width = W; cv.height = H
+        cv.getContext('2d').drawImage(im, 0, 0, W, H)
+        const r = await api.detectPanels(cv.toDataURL('image/jpeg', 0.85))
+        if (r && Array.isArray(r.panels) && r.panels.length && !panelCacheRef.current[key]) panelCacheRef.current[key] = r.panels
+      } catch { /* silencieux */ }
+    }
+    im.src = images[idx]
   }
   useEffect(() => { setPanelIdx(0) }, [current, chapterNum])   // nouvelle planche → 1re case
   useEffect(() => {   // image déjà en cache → onLoad ne se déclenche pas : on détecte quand même
@@ -326,7 +351,7 @@ export default function EpubReader() {
     const k = baseK * cinemaZoom                                              // + mise à l'échelle UTILISATEUR
     setCamXform(`translate(${CW / 2 - k * cx + cinemaPan.x}px, ${CH / 2 - k * cy + cinemaPan.y}px) scale(${k})`)
   }, [cinema, panels, panelIdx, current, fullscreen, cinemaZoom, cinemaPan])
-  useEffect(() => { setCinemaZoom(1); setCinemaPan({ x: 0, y: 0 }) }, [panelIdx, current, chapterNum])  // reset zoom user
+  useEffect(() => { setCinemaPan({ x: 0, y: 0 }) }, [panelIdx, current, chapterNum])  // reset PAN seulement (le zoom persiste)
   useEffect(() => {
     if (!cinema) return
     const onR = () => setPanelIdx((i) => i)   // force un recalcul de caméra au resize/rotation
@@ -376,7 +401,7 @@ export default function EpubReader() {
     if (e.touches.length === 2) {
       const a = e.touches[0], b = e.touches[1]
       cinPinchRef.current = { d0: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1, base: cinemaZoom }
-      cinPanRef.current = null
+      cinPanRef.current = null; setCinInteract(true)
     } else if (e.touches.length === 1 && cinemaZoom > 1.01) {
       const t = e.touches[0]
       cinPanRef.current = { px: cinemaPan.x, py: cinemaPan.y, tx: t.clientX, ty: t.clientY, moved: false }
@@ -386,18 +411,18 @@ export default function EpubReader() {
     if (cinPinchRef.current && e.touches.length === 2) {
       const a = e.touches[0], b = e.touches[1]
       const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
-      setCinemaZoom(Math.max(1, Math.min(5, cinPinchRef.current.base * (d / cinPinchRef.current.d0))))
+      setCinemaZoom(cinPinchRef.current.base * (d / cinPinchRef.current.d0))
       return
     }
     if (cinPanRef.current && e.touches.length === 1) {
       const t = e.touches[0], dx = t.clientX - cinPanRef.current.tx, dy = t.clientY - cinPanRef.current.ty
-      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) cinPanRef.current.moved = true
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) { cinPanRef.current.moved = true; setCinInteract(true) }
       setCinemaPan({ x: cinPanRef.current.px + dx, y: cinPanRef.current.py + dy })
     }
   }
   const onCinTouchEnd = (e) => {
-    if (cinPinchRef.current) { cinPinchRef.current = null; return }
-    if (cinPanRef.current) { const moved = cinPanRef.current.moved; cinPanRef.current = null; if (moved) return }
+    if (cinPinchRef.current) { cinPinchRef.current = null; setCinInteract(false); return }
+    if (cinPanRef.current) { const moved = cinPanRef.current.moved; cinPanRef.current = null; setCinInteract(false); if (moved) return }
     const t = e.changedTouches[0]
     cinemaStep(t.clientX, e.currentTarget)
   }
@@ -1065,7 +1090,7 @@ export default function EpubReader() {
               zIndex: 20, cursor: 'pointer', touchAction: 'none' }}>
             <div style={{ position: 'absolute', top: 0, left: 0, width: '100%',
               transform: panelDebug ? 'none' : camXform, transformOrigin: '0 0',
-              transition: (panelDebug || cinPinchRef.current || cinPanRef.current) ? 'none' : 'transform .6s cubic-bezier(.4,0,.2,1)', willChange: 'transform' }}>
+              transition: (panelDebug || cinInteract) ? 'none' : 'transform .5s cubic-bezier(.4,0,.2,1)', willChange: 'transform' }}>
               <img ref={cinemaImgRef} src={images[current]} alt="" draggable={false}
                 onLoad={runDetect} style={{ width: '100%', display: 'block' }} />
               {/* Vue debug : rectangles + numéro d'ordre de lecture, calés sur l'image */}
