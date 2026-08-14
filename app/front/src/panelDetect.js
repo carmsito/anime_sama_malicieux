@@ -15,25 +15,24 @@
 //    HAUT d'abord) qui sépare le MIEUX (pénalité = débordement des boîtes à travers la ligne ;
 //    une coupe nette = 0). À égalité on préfère les RANGÉES (horizontal), convention manga. ──
 function orderManga(rects, w, h) {
+  // Coupe séparatrice : la ligne qui laisse le PLUS GRAND ESPACE réel (gouttière) entre les
+  // bords des deux groupes triés par centre. Mesuré sur les boîtes (pas au milieu des centres)
+  // → robuste aux cases hautes. gap normalisé par l'étendue de l'axe.
   const bestCut = (items, axis, size, firstIsHigh) => {
-    const cs = [...items].map((it) => it[axis] + it[size] / 2).sort((a, b) => a - b)
+    let loAll = Infinity, hiAll = -Infinity
+    for (const it of items) { loAll = Math.min(loAll, it[axis]); hiAll = Math.max(hiAll, it[axis] + it[size]) }
+    const ext = (hiAll - loAll) || 1
+    const order = [...items].sort((a, b) => (a[axis] + a[size] / 2) - (b[axis] + b[size] / 2))
     let best = null
-    for (let i = 0; i < cs.length - 1; i++) {
-      const cut = (cs[i] + cs[i + 1]) / 2
-      const lo = [], hi = []
-      for (const it of items) (it[axis] + it[size] / 2 < cut ? lo : hi).push(it)
-      if (!lo.length || !hi.length) continue
-      let cross = 0
-      for (const it of lo) cross += Math.max(0, it[axis] + it[size] - cut)
-      for (const it of hi) cross += Math.max(0, cut - it[axis])
-      let sf = 0   // pire fraction d'une case COUPÉE par la ligne
-      for (const it of items) {
-        const a = it[axis], b = it[axis] + it[size]
-        if (a < cut && cut < b) sf = Math.max(sf, Math.min(cut - a, b - cut) / it[size])
-      }
-      if (!best || cross < best.c) {
-        const first = firstIsHigh ? hi : lo, second = firstIsHigh ? lo : hi
-        best = { c: cross, sf, first, second }
+    for (let i = 0; i < order.length - 1; i++) {
+      const lower = order.slice(0, i + 1), upper = order.slice(i + 1)
+      let uLo = Infinity, lHi = -Infinity
+      for (const it of upper) uLo = Math.min(uLo, it[axis])
+      for (const it of lower) lHi = Math.max(lHi, it[axis] + it[size])
+      const gap = (uLo - lHi) / ext
+      if (!best || gap > best.gap) {
+        const first = firstIsHigh ? upper : lower, second = firstIsHigh ? lower : upper
+        best = { gap, first, second }
       }
     }
     return best
@@ -42,9 +41,9 @@ function orderManga(rects, w, h) {
     if (items.length <= 1) return items.slice()
     const cy = bestCut(items, 'y', 'h', false)   // RANGÉES (horizontal) : HAUT d'abord
     const cx = bestCut(items, 'x', 'w', true)    // COLONNES (vertical) : DROITE d'abord
-    // Manga = lecture en RANGÉES : préférer l'horizontal tant qu'aucune case ne le traverse
-    // vraiment (sf < 0.25 = simple escalier). Case pleine hauteur (sf élevé) → vertical.
-    let best = (cy && cy.sf < 0.25) ? cy : (cx || cy)
+    // Manga = lecture en RANGÉES : horizontal tant que les rangées ne se chevauchent pas trop
+    // (gap ≥ -0.20 = simple escalier). Case pleine hauteur → gap très négatif → vertical.
+    const best = (cy && cy.gap >= -0.20) ? cy : (cx || cy)
     if (!best) return [...items].sort((a, b) => a.y - b.y || (b.x + b.w) - (a.x + a.w))
     return rec(best.first).concat(rec(best.second))
   }

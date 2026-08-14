@@ -22,40 +22,34 @@ _cache: dict[str, list] = {}
 
 
 def _order_manga(rects, w=None, h=None):
-    """Ordre de lecture MANGA par COUPE SÉPARATRICE récursive, TOLÉRANTE aux formes obliques /
-    cases superposées : à chaque niveau on cherche la meilleure coupe (verticale → DROITE d'abord,
-    horizontale → HAUT d'abord) = celle qui sépare le mieux (pénalité = chevauchement des boîtes
-    qui traversent la ligne). Une coupe NETTE a une pénalité 0. À pénalité égale on préfère les
-    RANGÉES (horizontal) — convention manga. Une case pleine hauteur rend toute coupe horizontale
-    coûteuse → la verticale (nette) gagne ; l'oblique est approximée par la coupe la moins coûteuse."""
+    """Ordre de lecture MANGA par COUPE SÉPARATRICE récursive. À chaque niveau on cherche la
+    ligne (horizontale = RANGÉES, verticale = COLONNES) qui laisse le PLUS GRAND ESPACE réel
+    entre les bords des deux groupes (gouttière) — mesuré sur les boîtes, pas au milieu des
+    centres, donc robuste aux cases hautes qui débordent une ligne mal placée. Le manga se lit
+    en rangées : on prend l'horizontale tant que les rangées ne se chevauchent pas trop
+    (gap ≥ -0.20 = simple "escalier"). Une case pleine hauteur fait chevaucher toute rangée
+    (gap très négatif) → la colonne (nette) gagne. Horizontale → HAUT d'abord ; verticale →
+    DROITE d'abord."""
     def best_cut(items, axis, size, first_is_high):
-        cs = sorted(it[axis] + it[size] / 2 for it in items)    # centres triés
+        lo_all = min(it[axis] for it in items)
+        hi_all = max(it[axis] + it[size] for it in items)
+        ext = (hi_all - lo_all) or 1.0                          # étendue de l'axe → gap normalisé
+        order = sorted(items, key=lambda it: it[axis] + it[size] / 2)   # tri par centre
         best = None
-        for i in range(len(cs) - 1):
-            cut = (cs[i] + cs[i + 1]) / 2
-            lo = [it for it in items if it[axis] + it[size] / 2 < cut]
-            hi = [it for it in items if it[axis] + it[size] / 2 >= cut]
-            if not lo or not hi:
-                continue
-            cross = (sum(max(0.0, it[axis] + it[size] - cut) for it in lo)
-                     + sum(max(0.0, cut - it[axis]) for it in hi))   # combien les boîtes débordent la ligne
-            sf = 0.0                                                 # pire fraction d'une case COUPÉE par la ligne
-            for it in items:
-                a, b = it[axis], it[axis] + it[size]
-                if a < cut < b:
-                    sf = max(sf, min(cut - a, b - cut) / it[size])
-            if best is None or cross < best[0]:
-                first, second = (hi, lo) if first_is_high else (lo, hi)
-                best = (cross, sf, first, second)
+        for i in range(len(order) - 1):
+            lower, upper = order[:i + 1], order[i + 1:]
+            # gap = espace entre le bord bas du groupe "bas" et le bord haut du groupe "haut"
+            gap = (min(it[axis] for it in upper) - max(it[axis] + it[size] for it in lower)) / ext
+            if best is None or gap > best[0]:
+                first, second = (upper, lower) if first_is_high else (lower, upper)
+                best = (gap, first, second)
         return best
     def rec(items):
         if len(items) <= 1:
             return list(items)
         cy = best_cut(items, "y", "h", first_is_high=False)     # RANGÉES (horizontal) : HAUT d'abord
         cx = best_cut(items, "x", "w", first_is_high=True)      # COLONNES (vertical) : DROITE d'abord
-        # Le manga se lit en RANGÉES : on préfère l'horizontal tant qu'aucune case ne le traverse
-        # vraiment (sf < 0.25 → simple "escalier"). Une case pleine hauteur (sf élevé) → vertical.
-        if cy is not None and cy[1] < 0.25:
+        if cy is not None and cy[0] >= -0.20:                   # rangées tolérées tant que le chevauchement reste faible
             best = cy
         elif cx is not None:
             best = cx
@@ -63,7 +57,7 @@ def _order_manga(rects, w=None, h=None):
             best = cy
         if best is None:
             return sorted(items, key=lambda r: (r["y"], -(r["x"] + r["w"])))
-        return rec(best[2]) + rec(best[3])
+        return rec(best[1]) + rec(best[2])
     return rec(list(rects))
 
 
