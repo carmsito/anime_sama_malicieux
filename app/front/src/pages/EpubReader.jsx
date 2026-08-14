@@ -364,8 +364,8 @@ export default function EpubReader() {
       const cv = document.createElement('canvas'); cv.width = W; cv.height = H
       cv.getContext('2d').drawImage(im, 0, 0, W, H)
       const url = cv.toDataURL('image/jpeg', 0.85)
-      const r = await api.detectPanels(url)
-      if (r && Array.isArray(r.panels) && r.panels.length) ps = r.panels
+      const ask = async () => { try { const r = await api.detectPanels(url); return (r && Array.isArray(r.panels) && r.panels.length) ? r.panels : null } catch { return null } }
+      ps = await ask() || await ask()   // 1 retry : le worker unique peut être occupé (prefetch) → évite le repli JS trop faible
     } catch { /* serveur KO → repli */ }
     if (!ps) ps = detectPanels(im)                       // repli heuristique client
     if (!ps || !ps.length) ps = [{ x: 0, y: 0, w: 1, h: 1 }]
@@ -392,7 +392,17 @@ export default function EpubReader() {
     }
     im.src = images[idx]
   }
-  useEffect(() => { setPanelIdx(0) }, [current, chapterNum])   // nouvelle planche → 1re case
+  // Nouvelle planche → 1re case. En cinéma, on repasse AUSSITÔT en « découpage » (planche entière)
+  // tant que la détection de CETTE planche n'est pas revenue → l'auto-lecture ne démarre JAMAIS
+  // avant le découpage (le trou : `detecting` gardait encore la valeur de la planche précédente
+  // jusqu'au onLoad, laissant l'auto-lecture partir sur des cases périmées, surtout à grosse échelle).
+  useEffect(() => {
+    setPanelIdx(0)
+    if (!cinema) return
+    const key = `${mangaId}:${chapterNum}:${current}`
+    if (panelCacheRef.current[key]) return          // déjà détecté (prefetch) → pas d'attente
+    setDetecting(true); setPanels([{ x: 0, y: 0, w: 1, h: 1 }])
+  }, [current, chapterNum, cinema]) // eslint-disable-line
   useEffect(() => {   // image déjà en cache → onLoad ne se déclenche pas : on détecte quand même
     if (!cinema) return
     const im = cinemaImgRef.current
