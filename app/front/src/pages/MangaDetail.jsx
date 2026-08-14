@@ -225,6 +225,11 @@ export default function MangaDetail() {
     mangaRef.current = manga
   }, [manga])
 
+  // Nouvelle fiche → on remonte tout en haut. Sinon, si on cliquait un manga depuis
+  // le milieu de la Home, on atterrissait au milieu de la fiche (flèche retour + haut
+  // de la cover hors écran) et il fallait remonter à la main.
+  useEffect(() => { window.scrollTo(0, 0) }, [mangaId])
+
   // Pagination : réinitialise le nombre visible quand le tri/filtre/manga change
   useEffect(() => { setVisibleCount(CHAP_BATCH) }, [sortAsc, chapFilter, mangaId]) // eslint-disable-line
 

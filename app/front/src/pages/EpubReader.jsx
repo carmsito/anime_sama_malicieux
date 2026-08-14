@@ -344,6 +344,35 @@ export default function EpubReader() {
     const i = levels.findIndex((l) => l === cur)
     setCinemaZoom(levels[(i + 1) % levels.length] / 100)
   }
+  // ── Geste « scrub » sur le bouton d'échelle ──
+  // Au lieu de re-cliquer/spammer pour retrouver la bonne mise à l'échelle : on MAINTIENT
+  // le bouton et on GLISSE (haut = plus grand, bas = plus petit) → ça parcourt les niveaux
+  // du profil en direct (façon curseur), on LÂCHE pour se figer dessus. Un simple tap sans
+  // glisser garde l'ancien comportement (cycle au niveau suivant).
+  const scrubRef = useRef(null)     // { startY, startIdx, levels, apply, moved }
+  const SCRUB_STEP = 26             // px de glissement vertical par niveau
+  const [scrubbing, setScrubbing] = useState(false)
+  const onScaleDown = (e, levels, curLevel, apply) => {
+    if (!levels.length) return
+    let idx = levels.indexOf(curLevel)
+    if (idx < 0)  // valeur libre hors liste (pincement) → on repart du niveau le plus proche
+      idx = levels.reduce((b, l, i) => (Math.abs(l - curLevel) < Math.abs(levels[b] - curLevel) ? i : b), 0)
+    scrubRef.current = { startY: e.clientY, startIdx: idx, levels, apply, moved: false }
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* noop */ }
+  }
+  const onScaleMove = (e) => {
+    const s = scrubRef.current; if (!s) return
+    const steps = Math.round((s.startY - e.clientY) / SCRUB_STEP)   // vers le haut = +
+    if (steps !== 0 && !s.moved) { s.moved = true; setScrubbing(true) }
+    const idx = Math.max(0, Math.min(s.levels.length - 1, s.startIdx + steps))
+    s.apply(s.levels[idx])
+  }
+  const onScaleUp = (e, cycle) => {
+    const s = scrubRef.current; scrubRef.current = null
+    try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* noop */ }
+    setScrubbing(false)
+    if (s && !s.moved) cycle()   // pas de glissement = simple tap = cycle
+  }
   // ── Mode Cinéma ──
   const toggleCinema = () => setCinema((v) => { const n = !v; localStorage.setItem('reader_cinema', n ? '1' : '0'); return n })
   // Détection des cases : MODÈLE côté serveur (YOLO manga109) en priorité, repli sur le
@@ -368,8 +397,12 @@ export default function EpubReader() {
       ps = await ask() || await ask()   // 1 retry : le worker unique peut être occupé (prefetch) → évite le repli JS trop faible
     } catch { /* serveur KO → repli */ }
     if (!ps) ps = detectPanels(im)                       // repli heuristique client
-    if (!ps || !ps.length) ps = [{ x: 0, y: 0, w: 1, h: 1 }]
-    panelCacheRef.current[key] = ps
+    // « Planche entière » = pas de vrai découpage (serveur occupé/injoignable + repli JS vide,
+    // ou modèle qui a tout fusionné). On l'AFFICHE mais on NE la met PAS en cache → la prochaine
+    // visite retente le serveur, au lieu de resservir un placeholder collé (le « n1 » remonté).
+    const fellBack = !ps || !ps.length || (ps.length === 1 && ps[0].w >= 0.98 && ps[0].h >= 0.98)
+    if (fellBack) ps = [{ x: 0, y: 0, w: 1, h: 1 }]
+    if (!fellBack) panelCacheRef.current[key] = ps
     if (detectKeyRef.current === key) detectKeyRef.current = null
     setDetecting(false)
     setPanels(ps); setPanelIdx(0)
@@ -387,7 +420,9 @@ export default function EpubReader() {
         const cv = document.createElement('canvas'); cv.width = W; cv.height = H
         cv.getContext('2d').drawImage(im, 0, 0, W, H)
         const r = await api.detectPanels(cv.toDataURL('image/jpeg', 0.85))
-        if (r && Array.isArray(r.panels) && r.panels.length && !panelCacheRef.current[key]) panelCacheRef.current[key] = r.panels
+        const ps = r && Array.isArray(r.panels) ? r.panels : []
+        const wholePage = ps.length === 1 && ps[0].w >= 0.98 && ps[0].h >= 0.98
+        if (ps.length && !wholePage && !panelCacheRef.current[key]) panelCacheRef.current[key] = ps
       } catch { /* silencieux */ }
     }
     im.src = images[idx]
@@ -1363,8 +1398,10 @@ export default function EpubReader() {
               </button>
               <button onClick={cycleSpeedMult} title="Vitesse (re-cliquer pour changer)"
                 style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.8rem' }}>×{speedMult}</button>
-              <button onClick={cycleScale} title="Taille de planche (re-cliquer pour changer)"
-                style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,.1)', color: zoomPct === baseScaleRef.current ? '#fff' : '#e50914', fontWeight: 800, fontSize: '.8rem' }}>{baseScaleRef.current}%</button>
+              <button title="Taille de planche : tap pour changer, ou maintenir + glisser haut/bas"
+                onPointerDown={(e) => onScaleDown(e, settings.scaleLevels, baseScaleRef.current, setScaleValue)}
+                onPointerMove={onScaleMove} onPointerUp={(e) => onScaleUp(e, cycleScale)}
+                style={{ height: 36, borderRadius: 10, border: scrubbing ? '1px solid #e50914' : 'none', cursor: 'ns-resize', touchAction: 'none', background: 'rgba(255,255,255,.1)', color: zoomPct === baseScaleRef.current ? '#fff' : '#e50914', fontWeight: 800, fontSize: '.8rem' }}>{baseScaleRef.current}%</button>
               <button onClick={() => { fullscreen ? exitFullscreen() : enterFullscreen() }} title="Plein écran"
                 style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: fullscreen ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1419,8 +1456,10 @@ export default function EpubReader() {
                   ? <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
                   : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>}
               </button>
-              <button onClick={cycleCinemaScale} title="Échelle cinéma (re-cliquer pour changer)"
-                style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.8rem' }}>{Math.round(cinemaZoom * 100)}%</button>
+              <button title="Échelle cinéma : tap pour changer, ou maintenir + glisser haut/bas"
+                onPointerDown={(e) => onScaleDown(e, settings.scaleLevels, Math.round(cinemaZoom * 100), (v) => setCinemaZoom(v / 100))}
+                onPointerMove={onScaleMove} onPointerUp={(e) => onScaleUp(e, cycleCinemaScale)}
+                style={{ height: 36, borderRadius: 10, border: scrubbing ? '1px solid #e50914' : 'none', cursor: 'ns-resize', touchAction: 'none', background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.8rem' }}>{Math.round(cinemaZoom * 100)}%</button>
               <button onClick={() => { fullscreen ? exitFullscreen() : enterFullscreen() }} title="Plein écran"
                 style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: fullscreen ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
