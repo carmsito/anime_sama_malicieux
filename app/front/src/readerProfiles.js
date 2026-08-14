@@ -45,8 +45,10 @@ export function ensureState(p) {
     p.state.pause = old.autoEdgePause   // migration de l'ancienne pause de bord
   }
   const V = (p.values = p.values || {})
+  // On NE re-rajoute PLUS d'échelles > 100 % de force : ça se rejouait à CHAQUE chargement et
+  // faisait « revenir » les niveaux que l'utilisateur avait retirés dans les réglages (même après
+  // enregistrement). Les nouveaux profils ont déjà 150/200/300 via DEFAULTS ; on respecte le choix.
   if (!Array.isArray(V.scaleLevels) || !V.scaleLevels.length) V.scaleLevels = [...DEFAULTS.scaleLevels]
-  else if (Math.max(...V.scaleLevels) <= 100) V.scaleLevels = [...new Set([...V.scaleLevels, 150, 200, 300])].sort((a, b) => a - b)  // ajoute le zoom-in (jusqu'à 300 %)
   if (!Array.isArray(V.speedMults) || !V.speedMults.length) V.speedMults = [...DEFAULTS.speedMults]
   if (!Array.isArray(V.pauseLevels) || !V.pauseLevels.length) V.pauseLevels = [...DEFAULTS.pauseLevels]
   if (!Array.isArray(V.sensLevels) || !V.sensLevels.length) V.sensLevels = [...DEFAULTS.sensLevels]
