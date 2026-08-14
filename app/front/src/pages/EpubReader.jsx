@@ -87,6 +87,7 @@ export default function EpubReader() {
   const [panels, setPanels] = useState([])
   const [panelIdx, setPanelIdx] = useState(0)
   const [camXform, setCamXform] = useState('none')
+  const [fitXform, setFitXform] = useState('none')      // transform "planche entière" (vue debug)
   const [panelDebug, setPanelDebug] = useState(false)   // vue debug : dessine les cases détectées + ordre
   const [detecting, setDetecting] = useState(false)     // découpage en cours → on montre la planche entière
   // Mise à l'échelle UTILISATEUR en cinéma : PERSISTE d'une case/planche/session à l'autre.
@@ -376,7 +377,10 @@ export default function EpubReader() {
     camBaseRef.current = { cx, cy, baseK }
     const k = baseK * cinemaZoom                                              // + mise à l'échelle UTILISATEUR
     setCamXform(`translate(${CW / 2 - k * cx + cinemaPan.x}px, ${CH / 2 - k * cy + cinemaPan.y}px) scale(${k})`)
-  }, [cinema, panels, panelIdx, current, fullscreen, cinemaZoom, cinemaPan])
+    // Transform "planche ENTIÈRE" (vue debug) : contain de toute l'image, centrée
+    const kAll = Math.min(1, CW / dispW, CH / dispH)
+    setFitXform(`translate(${(CW - kAll * dispW) / 2}px, ${(CH - kAll * dispH) / 2}px) scale(${kAll})`)
+  }, [cinema, panels, panelIdx, current, fullscreen, cinemaZoom, cinemaPan, isLandscape])
   useEffect(() => { setCinemaPan({ x: 0, y: 0 }) }, [panelIdx, current, chapterNum])  // reset PAN seulement (le zoom persiste)
   useEffect(() => {
     if (!cinema) return
@@ -1119,7 +1123,7 @@ export default function EpubReader() {
             style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: '#0a0a0a',
               zIndex: 20, cursor: 'pointer', touchAction: 'none' }}>
             <div style={{ position: 'absolute', top: 0, left: 0, width: '100%',
-              transform: panelDebug ? 'none' : camXform, transformOrigin: '0 0',
+              transform: panelDebug ? fitXform : camXform, transformOrigin: '0 0',
               transition: (panelDebug || cinInteract) ? 'none' : 'transform .5s cubic-bezier(.4,0,.2,1)', willChange: 'transform' }}>
               <img ref={cinemaImgRef} src={images[current]} alt="" draggable={false}
                 onLoad={runDetect} style={{ width: '100%', display: 'block' }} />
