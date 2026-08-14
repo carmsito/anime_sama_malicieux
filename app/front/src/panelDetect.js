@@ -26,19 +26,25 @@ function orderManga(rects, w, h) {
       let cross = 0
       for (const it of lo) cross += Math.max(0, it[axis] + it[size] - cut)
       for (const it of hi) cross += Math.max(0, cut - it[axis])
+      let sf = 0   // pire fraction d'une case COUPÉE par la ligne
+      for (const it of items) {
+        const a = it[axis], b = it[axis] + it[size]
+        if (a < cut && cut < b) sf = Math.max(sf, Math.min(cut - a, b - cut) / it[size])
+      }
       if (!best || cross < best.c) {
         const first = firstIsHigh ? hi : lo, second = firstIsHigh ? lo : hi
-        best = { c: cross, first, second }
+        best = { c: cross, sf, first, second }
       }
     }
     return best
   }
   const rec = (items) => {
     if (items.length <= 1) return items.slice()
-    const cy = bestCut(items, 'y', 'h', false)   // horizontale : HAUT d'abord
-    const cx = bestCut(items, 'x', 'w', true)    // verticale : DROITE d'abord
-    let best = cy
-    if (cx && (!best || cx.c < best.c)) best = cx   // à égalité on garde l'horizontale (rangées)
+    const cy = bestCut(items, 'y', 'h', false)   // RANGÉES (horizontal) : HAUT d'abord
+    const cx = bestCut(items, 'x', 'w', true)    // COLONNES (vertical) : DROITE d'abord
+    // Manga = lecture en RANGÉES : préférer l'horizontal tant qu'aucune case ne le traverse
+    // vraiment (sf < 0.25 = simple escalier). Case pleine hauteur (sf élevé) → vertical.
+    let best = (cy && cy.sf < 0.25) ? cy : (cx || cy)
     if (!best) return [...items].sort((a, b) => a.y - b.y || (b.x + b.w) - (a.x + a.w))
     return rec(best.first).concat(rec(best.second))
   }

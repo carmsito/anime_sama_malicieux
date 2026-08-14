@@ -80,6 +80,8 @@ export default function EpubReader() {
   // Dock flottant (play/pause + vitesse + échelle + plein écran) : déplaçable, masquable sur le côté.
   const [dockPos, setDockPos] = useState(() => { try { return JSON.parse(localStorage.getItem('reader_dock_pos')) } catch { return null } })
   const [dockHidden, setDockHidden] = useState(() => localStorage.getItem('reader_dock_hidden') === '1')
+  const [dockShow, setDockShow] = useState(() => localStorage.getItem('reader_dock_show') !== '0')   // afficher le dock flottant (défaut ON)
+  const [dockKind, setDockKind] = useState(() => localStorage.getItem('reader_dock_kind') || 'classic')  // 'classic' (auto-scroll) | 'cinema'
   const dockRef = useRef(null)
   const dockDragRef = useRef(null)
   // Mode Cinéma (bêta) : détection des cases + caméra qui glisse de case en case (sens manga).
@@ -322,6 +324,15 @@ export default function EpubReader() {
     })
   }
   const setDockHiddenP = (v) => { setDockHidden(v); localStorage.setItem('reader_dock_hidden', v ? '1' : '0') }
+  const setDockShowP = (v) => { setDockShow(v); localStorage.setItem('reader_dock_show', v ? '1' : '0') }
+  const setDockKindP = (v) => { setDockKind(v); localStorage.setItem('reader_dock_kind', v) }
+  // Échelle cinéma (zoom caméra) au cycle, pour le bouton du dock cinéma.
+  const cycleCinemaScale = () => {
+    const levels = settings.scaleLevels.length ? settings.scaleLevels : [100]
+    const cur = Math.round(cinemaZoom * 100)
+    const i = levels.findIndex((l) => l === cur)
+    setCinemaZoom(levels[(i + 1) % levels.length] / 100)
+  }
   // ── Mode Cinéma ──
   const toggleCinema = () => setCinema((v) => { const n = !v; localStorage.setItem('reader_cinema', n ? '1' : '0'); return n })
   // Détection des cases : MODÈLE côté serveur (YOLO manga109) en priorité, repli sur le
@@ -517,6 +528,9 @@ export default function EpubReader() {
     cinemaStep(t.clientX, e.currentTarget)
   }
   const dockOnRight = !dockPos || (dockPos.x + 30 > window.innerWidth / 2)   // côté d'aimantation (pour l'onglet masqué)
+  // Quel dock afficher (option user) : le classique (auto-scroll) OU celui du mode cinéma.
+  const showClassicDock = dockShow && dockKind === 'classic' && autoScroll && settings.buttons.autoscroll && !cinema
+  const showCinemaDock = dockShow && dockKind === 'cinema' && loaded && images.length > 0
   // Garde le dock dans l'écran quand on tourne le téléphone (paysage ⇄ portrait) ou qu'on redimensionne.
   useEffect(() => {
     const clampDock = () => setDockPos((p) => {
@@ -1215,8 +1229,9 @@ export default function EpubReader() {
               <div style={{ position: 'absolute', top: 40, left: 8, zIndex: 3, background: 'rgba(0,0,0,.7)',
                 color: '#fff', borderRadius: 6, padding: '.2rem .5rem', fontSize: '.7rem' }}>{panelSaved}</div>
             )}
-            {/* Auto-lecture : play/pause (avance case par case, dwell adapté au texte) */}
-            {!panelDebug && (
+            {/* Auto-lecture : play/pause (avance case par case, dwell adapté au texte).
+                Masqué si le dock cinéma est affiché (il porte déjà le play) → pas de doublon. */}
+            {!panelDebug && !showCinemaDock && (
               <button onClick={(e) => { e.stopPropagation(); setCinemaPlaying((v) => !v) }}
                 title={cinemaPlaying ? 'Pause auto-lecture' : 'Lancer l’auto-lecture'}
                 style={{ position: 'absolute', bottom: 40, right: 12, zIndex: 3, width: 44, height: 44, borderRadius: '50%',
@@ -1285,9 +1300,9 @@ export default function EpubReader() {
             padding: '.3rem .7rem', cursor: 'pointer', fontSize: '1rem' }}>→</button>
       </div>
 
-      {/* Dock flottant : play/pause + vitesse + échelle + plein écran. Déplaçable (poignée),
+      {/* Dock flottant CLASSIQUE : play/pause + vitesse + échelle + plein écran. Déplaçable (poignée),
           aimanté au bord au relâchement, masquable en onglet sur le côté (façon bulle d'OS). */}
-      {autoScroll && settings.buttons.autoscroll && !cinema && (
+      {showClassicDock && (
         dockHidden ? (
           <button onClick={() => setDockHiddenP(false)} title="Afficher les contrôles"
             style={{ position: 'fixed', zIndex: 61, [dockOnRight ? 'right' : 'left']: 0,
@@ -1327,6 +1342,60 @@ export default function EpubReader() {
                 style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.8rem' }}>×{speedMult}</button>
               <button onClick={cycleScale} title="Taille de planche (re-cliquer pour changer)"
                 style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,.1)', color: zoomPct === baseScaleRef.current ? '#fff' : '#e50914', fontWeight: 800, fontSize: '.8rem' }}>{baseScaleRef.current}%</button>
+              <button onClick={() => { fullscreen ? exitFullscreen() : enterFullscreen() }} title="Plein écran"
+                style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: fullscreen ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        )
+      )}
+
+      {/* Dock flottant CINÉMA : 🎬 activation + play auto-lecture + échelle + plein écran.
+          Même infra déplaçable/masquable que le classique (position/masquage partagés). */}
+      {showCinemaDock && (
+        dockHidden ? (
+          <button onClick={() => setDockHiddenP(false)} title="Afficher les contrôles"
+            style={{ position: 'fixed', zIndex: 61, [dockOnRight ? 'right' : 'left']: 0,
+              top: dockPos ? dockPos.y : undefined, bottom: dockPos ? undefined : (fullscreen ? 40 : 76),
+              width: 26, height: 46, border: 'none', cursor: 'pointer', color: '#fff',
+              background: 'rgba(20,20,24,.92)', boxShadow: '0 2px 12px rgba(0,0,0,.5)',
+              borderRadius: dockOnRight ? '12px 0 0 12px' : '0 12px 12px 0',
+              display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              {dockOnRight ? <polyline points="15 18 9 12 15 6"/> : <polyline points="9 18 15 12 9 6"/>}
+            </svg>
+          </button>
+        ) : (
+          <div ref={dockRef}
+            style={{ position: 'fixed', zIndex: 61,
+              ...(dockPos ? { left: dockPos.x, top: dockPos.y } : { right: 10, bottom: fullscreen ? 18 : 54 }),
+              width: 96, background: 'rgba(20,20,24,.94)', border: '1px solid rgba(255,255,255,.12)',
+              borderRadius: 16, boxShadow: '0 4px 22px rgba(0,0,0,.55)', padding: 6, touchAction: 'none' }}>
+            {/* Poignée de déplacement + bouton masquer */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5, cursor: 'grab', touchAction: 'none', padding: '2px 0' }}
+              onPointerDown={onDockDown} onPointerMove={onDockMove} onPointerUp={onDockUp}>
+              <span style={{ display: 'flex', gap: 2, paddingLeft: 4 }}>
+                {[0, 1, 2].map((i) => <span key={i} style={{ width: 3, height: 3, borderRadius: '50%', background: 'rgba(255,255,255,.4)' }} />)}
+              </span>
+              <button onClick={() => setDockHiddenP(true)} title="Masquer sur le côté"
+                style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.55)', cursor: 'pointer', padding: '0 2px', fontSize: '.9rem', lineHeight: 1 }}>⤫</button>
+            </div>
+            {/* Grille 2×2 : 🎬 activation · play auto-lecture · échelle · plein écran */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
+              <button onClick={toggleCinema} title="Activer / couper le Mode Cinéma"
+                style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: cinema ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff', fontSize: '1.05rem' }}>🎬</button>
+              <button onClick={() => { if (!cinema) { toggleCinema(); setCinemaPlaying(true) } else { setCinemaPlaying((v) => !v) } }}
+                title={cinemaPlaying ? 'Pause auto-lecture' : 'Lancer l’auto-lecture'}
+                style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: cinemaPlaying ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {cinemaPlaying
+                  ? <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+                  : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>}
+              </button>
+              <button onClick={cycleCinemaScale} title="Échelle cinéma (re-cliquer pour changer)"
+                style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.8rem' }}>{Math.round(cinemaZoom * 100)}%</button>
               <button onClick={() => { fullscreen ? exitFullscreen() : enterFullscreen() }} title="Plein écran"
                 style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: fullscreen ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1425,6 +1494,20 @@ export default function EpubReader() {
                     </div>
                   </div>
                 </>
+              )}
+
+              {/* Dock flottant : l'afficher ou non, et lequel (classique auto-scroll / cinéma) */}
+              <button onClick={() => setDockShowP(!dockShow)} style={toggleRow(dockShow)}>
+                <span>Afficher le dock flottant</span><span style={pill(dockShow)}>{dockShow ? 'ON' : 'OFF'}</span>
+              </button>
+              {dockShow && (
+                <div style={section}>
+                  <div style={label}>Type de dock</div>
+                  <div style={chipRow}>
+                    <button onClick={() => setDockKindP('classic')} style={chip(dockKind === 'classic')}>Classique</button>
+                    <button onClick={() => setDockKindP('cinema')} style={chip(dockKind === 'cinema')}>🎬 Cinéma</button>
+                  </div>
+                </div>
               )}
 
               {/* Échelle — MÉCA DE BASE : le % change (le pincement zoome librement au-delà).

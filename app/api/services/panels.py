@@ -39,21 +39,31 @@ def _order_manga(rects, w=None, h=None):
                 continue
             cross = (sum(max(0.0, it[axis] + it[size] - cut) for it in lo)
                      + sum(max(0.0, cut - it[axis]) for it in hi))   # combien les boîtes débordent la ligne
+            sf = 0.0                                                 # pire fraction d'une case COUPÉE par la ligne
+            for it in items:
+                a, b = it[axis], it[axis] + it[size]
+                if a < cut < b:
+                    sf = max(sf, min(cut - a, b - cut) / it[size])
             if best is None or cross < best[0]:
                 first, second = (hi, lo) if first_is_high else (lo, hi)
-                best = (cross, first, second)
+                best = (cross, sf, first, second)
         return best
     def rec(items):
         if len(items) <= 1:
             return list(items)
-        cy = best_cut(items, "y", "h", first_is_high=False)     # horizontale : HAUT d'abord
-        cx = best_cut(items, "x", "w", first_is_high=True)      # verticale : DROITE d'abord
-        best = cy
-        if cx is not None and (best is None or cx[0] < best[0]):  # à égalité on garde l'horizontale (rangées)
+        cy = best_cut(items, "y", "h", first_is_high=False)     # RANGÉES (horizontal) : HAUT d'abord
+        cx = best_cut(items, "x", "w", first_is_high=True)      # COLONNES (vertical) : DROITE d'abord
+        # Le manga se lit en RANGÉES : on préfère l'horizontal tant qu'aucune case ne le traverse
+        # vraiment (sf < 0.25 → simple "escalier"). Une case pleine hauteur (sf élevé) → vertical.
+        if cy is not None and cy[1] < 0.25:
+            best = cy
+        elif cx is not None:
             best = cx
+        else:
+            best = cy
         if best is None:
             return sorted(items, key=lambda r: (r["y"], -(r["x"] + r["w"])))
-        return rec(best[1]) + rec(best[2])
+        return rec(best[2]) + rec(best[3])
     return rec(list(rects))
 
 
