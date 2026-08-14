@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { gsap } from 'gsap'
 import { api } from '../api/client'
 import { AuthCtx } from '../contexts'
-import { loadReaderSettings, BASE_AUTO_SPEED } from '../readerSettings'
+import { loadReaderSettings, BASE_AUTO_SPEED, CINE_DWELL_CHOICES } from '../readerSettings'
 import { loadProfiles, resolveProfileId, getProfile, saveProfiles } from '../readerProfiles'
 import { detectPanels } from '../panelDetect'
 import { createAmbienceEngine } from '../ambienceAudio'
@@ -95,6 +95,12 @@ export default function EpubReader() {
   const setCinemaZoom = (z) => { const v = Math.max(1, Math.min(5, z)); localStorage.setItem('reader_cinema_zoom', String(v)); setCinemaZoomState(v) }
   const [cinemaPan, setCinemaPan] = useState({ x: 0, y: 0 })
   const [cinInteract, setCinInteract] = useState(false) // pincement/glissement en cours → transition off
+  const [camTransition, setCamTransition] = useState('transform .5s cubic-bezier(.4,0,.2,1)')  // transition caméra (auto-pan long = durée du dwell)
+  // Auto-LECTURE cinéma : avance case par case, dwell adapté au TEXTE, auto-pan des longues cases.
+  const [cinemaPlaying, setCinemaPlaying] = useState(false)
+  const [cineMin, setCineMin] = useState(1.5)   // dwell case sans texte (s)
+  const [cineMax, setCineMax] = useState(5)     // dwell case bavarde (s)
+  const cinemaTimerRef = useRef(null)
   const camBaseRef = useRef(null)                        // { cx, cy, baseK } du cadrage caméra
   const cinPinchRef = useRef(null)
   const cinPanRef = useRef(null)
@@ -235,6 +241,8 @@ export default function EpubReader() {
     setPanSens(st.sens > 0 ? st.sens : DEFAULT_SENS)
     setReadFilter(st.filter || 'none')
     setBrightness(st.brightness >= 40 && st.brightness <= 100 ? st.brightness : 100)
+    setCineMin(st.cineMin > 0 ? st.cineMin : 1.5)
+    setCineMax(st.cineMax > 0 ? st.cineMax : 5)
     appliedProfRef.current = activeProfileId
   }, [profile, activeProfileId])
 
@@ -375,12 +383,14 @@ export default function EpubReader() {
     const cx = (p.x + p.w / 2) * dispW, cy = (p.y + p.h / 2) * dispH
     const baseK = Math.min((CW / pw) * 0.96, (CH / ph) * 0.96)   // cadre la case ENTIÈREMENT (contain, portrait/paysage)
     camBaseRef.current = { cx, cy, baseK }
-    const k = baseK * cinemaZoom                                              // + mise à l'échelle UTILISATEUR
-    setCamXform(`translate(${CW / 2 - k * cx + cinemaPan.x}px, ${CH / 2 - k * cy + cinemaPan.y}px) scale(${k})`)
     // Transform "planche ENTIÈRE" (vue debug) : contain de toute l'image, centrée
     const kAll = Math.min(1, CW / dispW, CH / dispH)
     setFitXform(`translate(${(CW - kAll * dispW) / 2}px, ${(CH - kAll * dispH) / 2}px) scale(${kAll})`)
-  }, [cinema, panels, panelIdx, current, fullscreen, cinemaZoom, cinemaPan, isLandscape])
+    if (cinemaPlaying) return                                                 // l'auto-lecture pilote la caméra
+    const k = baseK * cinemaZoom                                              // + mise à l'échelle UTILISATEUR
+    setCamTransition(cinInteract ? 'none' : 'transform .5s cubic-bezier(.4,0,.2,1)')
+    setCamXform(`translate(${CW / 2 - k * cx + cinemaPan.x}px, ${CH / 2 - k * cy + cinemaPan.y}px) scale(${k})`)
+  }, [cinema, panels, panelIdx, current, fullscreen, cinemaZoom, cinemaPan, isLandscape, cinemaPlaying, cinInteract])
   useEffect(() => { setCinemaPan({ x: 0, y: 0 }) }, [panelIdx, current, chapterNum])  // reset PAN seulement (le zoom persiste)
   useEffect(() => {
     if (!cinema) return
@@ -389,6 +399,42 @@ export default function EpubReader() {
     window.addEventListener('orientationchange', onR)
     return () => { window.removeEventListener('resize', onR); window.removeEventListener('orientationchange', onR) }
   }, [cinema])
+
+  // ── AUTO-LECTURE cinéma : avance case par case, dwell = f(texte), auto-pan des longues cases ──
+  useEffect(() => {
+    clearTimeout(cinemaTimerRef.current)
+    if (!cinema || !cinemaPlaying || detecting || !panels.length) return
+    const wrap = cinemaWrapRef.current, im = cinemaImgRef.current
+    if (!wrap || !im || !im.naturalWidth) return
+    const p = panels[Math.min(panelIdx, panels.length - 1)]
+    const CW = wrap.clientWidth, CH = wrap.clientHeight
+    const dispW = CW, dispH = CW * (im.naturalHeight / im.naturalWidth)
+    const pw = p.w * dispW, ph = p.h * dispH
+    const cx = (p.x + p.w / 2) * dispW, cy = (p.y + p.h / 2) * dispH
+    const dwell = Math.max(0.4, cineMin + (cineMax - cineMin) * (p.text || 0)) * 1000   // + long si bavarde
+    const advance = () => setPanelIdx((i) => { if (i < panels.length - 1) return i + 1; goNext(); return i })
+    const kWidth = (CW / pw) * cinemaZoom
+    if (ph * kWidth > CH * 1.15) {   // case LONGUE (à largeur, plus haute que le cadre) → auto-pan haut→bas
+      const k = kWidth, tx = CW / 2 - k * cx
+      const topY = -(p.y * dispH) * k                      // haut de la case en haut du cadre
+      const botY = CH - (p.y + p.h) * dispH * k             // bas de la case en bas du cadre
+      setCamTransition('none'); setCamXform(`translate(${tx}px, ${topY}px) scale(${k})`)
+      const raf = requestAnimationFrame(() => requestAnimationFrame(() => {
+        setCamTransition(`transform ${dwell}ms linear`)
+        setCamXform(`translate(${tx}px, ${botY}px) scale(${k})`)
+      }))
+      cinemaTimerRef.current = setTimeout(advance, dwell + 250)
+      return () => { cancelAnimationFrame(raf); clearTimeout(cinemaTimerRef.current) }
+    }
+    const k = Math.min((CW / pw) * 0.96, (CH / ph) * 0.96) * cinemaZoom   // case normale : contain + dwell statique
+    setCamTransition('transform .5s cubic-bezier(.4,0,.2,1)')
+    setCamXform(`translate(${CW / 2 - k * cx}px, ${CH / 2 - k * cy}px) scale(${k})`)
+    cinemaTimerRef.current = setTimeout(advance, dwell)
+    return () => clearTimeout(cinemaTimerRef.current)
+  }, [cinema, cinemaPlaying, panels, panelIdx, detecting, cinemaZoom, cineMin, cineMax, fullscreen, isLandscape]) // eslint-disable-line
+  const setCineMinValue = (v) => { setCineMin(v); patchActiveState({ cineMin: v }) }
+  const setCineMaxValue = (v) => { setCineMax(Math.max(v, cineMin)); patchActiveState({ cineMax: Math.max(v, cineMin) }) }
+
   // Rend la découpe (planche + contours rouges + n°) et l'enregistre sur le serveur pour analyse.
   const [panelSaved, setPanelSaved] = useState('')
   const savePanelDebug = async () => {
@@ -1124,7 +1170,7 @@ export default function EpubReader() {
               zIndex: 20, cursor: 'pointer', touchAction: 'none' }}>
             <div style={{ position: 'absolute', top: 0, left: 0, width: '100%',
               transform: panelDebug ? fitXform : camXform, transformOrigin: '0 0',
-              transition: (panelDebug || cinInteract) ? 'none' : 'transform .5s cubic-bezier(.4,0,.2,1)', willChange: 'transform' }}>
+              transition: (panelDebug || cinInteract) ? 'none' : camTransition, willChange: 'transform' }}>
               <img ref={cinemaImgRef} src={images[current]} alt="" draggable={false}
                 onLoad={runDetect} style={{ width: '100%', display: 'block' }} />
               {/* Vue debug : rectangles + numéro d'ordre de lecture, calés sur l'image */}
@@ -1154,6 +1200,18 @@ export default function EpubReader() {
             {panelSaved && (
               <div style={{ position: 'absolute', top: 40, left: 8, zIndex: 3, background: 'rgba(0,0,0,.7)',
                 color: '#fff', borderRadius: 6, padding: '.2rem .5rem', fontSize: '.7rem' }}>{panelSaved}</div>
+            )}
+            {/* Auto-lecture : play/pause (avance case par case, dwell adapté au texte) */}
+            {!panelDebug && (
+              <button onClick={(e) => { e.stopPropagation(); setCinemaPlaying((v) => !v) }}
+                title={cinemaPlaying ? 'Pause auto-lecture' : 'Lancer l’auto-lecture'}
+                style={{ position: 'absolute', bottom: 40, right: 12, zIndex: 3, width: 44, height: 44, borderRadius: '50%',
+                  border: 'none', cursor: 'pointer', background: cinemaPlaying ? '#e50914' : 'rgba(0,0,0,.6)', color: '#fff',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 12px rgba(0,0,0,.5)' }}>
+                {cinemaPlaying
+                  ? <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+                  : <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>}
+              </button>
             )}
             <div style={{ position: 'absolute', bottom: 8, left: 0, right: 0, textAlign: 'center',
               color: 'rgba(255,255,255,.7)', fontSize: '.72rem', pointerEvents: 'none',
@@ -1323,6 +1381,29 @@ export default function EpubReader() {
               <button onClick={toggleCinema} style={toggleRow(cinema)}>
                 <span>🎬 Mode Cinéma <span style={{ opacity: .6, fontWeight: 400 }}>(bêta)</span></span><span style={pill(cinema)}>{cinema ? 'ON' : 'OFF'}</span>
               </button>
+              {cinema && (
+                <>
+                  <button onClick={() => setCinemaPlaying((v) => !v)} style={toggleRow(cinemaPlaying)}>
+                    <span>Auto-lecture (avance seule)</span><span style={pill(cinemaPlaying)}>{cinemaPlaying ? 'ON' : 'OFF'}</span>
+                  </button>
+                  <div style={section}>
+                    <div style={label}>Pause mini — case sans texte (s)</div>
+                    <div style={chipRow}>
+                      {CINE_DWELL_CHOICES.map((v) => (
+                        <button key={v} onClick={() => setCineMinValue(v)} style={chip(Math.abs(cineMin - v) < 0.001)}>{v}s</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={section}>
+                    <div style={label}>Pause maxi — case bavarde/beaucoup de texte (s)</div>
+                    <div style={chipRow}>
+                      {CINE_DWELL_CHOICES.map((v) => (
+                        <button key={v} onClick={() => setCineMaxValue(v)} style={chip(Math.abs(cineMax - v) < 0.001)}>{v}s</button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* Échelle — MÉCA DE BASE : le % change (le pincement zoome librement au-delà) */}
               <div style={section}>

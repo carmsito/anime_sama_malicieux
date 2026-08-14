@@ -21,6 +21,8 @@ export const BASE_AUTO_SPEED = 80
 export const SPEED_MULT_CHOICES = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4]
 // Temps de pause entre les planches (secondes), sélectionnable comme une option du profil.
 export const PAUSE_CHOICES = [0, 0.5, 1, 1.5, 2, 3, 5]
+// Mode Cinéma auto-lecture : durées d'affichage min (case sans texte) / max (case bavarde), en s.
+export const CINE_DWELL_CHOICES = [0.8, 1, 1.5, 2, 3, 4, 5, 7, 10]
 
 export const DEFAULTS = {
   buttons: { scrollnav: true, fitwidth: true, fullscreen: true, flip: true, autoscroll: true, scale: true, sensitivity: true },

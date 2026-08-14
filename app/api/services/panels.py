@@ -147,6 +147,7 @@ def _heuristic(img, maxW=700):
 # ── Modèle YOLOv8 (deepghs/manga109_yolo, nano) exécuté DIRECTEMENT via onnxruntime ──
 # Classes du modèle : {0:body, 1:face, 2:frame, 3:text} → on ne garde que `frame` (=2).
 _FRAME_CLS = 2
+_TEXT_CLS = 3
 _session = None
 
 def _get_session():
@@ -178,7 +179,25 @@ def _nms(boxes, scores, thr):
     return keep
 
 
-def _model_frames(img):
+def _decode(out, cls, conf, target, ox, oy, scale, W, H, iou, min_area):
+    keep = (cls == target) & (conf >= _CONF)
+    b = out[keep, :4]; c = conf[keep]
+    if len(b) == 0:
+        return []
+    x0 = (b[:, 0] - b[:, 2] / 2 - ox) / scale; y0 = (b[:, 1] - b[:, 3] / 2 - oy) / scale
+    x1 = (b[:, 0] + b[:, 2] / 2 - ox) / scale; y1 = (b[:, 1] + b[:, 3] / 2 - oy) / scale
+    xyxy = np.stack([x0, y0, x1, y1], 1)
+    res = []
+    for i in _nms(xyxy, c, iou):
+        X0 = max(0.0, min(W, xyxy[i, 0])); Y0 = max(0.0, min(H, xyxy[i, 1]))
+        X1 = max(0.0, min(W, xyxy[i, 2])); Y1 = max(0.0, min(H, xyxy[i, 3]))
+        if X1 - X0 > 0 and Y1 - Y0 > 0:
+            res.append({"x": float(X0), "y": float(Y0), "w": float(X1 - X0), "h": float(Y1 - Y0)})
+    return [r for r in res if r["w"] * r["h"] >= min_area]
+
+
+def _model_detect(img):
+    """Renvoie (cases `frame`, boîtes `text`) en pixels de l'image d'origine."""
     W, H = img.size
     size = 640
     scale = min(size / W, size / H)
@@ -190,20 +209,22 @@ def _model_frames(img):
     out = _get_session().run(None, {"images": arr})[0][0].T   # [N, 8] = 4 box + 4 classes
     scores = out[:, 4:8]
     cls = scores.argmax(1); conf = scores.max(1)
-    keep = (cls == _FRAME_CLS) & (conf >= _CONF)
-    b = out[keep, :4]; c = conf[keep]
-    if len(b) == 0:
-        return []
-    x0 = (b[:, 0] - b[:, 2] / 2 - ox) / scale; y0 = (b[:, 1] - b[:, 3] / 2 - oy) / scale
-    x1 = (b[:, 0] + b[:, 2] / 2 - ox) / scale; y1 = (b[:, 1] + b[:, 3] / 2 - oy) / scale
-    xyxy = np.stack([x0, y0, x1, y1], 1)
-    res = []
-    for i in _nms(xyxy, c, 0.45):
-        X0 = max(0.0, min(W, xyxy[i, 0])); Y0 = max(0.0, min(H, xyxy[i, 1]))
-        X1 = max(0.0, min(W, xyxy[i, 2])); Y1 = max(0.0, min(H, xyxy[i, 3]))
-        if X1 - X0 > 0 and Y1 - Y0 > 0:
-            res.append({"x": float(X0), "y": float(Y0), "w": float(X1 - X0), "h": float(Y1 - Y0)})
-    return [r for r in res if r["w"] * r["h"] >= 0.015 * W * H]   # jette les slivers
+    frames = _decode(out, cls, conf, _FRAME_CLS, ox, oy, scale, W, H, 0.45, 0.015 * W * H)
+    texts = _decode(out, cls, conf, _TEXT_CLS, ox, oy, scale, W, H, 0.30, 0.0)
+    return frames, texts
+
+
+def _text_score(fr, texts):
+    """Densité de texte d'une case (0..1) : fraction couverte par les bulles/texte, ×4 (bavarde ≈ 1)."""
+    fa = fr["w"] * fr["h"]
+    if fa <= 0:
+        return 0.0
+    inside = 0.0
+    for t in texts:
+        ix = max(0.0, min(fr["x"] + fr["w"], t["x"] + t["w"]) - max(fr["x"], t["x"]))
+        iy = max(0.0, min(fr["y"] + fr["h"], t["y"] + t["h"]) - max(fr["y"], t["y"]))
+        inside += ix * iy
+    return min(1.0, (inside / fa) * 4.0)
 
 
 def _overlap(a, m):
@@ -244,12 +265,14 @@ def detect(raw_bytes: bytes) -> list:
     img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
     W, H = img.size
     try:
-        M = _model_frames(img)
+        M, texts = _model_detect(img)
     except Exception:
-        M = []
+        M, texts = [], []
+    for m in M:
+        m["text"] = _text_score(m, texts)             # densité de texte (0..1) → dwell adaptatif côté client
     # heuristique (normalisée) → pixels
     Hn = _heuristic(img)
-    Hpx = [{"x": r["x"] * W, "y": r["y"] * H, "w": r["w"] * W, "h": r["h"] * H} for r in Hn]
+    Hpx = [{"x": r["x"] * W, "y": r["y"] * H, "w": r["w"] * W, "h": r["h"] * H, "text": _text_score({"x": r["x"] * W, "y": r["y"] * H, "w": r["w"] * W, "h": r["h"] * H}, texts)} for r in Hn]
     merged = list(M)
     for hf in Hpx:                                   # ajoute seulement les GRANDES cases non couvertes
         if hf["w"] * hf["h"] < 0.06 * W * H: continue
@@ -261,9 +284,9 @@ def detect(raw_bytes: bytes) -> list:
              if sum(1 for j, b in enumerate(merged) if i != j and _center_in(a, b)) < 2]
     merged = clean or merged
     if not merged:
-        merged = [{"x": 0, "y": 0, "w": W, "h": H}]
+        merged = [{"x": 0, "y": 0, "w": W, "h": H, "text": 0.0}]
     ordered = _order_manga(merged, W, H)
-    res = [{"x": r["x"] / W, "y": r["y"] / H, "w": r["w"] / W, "h": r["h"] / H} for r in ordered]
+    res = [{"x": r["x"] / W, "y": r["y"] / H, "w": r["w"] / W, "h": r["h"] / H, "text": round(r.get("text", 0.0), 3)} for r in ordered]
     try:
         _disk_path(key).write_text(json.dumps(res))    # persiste sur disque
     except Exception:
