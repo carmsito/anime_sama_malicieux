@@ -40,6 +40,10 @@ export default function EpubReader() {
   // Mode « fit-largeur / mise à l'échelle » = MÉCA DE BASE, toujours active (plus une option).
   const fitWidth = true
   const [zoomPct, setZoomPct] = useState(100)            // échelle courante en % (pincement = libre)
+  // Paysage : on affiche la planche ENTIÈRE (échelle appliquée sur la HAUTEUR) ; buffer par orientation.
+  const [isLandscape, setIsLandscape] = useState(() => typeof window !== 'undefined' && window.innerWidth > window.innerHeight)
+  const profStateRef = useRef(null)
+  const landRef = useRef(typeof window !== 'undefined' && window.innerWidth > window.innerHeight)
   const [autoScroll, setAutoScroll] = useState(false)    // défilement auto activé pour ce profil
   const [scrollPaused, setScrollPaused] = useState(false) // pause manuelle (bouton play/pause flottant)
   const [speedMult, setSpeedMult] = useState(1)          // multiplicateur de vitesse d'auto-scroll
@@ -106,6 +110,7 @@ export default function EpubReader() {
     return () => { alive = false }
   }, [uid, mangaId])
   const profile = useMemo(() => (profStore ? getProfile(profStore, activeProfileId) : null), [profStore, activeProfileId])
+  useEffect(() => { profStateRef.current = profile?.state || null }, [profile])
   const settings = useMemo(() => {
     if (!profile) return loadReaderSettings(uid)
     return {
@@ -219,7 +224,8 @@ export default function EpubReader() {
     setScrollNav(!!st.scrollnav)
     setAutoScroll(!!st.autoscroll)
     setScrollPaused(!!st.autoscroll)   // si l'auto-scroll est actif, on ouvre le chapitre EN PAUSE
-    const baseScale = st.scale >= 40 ? st.scale : 100
+    const rawScale = isLandscape ? st.scaleLandscape : st.scale     // buffer par orientation
+    const baseScale = rawScale >= 40 ? rawScale : 100
     baseScaleRef.current = baseScale
     setZoomPct(baseScale)
     setZoom(1); setPan({ x: 0, y: 0 })
@@ -231,10 +237,30 @@ export default function EpubReader() {
     appliedProfRef.current = activeProfileId
   }, [profile, activeProfileId])
 
+  // Rotation portrait ⇄ paysage : buffer par orientation — on sauve l'échelle courante dans
+  // l'orientation qu'on quitte et on charge celle de la nouvelle (garde-fou paysage = planche entière).
+  useEffect(() => {
+    const onOri = () => {
+      const land = window.innerWidth > window.innerHeight
+      if (land === landRef.current) return
+      patchActiveState({ [landRef.current ? 'scaleLandscape' : 'scale']: baseScaleRef.current })  // sauve l'ancienne
+      landRef.current = land
+      const st = profStateRef.current || {}
+      const raw = land ? st.scaleLandscape : st.scale
+      const next = raw >= 40 ? raw : 100
+      baseScaleRef.current = next
+      setZoomPct(next); setZoom(1); setPan({ x: 0, y: 0 })
+      setIsLandscape(land)
+    }
+    window.addEventListener('resize', onOri)
+    window.addEventListener('orientationchange', onOri)
+    return () => { window.removeEventListener('resize', onOri); window.removeEventListener('orientationchange', onOri) }
+  }, [])   // eslint-disable-line
+
   const toggleAutoScroll = () => setAutoScroll((v) => { patchActiveState({ autoscroll: !v }); if (v) setScrollPaused(false); return !v })
   // Échelle de BASE : les chips la posent (persistée). Le pincement zoome LIBREMENT par-dessus
   // (transitoire) ; le double-tap ramène à cette base. Poser une base annule la loupe/pincement.
-  const setScaleValue = (val) => { baseScaleRef.current = val; setZoomPct(val); setZoom(1); setPan({ x: 0, y: 0 }); patchActiveState({ scale: val }) }
+  const setScaleValue = (val) => { baseScaleRef.current = val; setZoomPct(val); setZoom(1); setPan({ x: 0, y: 0 }); patchActiveState({ [isLandscape ? 'scaleLandscape' : 'scale']: val }) }
   const cycleScale = () => {
     const levels = settings.scaleLevels.length ? settings.scaleLevels : [100]
     const i = levels.indexOf(baseScaleRef.current)
@@ -346,7 +372,7 @@ export default function EpubReader() {
     const p = panels[Math.min(panelIdx, panels.length - 1)] || { x: 0, y: 0, w: 1, h: 1 }
     const pw = p.w * dispW, ph = p.h * dispH
     const cx = (p.x + p.w / 2) * dispW, cy = (p.y + p.h / 2) * dispH
-    const baseK = Math.max(1, Math.min((CW / pw) * 0.94, (CH / ph) * 0.94))   // cadrage : jamais moins large que fit
+    const baseK = Math.min((CW / pw) * 0.96, (CH / ph) * 0.96)   // cadre la case ENTIÈREMENT (contain, portrait/paysage)
     camBaseRef.current = { cx, cy, baseK }
     const k = baseK * cinemaZoom                                              // + mise à l'échelle UTILISATEUR
     setCamXform(`translate(${CW / 2 - k * cx + cinemaPan.x}px, ${CH / 2 - k * cy + cinemaPan.y}px) scale(${k})`)
@@ -996,7 +1022,7 @@ export default function EpubReader() {
                 // (+ horizontal si la planche est agrandie au-delà de 100 %).
                 overflowY: 'auto', overflowX: zoomPct > 100 ? 'auto' : 'hidden',
                 overscrollBehavior: 'contain',   // pas de rebond/chaînage : sensation "appli", pas "bas de site"
-                alignItems: 'flex-start',
+                alignItems: isLandscape ? 'center' : 'flex-start',   // paysage : planche entière, centrée
                 touchAction: zoomPct > 100 ? 'pan-x pan-y' : 'pan-y',
               })
             : {
@@ -1037,8 +1063,12 @@ export default function EpubReader() {
                 onError={() => setImgReady(true)}
                 draggable={false}
                 style={{
-                  width: `${zoomPct}%`, height: 'auto', display: 'block', userSelect: 'none',
-                  margin: 'auto 0', flexShrink: 0,   // centré verticalement quand la planche tient (plein écran inclus)
+                  // Portrait : échelle sur la LARGEUR (scroll vertical). Paysage : échelle sur la
+                  // HAUTEUR → planche ENTIÈRE visible, centrée (garde-fou paysage).
+                  ...(isLandscape
+                    ? { height: `${zoomPct}%`, width: 'auto', maxWidth: 'none', margin: 'auto' }
+                    : { width: `${zoomPct}%`, height: 'auto', margin: 'auto 0' }),
+                  display: 'block', userSelect: 'none', flexShrink: 0,
                   ...(zoomed ? {
                     transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
                     transformOrigin: `${origin.x}px ${origin.y}px`,
