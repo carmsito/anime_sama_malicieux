@@ -12,7 +12,7 @@ export const BUTTON_KEYS = [
   { key: 'sensitivity', label: 'Sensibilité de déplacement en zoom' },
 ]
 
-export const SCALE_CHOICES = [100, 90, 80, 70, 60, 50, 40]
+export const SCALE_CHOICES = [40, 50, 60, 70, 80, 90, 100, 125, 150, 200, 250, 300]
 export const SENS_CHOICES = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5]
 export const SPEED_CHOICES = [8, 20, 40, 70, 110, 160, 240, 340]
 
@@ -24,7 +24,7 @@ export const PAUSE_CHOICES = [0, 0.5, 1, 1.5, 2, 3, 5]
 
 export const DEFAULTS = {
   buttons: { scrollnav: true, fitwidth: true, fullscreen: true, flip: true, autoscroll: true, scale: true, sensitivity: true },
-  scaleLevels: [100, 90, 80, 70, 60, 50],
+  scaleLevels: [50, 70, 100, 150, 200, 300],
   sensLevels: [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5],
   speedLevels: [8, 20, 40, 70, 110, 160, 240, 340],
   speedMults: [0.5, 0.75, 1, 1.5, 2, 3],

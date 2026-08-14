@@ -46,6 +46,7 @@ export function ensureState(p) {
   }
   const V = (p.values = p.values || {})
   if (!Array.isArray(V.scaleLevels) || !V.scaleLevels.length) V.scaleLevels = [...DEFAULTS.scaleLevels]
+  else if (Math.max(...V.scaleLevels) <= 100) V.scaleLevels = [...new Set([...V.scaleLevels, 150, 200, 300])].sort((a, b) => a - b)  // ajoute le zoom-in (jusqu'à 300 %)
   if (!Array.isArray(V.speedMults) || !V.speedMults.length) V.speedMults = [...DEFAULTS.speedMults]
   if (!Array.isArray(V.pauseLevels) || !V.pauseLevels.length) V.pauseLevels = [...DEFAULTS.pauseLevels]
   if (!Array.isArray(V.sensLevels) || !V.sensLevels.length) V.sensLevels = [...DEFAULTS.sensLevels]
