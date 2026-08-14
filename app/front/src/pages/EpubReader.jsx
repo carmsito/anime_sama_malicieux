@@ -21,6 +21,17 @@ const ZOOM_PERCENTS = [100, 90, 80, 70, 60, 50]
 const PREFETCH_AHEAD = 6
 const PREFETCH_BEHIND = 2
 
+// Logo « clap de cinéma » en trait blanc (currentColor) — remplace l'emoji 🎬 qui rendait en couleur.
+function ClapIcon({ size = 16, style }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style} aria-hidden="true">
+      <path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z"/>
+      <path d="m6.2 5.3 3.1 3.9"/><path d="m12.4 3.4 3.1 4"/>
+      <path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>
+    </svg>
+  )
+}
+
 export default function EpubReader() {
   const { mangaId, chapterNum } = useParams()
   const [searchParams] = useSearchParams()
@@ -528,8 +539,9 @@ export default function EpubReader() {
     cinemaStep(t.clientX, e.currentTarget)
   }
   const dockOnRight = !dockPos || (dockPos.x + 30 > window.innerWidth / 2)   // côté d'aimantation (pour l'onglet masqué)
-  // Quel dock afficher (option user) : le classique (auto-scroll) OU celui du mode cinéma.
-  const showClassicDock = dockShow && dockKind === 'classic' && autoScroll && settings.buttons.autoscroll && !cinema
+  // Quel dock afficher (option user) : le dock de BASE complet (classique) OU celui du cinéma.
+  // Piloté UNIQUEMENT par le choix → le dock sélectionné s'affiche toujours (pas de trou).
+  const showClassicDock = dockShow && dockKind === 'classic' && loaded && images.length > 0
   const showCinemaDock = dockShow && dockKind === 'cinema' && loaded && images.length > 0
   // Garde le dock dans l'écran quand on tourne le téléphone (paysage ⇄ portrait) ou qu'on redimensionne.
   useEffect(() => {
@@ -1246,10 +1258,10 @@ export default function EpubReader() {
               color: 'rgba(255,255,255,.7)', fontSize: '.72rem', pointerEvents: 'none',
               textShadow: '0 1px 3px #000' }}>
               {detecting
-                ? '🎬 découpage en cours… (planche entière en attendant)'
+                ? 'Découpage en cours… (planche entière en attendant)'
                 : panelDebug
                   ? `${panels.length} case(s) détectée(s) — ordre de lecture affiché`
-                  : `🎬 case ${Math.min(panelIdx + 1, panels.length)} / ${panels.length}${cinemaZoom > 1.01 ? ` · ×${cinemaZoom.toFixed(1)}` : ''} · tape à droite = suivante, pince pour zoomer`}
+                  : `Case ${Math.min(panelIdx + 1, panels.length)} / ${panels.length}${cinemaZoom > 1.01 ? ` · ×${cinemaZoom.toFixed(1)}` : ''} · tape à droite = suivante, pince pour zoomer`}
             </div>
           </div>
         )}
@@ -1332,9 +1344,10 @@ export default function EpubReader() {
             </div>
             {/* Grille 2×2 de contrôles */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
-              <button onClick={() => setScrollPaused((v) => !v)} title={scrollPaused ? 'Reprendre' : 'Pause'}
+              <button onClick={() => { if (!autoScroll) { toggleAutoScroll(); setScrollPaused(false) } else setScrollPaused((v) => !v) }}
+                title={(!autoScroll || scrollPaused) ? 'Lancer le défilement' : 'Pause'}
                 style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: '#e50914', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {scrollPaused
+                {(!autoScroll || scrollPaused)
                   ? <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
                   : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
               </button>
@@ -1386,7 +1399,9 @@ export default function EpubReader() {
             {/* Grille 2×2 : 🎬 activation · play auto-lecture · échelle · plein écran */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
               <button onClick={toggleCinema} title="Activer / couper le Mode Cinéma"
-                style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: cinema ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff', fontSize: '1.05rem' }}>🎬</button>
+                style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: cinema ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <ClapIcon size={17} />
+              </button>
               <button onClick={() => { if (!cinema) { toggleCinema(); setCinemaPlaying(true) } else { setCinemaPlaying((v) => !v) } }}
                 title={cinemaPlaying ? 'Pause auto-lecture' : 'Lancer l’auto-lecture'}
                 style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: cinemaPlaying ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1462,7 +1477,7 @@ export default function EpubReader() {
 
               {/* Mode Cinéma (bêta) : lecture case par case en sens manga */}
               <button onClick={toggleCinema} style={toggleRow(cinema)}>
-                <span>🎬 Mode Cinéma <span style={{ opacity: .6, fontWeight: 400 }}>(bêta)</span></span><span style={pill(cinema)}>{cinema ? 'ON' : 'OFF'}</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '.4rem' }}><ClapIcon size={16} /> Mode Cinéma <span style={{ opacity: .6, fontWeight: 400 }}>(bêta)</span></span><span style={pill(cinema)}>{cinema ? 'ON' : 'OFF'}</span>
               </button>
               {cinema && (
                 <>
@@ -1505,7 +1520,7 @@ export default function EpubReader() {
                   <div style={label}>Type de dock</div>
                   <div style={chipRow}>
                     <button onClick={() => setDockKindP('classic')} style={chip(dockKind === 'classic')}>Classique</button>
-                    <button onClick={() => setDockKindP('cinema')} style={chip(dockKind === 'cinema')}>🎬 Cinéma</button>
+                    <button onClick={() => setDockKindP('cinema')} style={{ ...chip(dockKind === 'cinema'), display: 'inline-flex', alignItems: 'center', gap: '.35rem' }}><ClapIcon size={15} /> Cinéma</button>
                   </div>
                 </div>
               )}
