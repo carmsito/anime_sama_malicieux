@@ -22,28 +22,36 @@ _cache: dict[str, list] = {}
 
 
 def _order_manga(rects, w=None, h=None):
-    """Ordre de lecture MANGA par COUPE SÉPARATRICE récursive (X-Y cut sur les cases) :
-    on coupe le long du plus grand « couloir » propre — vertical → DROITE d'abord, horizontal
-    → HAUT d'abord — puis on recurse. Une case pleine hauteur bloque toute coupe horizontale
-    (donc la colonne verticale à côté est lue en entier au bon endroit), etc."""
+    """Ordre de lecture MANGA par COUPE SÉPARATRICE récursive, TOLÉRANTE aux formes obliques /
+    cases superposées : à chaque niveau on cherche la meilleure coupe (verticale → DROITE d'abord,
+    horizontale → HAUT d'abord) = celle qui sépare le mieux (pénalité = chevauchement des boîtes
+    qui traversent la ligne). Une coupe NETTE a une pénalité 0. À pénalité égale on préfère les
+    RANGÉES (horizontal) — convention manga. Une case pleine hauteur rend toute coupe horizontale
+    coûteuse → la verticale (nette) gagne ; l'oblique est approximée par la coupe la moins coûteuse."""
+    def best_cut(items, axis, size, first_is_high):
+        cs = sorted(it[axis] + it[size] / 2 for it in items)    # centres triés
+        best = None
+        for i in range(len(cs) - 1):
+            cut = (cs[i] + cs[i + 1]) / 2
+            lo = [it for it in items if it[axis] + it[size] / 2 < cut]
+            hi = [it for it in items if it[axis] + it[size] / 2 >= cut]
+            if not lo or not hi:
+                continue
+            cross = (sum(max(0.0, it[axis] + it[size] - cut) for it in lo)
+                     + sum(max(0.0, cut - it[axis]) for it in hi))   # combien les boîtes débordent la ligne
+            if best is None or cross < best[0]:
+                first, second = (hi, lo) if first_is_high else (lo, hi)
+                best = (cross, first, second)
+        return best
     def rec(items):
-        n = len(items)
-        if n <= 1:
+        if len(items) <= 1:
             return list(items)
-        best = None  # (gap, groupeA_lu_avant, groupeB)
-        xs = sorted(items, key=lambda r: r["x"]); maxr = -1e18
-        for i in range(n - 1):
-            maxr = max(maxr, xs[i]["x"] + xs[i]["w"])
-            g = min(r["x"] for r in xs[i + 1:]) - maxr          # couloir vertical net ?
-            if g > 0 and (best is None or g > best[0]):
-                best = (g, xs[i + 1:], xs[:i + 1])              # A = droite (lue d'abord), B = gauche
-        ys = sorted(items, key=lambda r: r["y"]); maxb = -1e18
-        for i in range(n - 1):
-            maxb = max(maxb, ys[i]["y"] + ys[i]["h"])
-            g = min(r["y"] for r in ys[i + 1:]) - maxb          # couloir horizontal net ?
-            if g > 0 and (best is None or g > best[0]):
-                best = (g, ys[:i + 1], ys[i + 1:])              # A = haut (lue d'abord), B = bas
-        if best is None:                                        # interlocking : approx droite→gauche, haut→bas
+        cy = best_cut(items, "y", "h", first_is_high=False)     # horizontale : HAUT d'abord
+        cx = best_cut(items, "x", "w", first_is_high=True)      # verticale : DROITE d'abord
+        best = cy
+        if cx is not None and (best is None or cx[0] < best[0]):  # à égalité on garde l'horizontale (rangées)
+            best = cx
+        if best is None:
             return sorted(items, key=lambda r: (r["y"], -(r["x"] + r["w"])))
         return rec(best[1]) + rec(best[2])
     return rec(list(rects))

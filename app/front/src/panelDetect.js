@@ -10,32 +10,37 @@
 //    = bande SANS contour (uniforme, blanche ou noire) ; le contenu = beaucoup de contours.
 // Repli ultime : planche entière (1 case).
 
-// ── Ordre manga par COUPE SÉPARATRICE récursive : on coupe le long du plus grand couloir
-//    propre — vertical → DROITE d'abord, horizontal → HAUT d'abord — puis on recurse. Une case
-//    pleine hauteur bloque toute coupe horizontale (la colonne à côté est lue au bon endroit). ──
+// ── Ordre manga par COUPE SÉPARATRICE récursive, TOLÉRANTE aux formes obliques / cases
+//    superposées : à chaque niveau on prend la coupe (verticale → DROITE d'abord, horizontale →
+//    HAUT d'abord) qui sépare le MIEUX (pénalité = débordement des boîtes à travers la ligne ;
+//    une coupe nette = 0). À égalité on préfère les RANGÉES (horizontal), convention manga. ──
 function orderManga(rects, w, h) {
-  const rec = (items) => {
-    const n = items.length
-    if (n <= 1) return items.slice()
+  const bestCut = (items, axis, size, firstIsHigh) => {
+    const cs = [...items].map((it) => it[axis] + it[size] / 2).sort((a, b) => a - b)
     let best = null
-    const xs = [...items].sort((a, b) => a.x - b.x)
-    let maxr = -1e18
-    for (let i = 0; i < n - 1; i++) {
-      maxr = Math.max(maxr, xs[i].x + xs[i].w)
-      let minl = Infinity; for (let j = i + 1; j < n; j++) minl = Math.min(minl, xs[j].x)
-      const g = minl - maxr
-      if (g > 0 && (!best || g > best.g)) best = { g, A: xs.slice(i + 1), B: xs.slice(0, i + 1) }  // A = droite (lue d'abord)
+    for (let i = 0; i < cs.length - 1; i++) {
+      const cut = (cs[i] + cs[i + 1]) / 2
+      const lo = [], hi = []
+      for (const it of items) (it[axis] + it[size] / 2 < cut ? lo : hi).push(it)
+      if (!lo.length || !hi.length) continue
+      let cross = 0
+      for (const it of lo) cross += Math.max(0, it[axis] + it[size] - cut)
+      for (const it of hi) cross += Math.max(0, cut - it[axis])
+      if (!best || cross < best.c) {
+        const first = firstIsHigh ? hi : lo, second = firstIsHigh ? lo : hi
+        best = { c: cross, first, second }
+      }
     }
-    const ys = [...items].sort((a, b) => a.y - b.y)
-    let maxb = -1e18
-    for (let i = 0; i < n - 1; i++) {
-      maxb = Math.max(maxb, ys[i].y + ys[i].h)
-      let mint = Infinity; for (let j = i + 1; j < n; j++) mint = Math.min(mint, ys[j].y)
-      const g = mint - maxb
-      if (g > 0 && (!best || g > best.g)) best = { g, A: ys.slice(0, i + 1), B: ys.slice(i + 1) }  // A = haut (lue d'abord)
-    }
+    return best
+  }
+  const rec = (items) => {
+    if (items.length <= 1) return items.slice()
+    const cy = bestCut(items, 'y', 'h', false)   // horizontale : HAUT d'abord
+    const cx = bestCut(items, 'x', 'w', true)    // verticale : DROITE d'abord
+    let best = cy
+    if (cx && (!best || cx.c < best.c)) best = cx   // à égalité on garde l'horizontale (rangées)
     if (!best) return [...items].sort((a, b) => a.y - b.y || (b.x + b.w) - (a.x + a.w))
-    return rec(best.A).concat(rec(best.B))
+    return rec(best.first).concat(rec(best.second))
   }
   return rec([...rects]).map((p) => ({ x: p.x / w, y: p.y / h, w: p.w / w, h: p.h / h }))
 }
