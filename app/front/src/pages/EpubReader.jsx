@@ -91,8 +91,8 @@ export default function EpubReader() {
   const [panelDebug, setPanelDebug] = useState(false)   // vue debug : dessine les cases détectées + ordre
   const [detecting, setDetecting] = useState(false)     // découpage en cours → on montre la planche entière
   // Mise à l'échelle UTILISATEUR en cinéma : PERSISTE d'une case/planche/session à l'autre.
-  const [cinemaZoom, setCinemaZoomState] = useState(() => { const v = Number(localStorage.getItem('reader_cinema_zoom')); return v >= 1 && v <= 5 ? v : 1 })
-  const setCinemaZoom = (z) => { const v = Math.max(1, Math.min(5, z)); localStorage.setItem('reader_cinema_zoom', String(v)); setCinemaZoomState(v) }
+  const [cinemaZoom, setCinemaZoomState] = useState(() => { const v = Number(localStorage.getItem('reader_cinema_zoom')); return v >= 0.4 && v <= 5 ? v : 1 })
+  const setCinemaZoom = (z) => { const v = Math.max(0.4, Math.min(5, z)); localStorage.setItem('reader_cinema_zoom', String(v)); setCinemaZoomState(v) }
   const [cinemaPan, setCinemaPan] = useState({ x: 0, y: 0 })
   const [cinInteract, setCinInteract] = useState(false) // pincement/glissement en cours → transition off
   const [camTransition, setCamTransition] = useState('transform .5s cubic-bezier(.4,0,.2,1)')  // transition caméra (auto-pan long = durée du dwell)
@@ -269,7 +269,10 @@ export default function EpubReader() {
   const toggleAutoScroll = () => setAutoScroll((v) => { patchActiveState({ autoscroll: !v }); if (v) setScrollPaused(false); return !v })
   // Échelle de BASE : les chips la posent (persistée). Le pincement zoome LIBREMENT par-dessus
   // (transitoire) ; le double-tap ramène à cette base. Poser une base annule la loupe/pincement.
-  const setScaleValue = (val) => { baseScaleRef.current = val; setZoomPct(val); setZoom(1); setPan({ x: 0, y: 0 }); patchActiveState({ [isLandscape ? 'scaleLandscape' : 'scale']: val }) }
+  const setScaleValue = (val) => {
+    if (cinema) { setCinemaZoom(val / 100); return }   // en cinéma, l'échelle pilote le zoom caméra (TA mise à l'échelle)
+    baseScaleRef.current = val; setZoomPct(val); setZoom(1); setPan({ x: 0, y: 0 }); patchActiveState({ [isLandscape ? 'scaleLandscape' : 'scale']: val })
+  }
   const cycleScale = () => {
     const levels = settings.scaleLevels.length ? settings.scaleLevels : [100]
     const i = levels.indexOf(baseScaleRef.current)
@@ -383,14 +386,18 @@ export default function EpubReader() {
     const cx = (p.x + p.w / 2) * dispW, cy = (p.y + p.h / 2) * dispH
     const baseK = Math.min((CW / pw) * 0.96, (CH / ph) * 0.96)   // cadre la case ENTIÈREMENT (contain, portrait/paysage)
     camBaseRef.current = { cx, cy, baseK }
-    // Transform "planche ENTIÈRE" (vue debug) : contain de toute l'image, centrée
+    // Transform "planche ENTIÈRE" : contain de toute l'image, centrée (vue debug ET pendant la détection)
     const kAll = Math.min(1, CW / dispW, CH / dispH)
     setFitXform(`translate(${(CW - kAll * dispW) / 2}px, ${(CH - kAll * dispH) / 2}px) scale(${kAll})`)
+    if (detecting) {   // découpage pas prêt → on montre la planche ENTIÈRE (pas de cadrage/lecture prématurés)
+      setCamTransition('transform .3s ease'); setCamXform(`translate(${(CW - kAll * dispW) / 2}px, ${(CH - kAll * dispH) / 2}px) scale(${kAll})`)
+      return
+    }
     if (cinemaPlaying) return                                                 // l'auto-lecture pilote la caméra
     const k = baseK * cinemaZoom                                              // + mise à l'échelle UTILISATEUR
     setCamTransition(cinInteract ? 'none' : 'transform .5s cubic-bezier(.4,0,.2,1)')
     setCamXform(`translate(${CW / 2 - k * cx + cinemaPan.x}px, ${CH / 2 - k * cy + cinemaPan.y}px) scale(${k})`)
-  }, [cinema, panels, panelIdx, current, fullscreen, cinemaZoom, cinemaPan, isLandscape, cinemaPlaying, cinInteract])
+  }, [cinema, panels, panelIdx, current, fullscreen, cinemaZoom, cinemaPan, isLandscape, cinemaPlaying, cinInteract, detecting])
   useEffect(() => { setCinemaPan({ x: 0, y: 0 }) }, [panelIdx, current, chapterNum])  // reset PAN seulement (le zoom persiste)
   useEffect(() => {
     if (!cinema) return
@@ -413,9 +420,10 @@ export default function EpubReader() {
     const cx = (p.x + p.w / 2) * dispW, cy = (p.y + p.h / 2) * dispH
     const dwell = Math.max(0.4, cineMin + (cineMax - cineMin) * (p.text || 0)) * 1000   // + long si bavarde
     const advance = () => setPanelIdx((i) => { if (i < panels.length - 1) return i + 1; goNext(); return i })
-    const kWidth = (CW / pw) * cinemaZoom
-    if (ph * kWidth > CH * 1.15) {   // case LONGUE (à largeur, plus haute que le cadre) → auto-pan haut→bas
-      const k = kWidth, tx = CW / 2 - k * cx
+    const baseK = Math.min((CW / pw) * 0.96, (CH / ph) * 0.96)
+    const k = baseK * cinemaZoom                                          // ÉCHELLE de l'utilisateur (pas de fit-largeur forcé)
+    if (ph * k > CH * 1.05) {   // à TON échelle, la case dépasse le cadre → auto-pan doux haut→bas
+      const tx = CW / 2 - k * cx
       const topY = -(p.y * dispH) * k                      // haut de la case en haut du cadre
       const botY = CH - (p.y + p.h) * dispH * k             // bas de la case en bas du cadre
       setCamTransition('none'); setCamXform(`translate(${tx}px, ${topY}px) scale(${k})`)
@@ -426,8 +434,7 @@ export default function EpubReader() {
       cinemaTimerRef.current = setTimeout(advance, dwell + 250)
       return () => { cancelAnimationFrame(raf); clearTimeout(cinemaTimerRef.current) }
     }
-    const k = Math.min((CW / pw) * 0.96, (CH / ph) * 0.96) * cinemaZoom   // case normale : contain + dwell statique
-    setCamTransition('transform .5s cubic-bezier(.4,0,.2,1)')
+    setCamTransition('transform .5s cubic-bezier(.4,0,.2,1)')             // case qui tient dans le cadre → statique
     setCamXform(`translate(${CW / 2 - k * cx}px, ${CH / 2 - k * cy}px) scale(${k})`)
     cinemaTimerRef.current = setTimeout(advance, dwell)
     return () => clearTimeout(cinemaTimerRef.current)
@@ -1273,7 +1280,7 @@ export default function EpubReader() {
 
       {/* Dock flottant : play/pause + vitesse + échelle + plein écran. Déplaçable (poignée),
           aimanté au bord au relâchement, masquable en onglet sur le côté (façon bulle d'OS). */}
-      {autoScroll && settings.buttons.autoscroll && (
+      {autoScroll && settings.buttons.autoscroll && !cinema && (
         dockHidden ? (
           <button onClick={() => setDockHiddenP(false)} title="Afficher les contrôles"
             style={{ position: 'fixed', zIndex: 61, [dockOnRight ? 'right' : 'left']: 0,
@@ -1405,18 +1412,20 @@ export default function EpubReader() {
                 </>
               )}
 
-              {/* Échelle — MÉCA DE BASE : le % change (le pincement zoome librement au-delà) */}
+              {/* Échelle — MÉCA DE BASE : le % change (le pincement zoome librement au-delà).
+                  En cinéma, ces chips pilotent le ZOOM caméra (ta mise à l'échelle). */}
+              {(() => { const activeScale = cinema ? Math.round(cinemaZoom * 100) : zoomPct; return (
               <div style={section}>
-                <div style={label}>Taille de planche (pincer pour zoomer librement)</div>
+                <div style={label}>Taille de planche{cinema ? ' (cinéma)' : ''} (pincer pour zoomer librement)</div>
                 <div style={chipRow}>
                   {settings.scaleLevels.map((v) => (
-                    <button key={v} onClick={() => setScaleValue(v)} style={chip(zoomPct === v)}>{v}%</button>
+                    <button key={v} onClick={() => setScaleValue(v)} style={chip(activeScale === v)}>{v}%</button>
                   ))}
-                  {!settings.scaleLevels.includes(zoomPct) && (
-                    <span style={{ ...chip(true), cursor: 'default' }}>{zoomPct}%</span>
+                  {!settings.scaleLevels.includes(activeScale) && (
+                    <span style={{ ...chip(true), cursor: 'default' }}>{activeScale}%</span>
                   )}
                 </div>
-              </div>
+              </div>) })()}
 
               {/* Défilement automatique + multiplicateur de vitesse + temps de pause */}
               {vis.autoscroll && (
