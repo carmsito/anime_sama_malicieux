@@ -51,6 +51,9 @@ def _order_manga(rects, w=None, h=None):
         cx = best_cut(items, "x", "w", first_is_high=True)      # COLONNES (vertical) : DROITE d'abord
         if cy is not None and cy[0] >= -0.20:                   # rangées tolérées tant que le chevauchement reste faible
             best = cy
+        elif cx is not None and cy is not None:                 # aucune vraie gouttière (les 2 écarts < -0.20 = cases imbriquées)
+            best = cx if cx[0] > cy[0] else cy                  # → on garde l'axe au PLUS GRAND écart, au lieu de forcer les
+            # colonnes : une grande case haute dont la bbox avale une bande fine ne doit pas faire lire la bande d'abord.
         elif cx is not None:
             best = cx
         else:

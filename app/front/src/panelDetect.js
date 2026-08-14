@@ -42,8 +42,12 @@ function orderManga(rects, w, h) {
     const cy = bestCut(items, 'y', 'h', false)   // RANGÉES (horizontal) : HAUT d'abord
     const cx = bestCut(items, 'x', 'w', true)    // COLONNES (vertical) : DROITE d'abord
     // Manga = lecture en RANGÉES : horizontal tant que les rangées ne se chevauchent pas trop
-    // (gap ≥ -0.20 = simple escalier). Case pleine hauteur → gap très négatif → vertical.
-    const best = (cy && cy.gap >= -0.20) ? cy : (cx || cy)
+    // (gap ≥ -0.20 = simple escalier). Si AUCUN axe n'a de vraie gouttière (cases imbriquées),
+    // on garde l'axe au PLUS GRAND écart au lieu de forcer les colonnes (une grande case dont
+    // la bbox avale une bande fine ne doit pas faire lire la bande d'abord).
+    const best = (cy && cy.gap >= -0.20) ? cy
+      : (cy && cx) ? (cx.gap > cy.gap ? cx : cy)
+      : (cx || cy)
     if (!best) return [...items].sort((a, b) => a.y - b.y || (b.x + b.w) - (a.x + a.w))
     return rec(best.first).concat(rec(best.second))
   }

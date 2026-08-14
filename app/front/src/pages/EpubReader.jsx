@@ -344,15 +344,15 @@ export default function EpubReader() {
     const i = levels.findIndex((l) => l === cur)
     setCinemaZoom(levels[(i + 1) % levels.length] / 100)
   }
-  // ── Geste « scrub » sur le bouton d'échelle ──
-  // Au lieu de re-cliquer/spammer pour retrouver la bonne mise à l'échelle : on MAINTIENT
-  // le bouton et on GLISSE (haut = plus grand, bas = plus petit) → ça parcourt les niveaux
-  // du profil en direct (façon curseur), on LÂCHE pour se figer dessus. Un simple tap sans
-  // glisser garde l'ancien comportement (cycle au niveau suivant).
+  // ── Geste « scrub » commun aux boutons « cycle » des docks (échelle, vitesse…) ──
+  // Au lieu de re-cliquer/spammer pour retrouver la bonne valeur : on MAINTIENT le bouton
+  // et on GLISSE (haut = plus, bas = moins) → ça parcourt les niveaux du profil en direct
+  // (façon curseur), on LÂCHE pour se figer dessus. Un simple tap sans glisser garde
+  // l'ancien comportement (cycle au niveau suivant).
   const scrubRef = useRef(null)     // { startY, startIdx, levels, apply, moved }
   const SCRUB_STEP = 26             // px de glissement vertical par niveau
   const [scrubbing, setScrubbing] = useState(false)
-  const onScaleDown = (e, levels, curLevel, apply) => {
+  const onScrubDown = (e, levels, curLevel, apply) => {
     if (!levels.length) return
     let idx = levels.indexOf(curLevel)
     if (idx < 0)  // valeur libre hors liste (pincement) → on repart du niveau le plus proche
@@ -360,14 +360,14 @@ export default function EpubReader() {
     scrubRef.current = { startY: e.clientY, startIdx: idx, levels, apply, moved: false }
     try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* noop */ }
   }
-  const onScaleMove = (e) => {
+  const onScrubMove = (e) => {
     const s = scrubRef.current; if (!s) return
     const steps = Math.round((s.startY - e.clientY) / SCRUB_STEP)   // vers le haut = +
     if (steps !== 0 && !s.moved) { s.moved = true; setScrubbing(true) }
     const idx = Math.max(0, Math.min(s.levels.length - 1, s.startIdx + steps))
     s.apply(s.levels[idx])
   }
-  const onScaleUp = (e, cycle) => {
+  const onScrubUp = (e, cycle) => {
     const s = scrubRef.current; scrubRef.current = null
     try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* noop */ }
     setScrubbing(false)
@@ -1396,11 +1396,13 @@ export default function EpubReader() {
                   ? <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
                   : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
               </button>
-              <button onClick={cycleSpeedMult} title="Vitesse (re-cliquer pour changer)"
-                style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.8rem' }}>×{speedMult}</button>
+              <button title="Vitesse : tap pour changer, ou maintenir + glisser haut/bas"
+                onPointerDown={(e) => onScrubDown(e, settings.speedMults, speedMult, setSpeedMultValue)}
+                onPointerMove={onScrubMove} onPointerUp={(e) => onScrubUp(e, cycleSpeedMult)}
+                style={{ height: 36, borderRadius: 10, border: scrubbing ? '1px solid #e50914' : 'none', cursor: 'ns-resize', touchAction: 'none', background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.8rem' }}>×{speedMult}</button>
               <button title="Taille de planche : tap pour changer, ou maintenir + glisser haut/bas"
-                onPointerDown={(e) => onScaleDown(e, settings.scaleLevels, baseScaleRef.current, setScaleValue)}
-                onPointerMove={onScaleMove} onPointerUp={(e) => onScaleUp(e, cycleScale)}
+                onPointerDown={(e) => onScrubDown(e, settings.scaleLevels, baseScaleRef.current, setScaleValue)}
+                onPointerMove={onScrubMove} onPointerUp={(e) => onScrubUp(e, cycleScale)}
                 style={{ height: 36, borderRadius: 10, border: scrubbing ? '1px solid #e50914' : 'none', cursor: 'ns-resize', touchAction: 'none', background: 'rgba(255,255,255,.1)', color: zoomPct === baseScaleRef.current ? '#fff' : '#e50914', fontWeight: 800, fontSize: '.8rem' }}>{baseScaleRef.current}%</button>
               <button onClick={() => { fullscreen ? exitFullscreen() : enterFullscreen() }} title="Plein écran"
                 style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: fullscreen ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1457,8 +1459,8 @@ export default function EpubReader() {
                   : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>}
               </button>
               <button title="Échelle cinéma : tap pour changer, ou maintenir + glisser haut/bas"
-                onPointerDown={(e) => onScaleDown(e, settings.scaleLevels, Math.round(cinemaZoom * 100), (v) => setCinemaZoom(v / 100))}
-                onPointerMove={onScaleMove} onPointerUp={(e) => onScaleUp(e, cycleCinemaScale)}
+                onPointerDown={(e) => onScrubDown(e, settings.scaleLevels, Math.round(cinemaZoom * 100), (v) => setCinemaZoom(v / 100))}
+                onPointerMove={onScrubMove} onPointerUp={(e) => onScrubUp(e, cycleCinemaScale)}
                 style={{ height: 36, borderRadius: 10, border: scrubbing ? '1px solid #e50914' : 'none', cursor: 'ns-resize', touchAction: 'none', background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.8rem' }}>{Math.round(cinemaZoom * 100)}%</button>
               <button onClick={() => { fullscreen ? exitFullscreen() : enterFullscreen() }} title="Plein écran"
                 style={{ height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', background: fullscreen ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
