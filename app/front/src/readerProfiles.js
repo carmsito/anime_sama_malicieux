@@ -30,7 +30,7 @@ export function makeProfile(id, name, allVisible = true) {
     // Synchronisé par compte → retrouvé tel quel sur tout appareil / manga du profil, sans
     // ré-activation. Réécrit à chaque changement dans le lecteur. (Le pincement, zoom LIBRE, est
     // transitoire : il ne modifie pas `scale`, qui reste l'échelle de BASE posée par les chips.)
-    state: { scale: 100, scaleLandscape: 100, scrollnav: false, autoscroll: false, speedMult: 1, pause: 0, sens: 1, filter: 'none', brightness: 100, cineMin: 1.5, cineMax: 5 },
+    state: { scale: 100, scaleLandscape: 100, scrollnav: false, autoscroll: false, speedMult: 1, pause: 0, sens: 1, filter: 'none', brightness: 100, cineMin: 1.5, cineNormal: 2.5, cineMax: 5 },
     defaults: {},
   }
 }
@@ -38,7 +38,7 @@ export function makeProfile(id, name, allVisible = true) {
 // Garantit qu'un profil a un `state` + des `values` complets (auto-upgrade des anciens schémas).
 export function ensureState(p) {
   if (!p) return p
-  const base = { scale: 100, scaleLandscape: 100, scrollnav: false, autoscroll: false, speedMult: 1, pause: 0, sens: 1, filter: 'none', brightness: 100, cineMin: 1.5, cineMax: 5 }
+  const base = { scale: 100, scaleLandscape: 100, scrollnav: false, autoscroll: false, speedMult: 1, pause: 0, sens: 1, filter: 'none', brightness: 100, cineMin: 1.5, cineNormal: 2.5, cineMax: 5 }
   p.state = { ...base, ...(p.state || {}) }
   const old = p.defaults || {}
   if (!(p.state.pause > 0) && typeof old.autoEdgePause === 'number' && old.autoEdgePause > 0) {

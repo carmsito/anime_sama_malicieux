@@ -98,8 +98,9 @@ export default function EpubReader() {
   const [camTransition, setCamTransition] = useState('transform .5s cubic-bezier(.4,0,.2,1)')  // transition caméra (auto-pan long = durée du dwell)
   // Auto-LECTURE cinéma : avance case par case, dwell adapté au TEXTE, auto-pan des longues cases.
   const [cinemaPlaying, setCinemaPlaying] = useState(false)
-  const [cineMin, setCineMin] = useState(1.5)   // dwell case sans texte (s)
-  const [cineMax, setCineMax] = useState(5)     // dwell case bavarde (s)
+  const [cineMin, setCineMin] = useState(1.5)      // dwell case sans texte / action (s)
+  const [cineNormal, setCineNormal] = useState(2.5) // dwell case normale (peu de texte)
+  const [cineMax, setCineMax] = useState(5)        // dwell case bavarde (s)
   const cinemaTimerRef = useRef(null)
   const camBaseRef = useRef(null)                        // { cx, cy, baseK } du cadrage caméra
   const cinPinchRef = useRef(null)
@@ -242,6 +243,7 @@ export default function EpubReader() {
     setReadFilter(st.filter || 'none')
     setBrightness(st.brightness >= 40 && st.brightness <= 100 ? st.brightness : 100)
     setCineMin(st.cineMin > 0 ? st.cineMin : 1.5)
+    setCineNormal(st.cineNormal > 0 ? st.cineNormal : 2.5)
     setCineMax(st.cineMax > 0 ? st.cineMax : 5)
     appliedProfRef.current = activeProfileId
   }, [profile, activeProfileId])
@@ -418,7 +420,11 @@ export default function EpubReader() {
     const dispW = CW, dispH = CW * (im.naturalHeight / im.naturalWidth)
     const pw = p.w * dispW, ph = p.h * dispH
     const cx = (p.x + p.w / 2) * dispW, cy = (p.y + p.h / 2) * dispH
-    const dwell = Math.max(0.4, cineMin + (cineMax - cineMin) * (p.text || 0)) * 1000   // + long si bavarde
+    // Dwell = courbe à 3 ancres selon la densité de texte : action(0) → normal(~0.15) → bavarde(~0.45+)
+    const t = p.text || 0, MID = 0.15, HIGH = 0.45
+    const d = t <= MID ? cineMin + (cineNormal - cineMin) * (t / MID)
+                       : cineNormal + (cineMax - cineNormal) * Math.min(1, (t - MID) / (HIGH - MID))
+    const dwell = Math.max(0.4, d) * 1000
     const advance = () => setPanelIdx((i) => { if (i < panels.length - 1) return i + 1; goNext(); return i })
     const baseK = Math.min((CW / pw) * 0.96, (CH / ph) * 0.96)
     const k = baseK * cinemaZoom                                          // ÉCHELLE de l'utilisateur (pas de fit-largeur forcé)
@@ -438,9 +444,10 @@ export default function EpubReader() {
     setCamXform(`translate(${CW / 2 - k * cx}px, ${CH / 2 - k * cy}px) scale(${k})`)
     cinemaTimerRef.current = setTimeout(advance, dwell)
     return () => clearTimeout(cinemaTimerRef.current)
-  }, [cinema, cinemaPlaying, panels, panelIdx, detecting, cinemaZoom, cineMin, cineMax, fullscreen, isLandscape]) // eslint-disable-line
+  }, [cinema, cinemaPlaying, panels, panelIdx, detecting, cinemaZoom, cineMin, cineNormal, cineMax, fullscreen, isLandscape]) // eslint-disable-line
   const setCineMinValue = (v) => { setCineMin(v); patchActiveState({ cineMin: v }) }
-  const setCineMaxValue = (v) => { setCineMax(Math.max(v, cineMin)); patchActiveState({ cineMax: Math.max(v, cineMin) }) }
+  const setCineNormalValue = (v) => { setCineNormal(v); patchActiveState({ cineNormal: v }) }
+  const setCineMaxValue = (v) => { setCineMax(v); patchActiveState({ cineMax: v }) }
 
   // Rend la découpe (planche + contours rouges + n°) et l'enregistre sur le serveur pour analyse.
   const [panelSaved, setPanelSaved] = useState('')
@@ -1394,7 +1401,7 @@ export default function EpubReader() {
                     <span>Auto-lecture (avance seule)</span><span style={pill(cinemaPlaying)}>{cinemaPlaying ? 'ON' : 'OFF'}</span>
                   </button>
                   <div style={section}>
-                    <div style={label}>Pause mini — case sans texte (s)</div>
+                    <div style={label}>Pause action — case sans texte (s)</div>
                     <div style={chipRow}>
                       {CINE_DWELL_CHOICES.map((v) => (
                         <button key={v} onClick={() => setCineMinValue(v)} style={chip(Math.abs(cineMin - v) < 0.001)}>{v}s</button>
@@ -1402,7 +1409,15 @@ export default function EpubReader() {
                     </div>
                   </div>
                   <div style={section}>
-                    <div style={label}>Pause maxi — case bavarde/beaucoup de texte (s)</div>
+                    <div style={label}>Pause normale — peu de texte (s)</div>
+                    <div style={chipRow}>
+                      {CINE_DWELL_CHOICES.map((v) => (
+                        <button key={v} onClick={() => setCineNormalValue(v)} style={chip(Math.abs(cineNormal - v) < 0.001)}>{v}s</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={section}>
+                    <div style={label}>Pause bavarde — beaucoup de texte (s)</div>
                     <div style={chipRow}>
                       {CINE_DWELL_CHOICES.map((v) => (
                         <button key={v} onClick={() => setCineMaxValue(v)} style={chip(Math.abs(cineMax - v) < 0.001)}>{v}s</button>
