@@ -13,8 +13,9 @@ import Navbar from './components/Navbar'
 import JobStatus from './components/JobStatus'
 import ConsoleStatus from './components/ConsoleStatus'
 import PageErrorBoundary from './components/PageErrorBoundary'
-import { AuthCtx, JobsCtx, SearchCtx, ConsoleCtx } from './contexts'
+import { AuthCtx, JobsCtx, SearchCtx, ConsoleCtx, CastCtx } from './contexts'
 import { useConsoleSession } from './consoleSession'
+import { useCastSession } from './castSession'
 import { api } from './api/client'
 
 function useAuth() {
@@ -95,12 +96,14 @@ export default function App() {
   const auth = useAuth()
   const jobs = useJobs()
   const consoleSession = useConsoleSession()   // vit au niveau App → survit à la navigation
+  const castSession = useCastSession()         // diffusion TV → survit à la navigation (stop explicite only)
   const [searchQuery, setSearchQuery] = useState('')
 
   return (
     <AuthCtx.Provider value={auth}>
       <JobsCtx.Provider value={jobs}>
         <ConsoleCtx.Provider value={consoleSession}>
+        <CastCtx.Provider value={castSession}>
         <SearchCtx.Provider value={{ query: searchQuery, set: setSearchQuery }}>
           <Routes>
             <Route path="/login" element={<Login />} />
@@ -125,6 +128,7 @@ export default function App() {
             } />
           </Routes>
         </SearchCtx.Provider>
+        </CastCtx.Provider>
         </ConsoleCtx.Provider>
       </JobsCtx.Provider>
     </AuthCtx.Provider>

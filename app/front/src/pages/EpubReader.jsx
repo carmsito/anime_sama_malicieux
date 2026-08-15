@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useCo
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { gsap } from 'gsap'
 import { api } from '../api/client'
-import { AuthCtx } from '../contexts'
+import { AuthCtx, CastCtx } from '../contexts'
 import { loadReaderSettings, BASE_AUTO_SPEED, CINE_DWELL_CHOICES } from '../readerSettings'
 import { loadProfiles, resolveProfileId, getProfile, saveProfiles } from '../readerProfiles'
 import { detectPanels } from '../panelDetect'
@@ -104,17 +104,17 @@ export default function EpubReader() {
   const [dockKind, setDockKind] = useState(() => localStorage.getItem('reader_dock_kind') || 'classic')  // 'classic' (auto-scroll) | 'cinema'
   const dockRef = useRef(null)
   const dockDragRef = useRef(null)
-  // ── Cast « second écran » (TV) : ce téléphone pilote, la TV (page /tv) affiche ──
+  // ── Cast « second écran » (TV) : session au niveau App (survit à la navigation) ──
+  const cast = useContext(CastCtx)
+  const casting = cast.casting
   const [castOpen, setCastOpen] = useState(false)     // modale de saisie du code
   const [castCode, setCastCode] = useState('')        // code tapé
-  const [casting, setCasting] = useState(false)       // diffusion active
-  const [castErr, setCastErr] = useState('')
-  const castWsRef = useRef(null)
-  const castPingRef = useRef(null)
-  // Télécommande — mode « souris » (trackpad) pour piloter la vue TV en lecture normale.
+  const [remoteMode, setRemoteMode] = useState('normal')  // layout télécommande : 'normal' | 'cine' (indépendant du flag cinema)
+  // Télécommande — mode « souris » (trackpad) + auto-scroll (mode normal), pilotant la TV.
   const [castMouse, setCastMouse] = useState(false)
   const [castZoom, setCastZoom] = useState(1)             // zoom page envoyé à la TV (normale)
   const [castPan, setCastPan] = useState({ x: 0, y: 0 })  // recentrage normalisé (-0.5..0.5)
+  const [castAutoscroll, setCastAutoscroll] = useState(false)
   const castZoomRef = useRef(1)
   const padDragRef = useRef(null)
   const lastPadTapRef = useRef(0)
@@ -360,20 +360,16 @@ export default function EpubReader() {
   const setDockHiddenP = (v) => { setDockHidden(v); localStorage.setItem('reader_dock_hidden', v ? '1' : '0') }
   const setDockShowP = (v) => { setDockShow(v); localStorage.setItem('reader_dock_show', v ? '1' : '0') }
   const setDockKindP = (v) => { setDockKind(v); localStorage.setItem('reader_dock_kind', v) }
-  // ── Cast : connexion au relais + envoi de l'état de lecture vers la TV ──
-  const castSend = () => {
-    const ws = castWsRef.current
-    if (!ws || ws.readyState !== 1) return
-    ws.send(JSON.stringify({ type: 'state', state: {
-      mangaId, chapterNum, page: current, cinema,
-      panelIdx, playing: cinemaPlaying, scale: cinema ? Math.round(cinemaZoom * 100) : zoomPct,
-      // Les cases détectées (le tel les a déjà) → la TV rejoue la caméra sans re-détecter.
-      panels: cinema ? panels.map((p) => ({ x: p.x, y: p.y, w: p.w, h: p.h })) : null,
-      // Confort (les deux modes) + zoom/pan « souris » (mode normal).
-      filter: readFilter, brightness, normZoom: castZoom, panX: castPan.x, panY: castPan.y,
-    } }))
-  }
-  // Mode souris : le trackpad de la télécommande déplace/zoome la vue sur la TV (lecture normale).
+  // ── Cast : la session vit au niveau App (survit à la navigation) ; ici on ne fait que
+  //    l'ouvrir/fermer et lui pousser l'état de lecture. La diffusion ne s'arrête donc QUE
+  //    sur « Arrêter », pas quand on quitte le lecteur. ──
+  const PAD_GAIN = 2.4                                   // sensibilité du trackpad souris
+  const resetCastView = () => { setCastMouse(false); setCastZoom(1); setCastPan({ x: 0, y: 0 }); setCastAutoscroll(false) }
+  const startCast = (code) => { resetCastView(); cast.start(code); setCastOpen(false) }
+  const stopCast = () => cast.stop()
+  // Bascule de mode télécommande : on (ré)initialise proprement la vue à chaque changement.
+  const setRemoteCinema = (on) => { if (cinema !== on) toggleCinema(); resetCastView() }
+  // Mode souris : le trackpad déplace/zoome la vue sur la TV (lecture normale).
   const onPadDown = (e) => {
     const now = Date.now()
     if (now - lastPadTapRef.current < 300) {        // double-tap → zoom / dézoom
@@ -388,9 +384,9 @@ export default function EpubReader() {
     const dx = (e.clientX - d.x) / d.w, dy = (e.clientY - d.y) / d.h
     d.x = e.clientX; d.y = e.clientY
     const z = castZoomRef.current || 1
-    setCastPan((p) => ({                             // déplacer la vue = pan inverse du doigt, atténué par le zoom
-      x: Math.max(-0.5, Math.min(0.5, p.x - dx / z)),
-      y: Math.max(-0.5, Math.min(0.5, p.y - dy / z)),
+    setCastPan((p) => ({                             // déplacer la vue = pan inverse du doigt (gain ↑, atténué par le zoom)
+      x: Math.max(-0.5, Math.min(0.5, p.x - dx * PAD_GAIN / z)),
+      y: Math.max(-0.5, Math.min(0.5, p.y - dy * PAD_GAIN / z)),
     }))
   }
   const onPadUp = () => { padDragRef.current = null }
@@ -401,32 +397,18 @@ export default function EpubReader() {
     if (n > panels.length - 1) return goNext()
     setPanelIdx(n)
   }
-  const stopCast = () => {
-    clearInterval(castPingRef.current)
-    try { castWsRef.current?.close() } catch { /* noop */ }
-    castWsRef.current = null; setCasting(false)
-  }
-  const startCast = (code) => {
-    const c = (code || '').trim().toUpperCase()
-    if (c.length < 4) { setCastErr('Code à 4 caractères'); return }
-    setCastErr('')
-    const token = localStorage.getItem('token') || ''
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${proto}://${location.host}/api/cast/ws?role=phone&code=${encodeURIComponent(c)}&token=${encodeURIComponent(token)}`)
-    castWsRef.current = ws
-    ws.onmessage = (e) => {
-      let m; try { m = JSON.parse(e.data) } catch { return }
-      if (m.type === 'paired') { setCasting(true); setCastOpen(false); castSend() }
-      else if (m.type === 'error') { setCastErr(m.error === 'code' ? 'Code introuvable (la TV est-elle bien sur /tv ?)' : 'Connexion refusée'); try { ws.close() } catch { /* noop */ } }
-      else if (m.type === 'tv_gone') { setCastErr('La TV s’est déconnectée'); stopCast() }
-    }
-    ws.onclose = () => { clearInterval(castPingRef.current); if (castWsRef.current === ws) { castWsRef.current = null; setCasting(false) } }
-    castPingRef.current = setInterval(() => { try { ws.readyState === 1 && ws.send(JSON.stringify({ type: 'ping' })) } catch { /* noop */ } }, 25000)
-  }
-  // Diffusion active → tout changement d'état (page, cinéma, case, zoom, lecture) est poussé sur la TV.
+  // Diffusion active → tout changement d'état (page, cinéma, case, zoom, confort…) poussé sur la TV.
   useEffect(() => { castZoomRef.current = castZoom }, [castZoom])
-  useEffect(() => { if (casting) castSend() }, [casting, current, chapterNum, mangaId, cinema, panelIdx, cinemaPlaying, cinemaZoom, zoomPct, panels, readFilter, brightness, castZoom, castPan]) // eslint-disable-line
-  useEffect(() => () => stopCast(), [])   // fermeture propre en quittant le lecteur
+  useEffect(() => {
+    if (!casting) return
+    cast.push({
+      mangaId, chapterNum, page: current, cinema,
+      panelIdx, playing: cinemaPlaying, scale: cinema ? Math.round(cinemaZoom * 100) : zoomPct,
+      panels: cinema ? panels.map((p) => ({ x: p.x, y: p.y, w: p.w, h: p.h })) : null,
+      filter: readFilter, brightness, normZoom: castZoom, panX: castPan.x, panY: castPan.y,
+      autoscroll: castAutoscroll, speed: speedMult,
+    })
+  }, [casting, current, chapterNum, mangaId, cinema, panelIdx, cinemaPlaying, cinemaZoom, zoomPct, panels, readFilter, brightness, castZoom, castPan, castAutoscroll, speedMult]) // eslint-disable-line
   // Échelle cinéma (zoom caméra) au cycle, pour le bouton du dock cinéma.
   const cycleCinemaScale = () => {
     const levels = settings.scaleLevels.length ? settings.scaleLevels : [100]
@@ -1583,7 +1565,7 @@ export default function EpubReader() {
               style={{ width: '100%', textAlign: 'center', fontSize: '2rem', fontWeight: 900, letterSpacing: '.35em',
                 padding: '.6rem', borderRadius: 12, border: '1px solid rgba(255,255,255,.18)',
                 background: '#0e0e12', color: '#fff', boxSizing: 'border-box' }} />
-            {castErr && <div style={{ color: '#e50914', fontSize: '.82rem', marginTop: '.6rem', textAlign: 'center' }}>{castErr}</div>}
+            {cast.err && <div style={{ color: '#e50914', fontSize: '.82rem', marginTop: '.6rem', textAlign: 'center' }}>{cast.err}</div>}
             <div style={{ display: 'flex', gap: '.6rem', marginTop: '1.1rem' }}>
               <button onClick={() => setCastOpen(false)}
                 style={{ flex: 1, padding: '.7rem', borderRadius: 10, border: 'none', cursor: 'pointer',
@@ -1632,10 +1614,10 @@ export default function EpubReader() {
                 background: '#e50914', color: '#fff', fontWeight: 800, fontSize: '.82rem' }}>Arrêter</button>
           </div>
 
-          {/* Sélecteur de mode */}
+          {/* Sélecteur de mode (layout) — indépendant du flag Cinéma, qui a son propre bouton */}
           <div style={{ display: 'flex', width: '88%', margin: '0 auto', background: 'rgba(255,255,255,.06)', borderRadius: 12, padding: 4, gap: 4 }}>
-            <button onClick={() => { if (!cinema) toggleCinema() }} style={seg(cinema)}><ClapIcon size={15} /> Cinématique</button>
-            <button onClick={() => { if (cinema) toggleCinema(); setCastMouse(false) }} style={seg(!cinema)}>📖 Normale</button>
+            <button onClick={() => { setRemoteMode('cine'); resetCastView() }} style={seg(remoteMode === 'cine')}><ClapIcon size={15} /> Cinématique</button>
+            <button onClick={() => { setRemoteMode('normal'); setRemoteCinema(false) }} style={seg(remoteMode === 'normal')}>📖 Normale</button>
           </div>
           <div style={{ textAlign: 'center', color: 'rgba(255,255,255,.45)', fontSize: '.82rem', margin: '.55rem 0 0' }}>
             👀 Regarde la TV · Chapitre {chapterNum}
@@ -1646,10 +1628,14 @@ export default function EpubReader() {
               {loaded ? current + 1 : '…'}<span style={{ opacity: .35, fontSize: '1.4rem', fontWeight: 700 }}> / {images.length || '…'}</span>
             </div>
 
-            {cinema ? (
+            {remoteMode === 'cine' ? (
               /* ── MODE CINÉMATIQUE ── */
               <>
-                <button onClick={() => setCinemaPlaying((v) => !v)}
+                {/* Activer / couper le Cinéma sur la TV (indépendant du reste) */}
+                <button onClick={toggleCinema} style={{ ...tile(cinema), width: '88%', height: 48, flexDirection: 'row', gap: '.5rem' }}>
+                  <ClapIcon size={17} /> Cinéma {cinema ? 'ON' : 'OFF'}
+                </button>
+                <button onClick={() => { if (!cinema) { toggleCinema(); setCinemaPlaying(true) } else setCinemaPlaying((v) => !v) }}
                   style={{ width: '88%', height: 62, borderRadius: 16, border: 'none', cursor: 'pointer',
                     background: cinemaPlaying ? '#e50914' : 'rgba(255,255,255,.12)', color: '#fff', fontWeight: 800,
                     fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '.5rem' }}>
@@ -1665,16 +1651,20 @@ export default function EpubReader() {
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 18 12 6 20 6 4"/></svg>
                   </button>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '.6rem', width: '88%' }}>
+                {/* Zoom caméra + confort (filtre / luminosité), comme en normal */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '.6rem', width: '88%' }}>
                   <button title="Zoom caméra : tap ou maintenir + glisser" style={scrubTile}
                     onPointerDown={(e) => onScrubDown(e, settings.scaleLevels, Math.round(cinemaZoom * 100), (v) => setCinemaZoom(v / 100))}
                     onPointerMove={onScrubMove} onPointerUp={(e) => onScrubUp(e, cycleCinemaScale)}>
                     <span style={cap}>Zoom</span>{Math.round(cinemaZoom * 100)}%
                   </button>
-                  <button title="Vitesse : tap ou maintenir + glisser" style={scrubTile}
-                    onPointerDown={(e) => onScrubDown(e, settings.speedMults, speedMult, setSpeedMultValue)}
-                    onPointerMove={onScrubMove} onPointerUp={(e) => onScrubUp(e, cycleSpeedMult)}>
-                    <span style={cap}>Vitesse</span>×{speedMult}
+                  <button title="Luminosité : tap ou maintenir + glisser" style={scrubTile}
+                    onPointerDown={(e) => onScrubDown(e, BRIGHT, brightness, setBrightnessValue)}
+                    onPointerMove={onScrubMove} onPointerUp={(e) => onScrubUp(e, cycleBright)}>
+                    <span style={cap}>Lumino.</span>{brightness}%
+                  </button>
+                  <button onClick={cycleFilter} style={tile(readFilter !== 'none')}>
+                    <span style={cap}>Filtre</span>{filterLbl}
                   </button>
                 </div>
               </>
@@ -1692,10 +1682,17 @@ export default function EpubReader() {
                 <input type="range" min={0} max={Math.max(0, images.length - 1)} value={current}
                   onChange={(e) => { setCurrent(+e.target.value); setImgReady(false) }}
                   style={{ width: '88%', accentColor: '#e50914' }} />
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '.6rem', width: '88%' }}>
-                  <button onClick={() => setCastMouse((v) => !v)} style={tile(castMouse)}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '.6rem', width: '88%' }}>
+                  <button style={tile(castMouse)}
+                    onClick={() => setCastMouse((v) => { const n = !v; if (n) setCastAutoscroll(false); else { setCastZoom(1); setCastPan({ x: 0, y: 0 }) } return n })}>
                     <span style={cap}>Souris</span>{castMouse ? 'ON' : 'OFF'}
                   </button>
+                  <button style={tile(castAutoscroll)}
+                    onClick={() => setCastAutoscroll((v) => { const n = !v; if (n) { setCastMouse(false); setCastZoom(1); setCastPan({ x: 0, y: 0 }) } return n })}>
+                    <span style={cap}>Auto-scroll</span>{castAutoscroll ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '.6rem', width: '88%' }}>
                   <button title="Zoom page : tap ou maintenir + glisser" style={scrubTile}
                     onPointerDown={(e) => onScrubDown(e, CAST_ZOOM, Math.round(castZoom * 100), (v) => setCastZoom(v / 100))}
                     onPointerMove={onScrubMove} onPointerUp={(e) => onScrubUp(e, cycleCastZoom)}>
@@ -1706,10 +1703,10 @@ export default function EpubReader() {
                     onPointerMove={onScrubMove} onPointerUp={(e) => onScrubUp(e, cycleBright)}>
                     <span style={cap}>Lumino.</span>{brightness}%
                   </button>
+                  <button onClick={cycleFilter} style={tile(readFilter !== 'none')}>
+                    <span style={cap}>Filtre</span>{filterLbl}
+                  </button>
                 </div>
-                <button onClick={cycleFilter} style={{ ...tile(readFilter !== 'none'), width: '88%', height: 48, flexDirection: 'row', gap: '.4rem' }}>
-                  <span style={cap}>Filtre</span> {filterLbl}
-                </button>
                 {castMouse && (
                   <div onPointerDown={onPadDown} onPointerMove={onPadMove} onPointerUp={onPadUp} onPointerCancel={onPadUp}
                     style={{ width: '88%', height: 150, borderRadius: 16, background: 'rgba(255,255,255,.05)',
@@ -1835,7 +1832,7 @@ export default function EpubReader() {
                   <span style={pill(true)}>ARRÊTER</span>
                 </button>
               ) : (
-                <button onClick={() => { setCastErr(''); setCastCode(''); setCastOpen(true) }} style={toggleRow(false)}>
+                <button onClick={() => { cast.setErr(''); setCastCode(''); setCastOpen(true) }} style={toggleRow(false)}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '.45rem' }}><CastIcon size={16} /> Diffuser sur une TV</span>
                   <span style={{ ...pill(false), fontSize: '1rem' }}>›</span>
                 </button>

@@ -27,8 +27,11 @@ export default function TvCast() {
   const [state, setState] = useState(null)   // { mangaId, chapterNum, page, cinema, panels, panelIdx, scale }
   const [dims, setDims] = useState(null)      // { natW, natH } de l'image courante
   const [vp, setVp] = useState({ w: window.innerWidth, h: window.innerHeight })
+  const [scrollY, setScrollY] = useState(0)   // défilement vertical (auto-scroll, mode normal)
   const wsRef = useRef(null)
   const retryRef = useRef(null)
+  const scrollRef = useRef(0)
+  const rafRef = useRef(0)
 
   useEffect(() => {
     let closed = false
@@ -60,8 +63,28 @@ export default function TvCast() {
   }, [])
 
   const imgUrl = state ? `/api/mangas/${state.mangaId}/chapters/${state.chapterNum}/images/${state.page}` : null
-  // Nouvelle image → on oublie les dimensions le temps qu'elle charge (évite un cadrage périmé).
-  useEffect(() => { setDims(null) }, [imgUrl])
+  // Nouvelle image → on oublie les dimensions + on remet le défilement en haut.
+  useEffect(() => { setDims(null); scrollRef.current = 0; setScrollY(0) }, [imgUrl])
+
+  // Auto-scroll (mode normal) : on fait défiler l'image verticalement, vitesse = base × speed.
+  const autoscroll = state?.autoscroll && !(state?.cinema && !isWholePage(state?.panels))
+  useEffect(() => {
+    cancelAnimationFrame(rafRef.current)
+    if (!autoscroll || !dims) return
+    const CW = vp.w, CH = vp.h, dispH = CW * (dims.natH / dims.natW)
+    const maxS = Math.max(0, dispH - CH)
+    if (maxS <= 0) return
+    const speed = 45 * (state.speed || 1)   // px/s
+    let last = performance.now()
+    const tick = (now) => {
+      const dt = Math.min(0.05, (now - last) / 1000); last = now
+      scrollRef.current = Math.min(maxS, scrollRef.current + speed * dt)
+      setScrollY(scrollRef.current)
+      if (scrollRef.current < maxS) rafRef.current = requestAnimationFrame(tick)
+    }
+    rafRef.current = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafRef.current)
+  }, [autoscroll, dims, vp, state?.speed, imgUrl])
 
   // Transform caméra : miroir EXACT du lecteur (EpubReader). L'image est dimensionnée à la
   // largeur du viewport (dispW = CW) puis on cadre soit la case, soit la planche entière.
@@ -79,13 +102,18 @@ export default function TvCast() {
       const k = baseK * ((state.scale || 100) / 100)
       return { dispW, dispH, transform: `translate(${CW / 2 - k * cx}px, ${CH / 2 - k * cy}px) scale(${k})` }
     }
+    // Auto-scroll : image pleine largeur, on translate verticalement selon scrollY.
+    if (autoscroll) {
+      const k = CW / dispW   // pleine largeur (=1)
+      return { dispW, dispH, transform: `translate(0px, ${-scrollY}px) scale(${k})`, smooth: false }
+    }
     // Lecture normale : contain, + zoom/pan « souris » piloté depuis la télécommande.
     const z = state?.normZoom || 1
     const k = Math.min(1, CW / dispW, CH / dispH) * z
     const focusX = (0.5 + (state?.panX || 0)) * dispW
     const focusY = (0.5 + (state?.panY || 0)) * dispH
     return { dispW, dispH, transform: `translate(${CW / 2 - k * focusX}px, ${CH / 2 - k * focusY}px) scale(${k})` }
-  }, [dims, vp, state])
+  }, [dims, vp, state, autoscroll, scrollY])
 
   const wrap = { position: 'fixed', inset: 0, background: '#000', color: '#fff', overflow: 'hidden',
     display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'inherit' }
@@ -97,7 +125,8 @@ export default function TvCast() {
           onLoad={(e) => setDims({ natW: e.target.naturalWidth, natH: e.target.naturalHeight })}
           style={cam
             ? { position: 'absolute', left: 0, top: 0, width: cam.dispW, height: cam.dispH,
-                transformOrigin: '0 0', transform: cam.transform, transition: 'transform .4s cubic-bezier(.4,0,.2,1)',
+                transformOrigin: '0 0', transform: cam.transform,
+                transition: cam.smooth === false ? 'none' : 'transform .4s cubic-bezier(.4,0,.2,1)',
                 willChange: 'transform', filter: filterCss(state?.filter, state?.brightness) }
             : { maxWidth: '100vw', maxHeight: '100vh', objectFit: 'contain', opacity: 0 }} />
       </div>
