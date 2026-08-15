@@ -38,6 +38,21 @@ services:
       retries: 3
       start_period: 40s
 
+  # Reverse-proxy HTTPS (Let's Encrypt auto) → débloque le PWA + la caméra (scanner QR).
+  # Accès : https://62-238-63-117.nip.io  (l'accès direct http://IP:8000 reste dispo).
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
   # Résout le managed challenge Cloudflare de Sushiscan (interne uniquement).
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest
@@ -53,3 +68,7 @@ services:
 
   # (Sidecar yt-extractor de la playlist musique : temporairement retiré — feature en
   # pause + disque plein. À réactiver quand on reprend la musique.)
+
+volumes:
+  caddy_data:     # certificats Let's Encrypt (persistants → pas de re-émission à chaque redéploiement)
+  caddy_config:

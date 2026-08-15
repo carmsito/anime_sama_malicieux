@@ -6,6 +6,7 @@ import { AuthCtx, CastCtx } from '../contexts'
 import { loadReaderSettings, BASE_AUTO_SPEED, CINE_DWELL_CHOICES } from '../readerSettings'
 import { loadProfiles, resolveProfileId, getProfile, saveProfiles } from '../readerProfiles'
 import { detectPanels } from '../panelDetect'
+import jsQR from 'jsqr'   // repli scanner QR quand BarcodeDetector est absent (iOS/anciens navigateurs)
 import { createAmbienceEngine } from '../ambienceAudio'
 
 const IS_TOUCH = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches
@@ -380,7 +381,6 @@ export default function EpubReader() {
   }
   const startScan = async () => {
     setScanErr('')
-    if (!('BarcodeDetector' in window)) { setScanErr('Scanner non géré par ce navigateur — scanne le QR avec l’appareil photo, ou tape le code.'); return }
     try {
       scanStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
       setScanning(true)
@@ -390,20 +390,33 @@ export default function EpubReader() {
     if (!scanning) return
     const v = scanVideoRef.current; if (!v) return
     v.srcObject = scanStreamRef.current; v.play().catch(() => {})
-    let det; try { det = new window.BarcodeDetector({ formats: ['qr_code'] }) } catch { setScanErr('Scanner indisponible'); return }
-    let alive = true, timer
+    let alive = true, timer, canvas
+    let det = null
+    try { if ('BarcodeDetector' in window) det = new window.BarcodeDetector({ formats: ['qr_code'] }) } catch { /* on tombera sur jsQR */ }
+    const handle = (raw) => {
+      if (!raw) return false
+      const m = String(raw).match(/castcode=([A-Za-z0-9]{4})/i)
+      const c = m ? m[1].toUpperCase() : (/^[A-Za-z0-9]{4}$/.test(String(raw).trim()) ? String(raw).trim().toUpperCase() : '')
+      if (c) { alive = false; stopScan(); startCast(c); return true }
+      return false
+    }
     const scan = async () => {
       if (!alive) return
       try {
-        const codes = await det.detect(v)
-        const raw = codes && codes[0] && codes[0].rawValue
-        if (raw) {
-          const m = String(raw).match(/castcode=([A-Za-z0-9]{4})/i)
-          const c = m ? m[1].toUpperCase() : (/^[A-Za-z0-9]{4}$/.test(String(raw).trim()) ? String(raw).trim().toUpperCase() : '')
-          if (c) { alive = false; stopScan(); startCast(c); return }
+        if (det) {
+          const codes = await det.detect(v)
+          if (codes && codes[0] && handle(codes[0].rawValue)) return
+        } else if (v.videoWidth) {                       // repli jsQR via canvas
+          if (!canvas) canvas = document.createElement('canvas')
+          canvas.width = v.videoWidth; canvas.height = v.videoHeight
+          const ctx = canvas.getContext('2d', { willReadFrequently: true })
+          ctx.drawImage(v, 0, 0, canvas.width, canvas.height)
+          const img = ctx.getImageData(0, 0, canvas.width, canvas.height)
+          const r = jsQR(img.data, img.width, img.height)
+          if (r && handle(r.data)) return
         }
       } catch { /* frame illisible → on retente */ }
-      timer = setTimeout(scan, 350)
+      timer = setTimeout(scan, 250)
     }
     scan()
     return () => { alive = false; clearTimeout(timer) }

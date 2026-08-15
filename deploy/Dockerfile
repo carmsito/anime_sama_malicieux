@@ -7,7 +7,7 @@
 FROM node:20-slim AS front
 WORKDIR /front
 COPY app/front/package*.json ./
-RUN npm ci
+RUN npm install --no-audit --no-fund
 COPY app/front/ ./
 RUN npm run build   # produit /front/dist
 

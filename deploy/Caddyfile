@@ -1,0 +1,7 @@
+# HTTPS automatique (Let's Encrypt) via un domaine nip.io basé sur l'IP publique.
+# → certificat de confiance sans posséder de domaine ; débloque caméra (scanner QR) + PWA.
+# Caddy relaie tout vers l'app (WebSocket /api/cast/ws inclus, géré nativement).
+62-238-63-117.nip.io {
+	encode zstd gzip
+	reverse_proxy app:8000
+}
