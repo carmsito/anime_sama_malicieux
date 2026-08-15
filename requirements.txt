@@ -38,4 +38,7 @@ numpy>=1.24
 Pillow>=10.0
 huggingface_hub>=0.23
 
+# QR code du Mode Cast (pur Python, sans dépendance) → SVG servi à la TV.
+segno>=1.6.0
+
 # Système requis (NON pip) : chromium, xvfb, imagemagick (voir deploy/Dockerfile)

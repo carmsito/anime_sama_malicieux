@@ -13,11 +13,23 @@ expirent à la déconnexion de la TV.
 """
 import secrets
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response
 from jose import jwt, JWTError
 
 from ..config import SECRET_KEY, ALGORITHM
 
 router = APIRouter(tags=["cast"])
+
+
+@router.get("/cast/qr", summary="QR code (SVG) pour rejoindre une diffusion")
+def cast_qr(data: str):
+    """Encode `data` (une URL de jointure http://host/?castcode=XXXX) en QR SVG. La TV
+    l'affiche ; le téléphone le scanne avec son APPAREIL PHOTO NATIF (l'app s'ouvre avec le
+    code pré-rempli et lance la diffusion) → pas besoin de caméra in-app (impossible en HTTP)."""
+    import segno, io
+    buf = io.StringIO()
+    segno.make((data or "")[:512], error="m").save(buf, kind="svg", scale=7, border=2, dark="#000", light="#fff")
+    return Response(content=buf.getvalue(), media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
 
 # Caractères non ambigus (pas de 0/O, 1/I…) → code facile à recopier sur une télécommande.
 _ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
@@ -62,8 +74,12 @@ async def cast_ws(websocket: WebSocket):
         await _safe_send(websocket, {"type": "code", "code": code})
         try:
             while True:
-                # La TV ne pilote rien : on lit juste pour détecter la fermeture (+ ping éventuel).
-                await websocket.receive_text()
+                # La TV peut renvoyer des COMMANDES au téléphone (ex. auto-scroll arrivé en bas
+                # de planche → demander la page suivante). On les relaie aux contrôleurs.
+                data = await websocket.receive_json()
+                if data.get("type") == "cmd":
+                    for c in list(room.controllers):
+                        await _safe_send(c, {"type": "cmd", "cmd": data.get("cmd")})
         except WebSocketDisconnect:
             pass
         finally:

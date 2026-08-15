@@ -97,6 +97,15 @@ export default function App() {
   const jobs = useJobs()
   const consoleSession = useConsoleSession()   // vit au niveau App → survit à la navigation
   const castSession = useCastSession()         // diffusion TV → survit à la navigation (stop explicite only)
+  // QR scanné (appareil photo natif) → app ouverte avec ?castcode=XXXX → on lance la diffusion.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search)
+    const code = p.get('castcode')
+    if (!code) return
+    castSession.start(code)
+    p.delete('castcode')
+    window.history.replaceState({}, '', window.location.pathname + (p.toString() ? `?${p}` : '') + window.location.hash)
+  }, []) // eslint-disable-line
   const [searchQuery, setSearchQuery] = useState('')
 
   return (

@@ -66,25 +66,37 @@ export default function TvCast() {
   // Nouvelle image → on oublie les dimensions + on remet le défilement en haut.
   useEffect(() => { setDims(null); scrollRef.current = 0; setScrollY(0) }, [imgUrl])
 
-  // Auto-scroll (mode normal) : on fait défiler l'image verticalement, vitesse = base × speed.
+  // Paramètres live (vitesse / pause / zoom) lus sans redémarrer la machine à chaque push.
+  const paramsRef = useRef({ speed: 1, pause: 0, zoom: 1 })
+  paramsRef.current = { speed: state?.speed || 1, pause: state?.pause || 0, zoom: state?.normZoom || 1 }
+  const pauseTimerRef = useRef(0)
+  const sendCmd = (cmd) => { try { wsRef.current?.readyState === 1 && wsRef.current.send(JSON.stringify({ type: 'cmd', cmd })) } catch { /* noop */ } }
+
+  // Auto-scroll (mode normal) : PAUSE haut (temps de pause du profil) → défilement vertical
+  // (vitesse × zoom pilotés en direct) → PAUSE bas → demande la page suivante au téléphone.
   const autoscroll = state?.autoscroll && !(state?.cinema && !isWholePage(state?.panels))
   useEffect(() => {
-    cancelAnimationFrame(rafRef.current)
+    cancelAnimationFrame(rafRef.current); clearTimeout(pauseTimerRef.current)
     if (!autoscroll || !dims) return
     const CW = vp.w, CH = vp.h, dispH = CW * (dims.natH / dims.natW)
-    const maxS = Math.max(0, dispH - CH)
-    if (maxS <= 0) return
-    const speed = 45 * (state.speed || 1)   // px/s
-    let last = performance.now()
+    const pauseMs = Math.max(0, paramsRef.current.pause) * 1000
+    scrollRef.current = 0; setScrollY(0)
+    let last = 0
     const tick = (now) => {
+      if (!last) last = now
       const dt = Math.min(0.05, (now - last) / 1000); last = now
-      scrollRef.current = Math.min(maxS, scrollRef.current + speed * dt)
+      const { speed, zoom } = paramsRef.current
+      const maxS = Math.max(0, dispH * zoom - CH)
+      scrollRef.current = Math.min(maxS, scrollRef.current + 45 * speed * dt)
       setScrollY(scrollRef.current)
-      if (scrollRef.current < maxS) rafRef.current = requestAnimationFrame(tick)
+      if (scrollRef.current < maxS - 0.5) rafRef.current = requestAnimationFrame(tick)
+      else pauseTimerRef.current = setTimeout(() => sendCmd('next'), pauseMs)   // bas → pause → page suivante
     }
-    rafRef.current = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(rafRef.current)
-  }, [autoscroll, dims, vp, state?.speed, imgUrl])
+    const initMax = Math.max(0, dispH * paramsRef.current.zoom - CH)
+    if (initMax <= 0) { pauseTimerRef.current = setTimeout(() => sendCmd('next'), pauseMs + 1400); return () => clearTimeout(pauseTimerRef.current) }
+    pauseTimerRef.current = setTimeout(() => { last = 0; rafRef.current = requestAnimationFrame(tick) }, pauseMs)  // pause haut → défile
+    return () => { cancelAnimationFrame(rafRef.current); clearTimeout(pauseTimerRef.current) }
+  }, [autoscroll, dims, vp, imgUrl]) // eslint-disable-line
 
   // Transform caméra : miroir EXACT du lecteur (EpubReader). L'image est dimensionnée à la
   // largeur du viewport (dispW = CW) puis on cadre soit la case, soit la planche entière.
@@ -102,10 +114,11 @@ export default function TvCast() {
       const k = baseK * ((state.scale || 100) / 100)
       return { dispW, dispH, transform: `translate(${CW / 2 - k * cx}px, ${CH / 2 - k * cy}px) scale(${k})` }
     }
-    // Auto-scroll : image pleine largeur, on translate verticalement selon scrollY.
+    // Auto-scroll : pleine largeur × zoom, centré horizontalement, translaté verticalement.
     if (autoscroll) {
-      const k = CW / dispW   // pleine largeur (=1)
-      return { dispW, dispH, transform: `translate(0px, ${-scrollY}px) scale(${k})`, smooth: false }
+      const k = (CW / dispW) * (state?.normZoom || 1)
+      const x = (CW - dispW * k) / 2
+      return { dispW, dispH, transform: `translate(${x}px, ${-scrollY}px) scale(${k})`, smooth: false }
     }
     // Lecture normale : contain, + zoom/pan « souris » piloté depuis la télécommande.
     const z = state?.normZoom || 1
@@ -144,8 +157,17 @@ export default function TvCast() {
             <div style={{ fontSize: 'clamp(3rem, 14vw, 10rem)', fontWeight: 900, letterSpacing: '.15em', color: '#e50914', lineHeight: 1 }}>
               {code || '····'}
             </div>
-            <div style={{ marginTop: '2rem', fontSize: '1.1rem', opacity: .55, maxWidth: 640, marginInline: 'auto' }}>
-              Dans le lecteur, sur ton téléphone : bouton <b>Diffuser</b> → saisis ce code.
+            {code && (
+              <div style={{ marginTop: '1.8rem', display: 'inline-block', background: '#fff', padding: 14, borderRadius: 16 }}>
+                <img alt="QR de diffusion" width={220} height={220} style={{ display: 'block', width: 220, height: 220 }}
+                  src={`/api/cast/qr?data=${encodeURIComponent(`${location.origin}/?castcode=${code}`)}`} />
+              </div>
+            )}
+            <div style={{ marginTop: '1.6rem', fontSize: '1.1rem', opacity: .6, maxWidth: 640, marginInline: 'auto' }}>
+              📷 <b>Scanne ce QR</b> avec l’appareil photo de ton téléphone — l’app s’ouvre et lance la diffusion.
+            </div>
+            <div style={{ marginTop: '.6rem', fontSize: '.95rem', opacity: .4, maxWidth: 640, marginInline: 'auto' }}>
+              Ou dans le lecteur : bouton <b>Diffuser</b> → saisis le code.
             </div>
           </>
         )}

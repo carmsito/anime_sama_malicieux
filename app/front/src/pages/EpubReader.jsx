@@ -118,6 +118,7 @@ export default function EpubReader() {
   const castZoomRef = useRef(1)
   const padDragRef = useRef(null)
   const lastPadTapRef = useRef(0)
+  const goToLastPanelRef = useRef(false)   // cinéma : « case précédente » a franchi une planche → viser la dernière case
   // Mode Cinéma (bêta) : détection des cases + caméra qui glisse de case en case (sens manga).
   const [cinema, setCinema] = useState(() => localStorage.getItem('reader_cinema') === '1')
   const [panels, setPanels] = useState([])
@@ -393,10 +394,13 @@ export default function EpubReader() {
   // Pas de case (télécommande cinéma) : case suivante/précédente, déborde sur la page voisine.
   const stepPanel = (dir) => {
     const n = (panelIdx || 0) + dir
-    if (n < 0) return goPrev()
+    if (n < 0) { goToLastPanelRef.current = true; return goPrev() }   // ← revenir à la DERNIÈRE case de la planche précédente
     if (n > panels.length - 1) return goNext()
     setPanelIdx(n)
   }
+  // Après un « case précédente » qui a changé de planche : se placer sur la dernière case
+  // (au lieu de la première) dès que le découpage de la nouvelle planche est connu.
+  const firstIdxFor = (len) => { if (goToLastPanelRef.current) { goToLastPanelRef.current = false; return Math.max(0, len - 1) } return 0 }
   // Diffusion active → tout changement d'état (page, cinéma, case, zoom, confort…) poussé sur la TV.
   useEffect(() => { castZoomRef.current = castZoom }, [castZoom])
   useEffect(() => {
@@ -406,9 +410,14 @@ export default function EpubReader() {
       panelIdx, playing: cinemaPlaying, scale: cinema ? Math.round(cinemaZoom * 100) : zoomPct,
       panels: cinema ? panels.map((p) => ({ x: p.x, y: p.y, w: p.w, h: p.h })) : null,
       filter: readFilter, brightness, normZoom: castZoom, panX: castPan.x, panY: castPan.y,
-      autoscroll: castAutoscroll, speed: speedMult,
+      autoscroll: castAutoscroll, speed: speedMult, pause: pauseSec,
     })
-  }, [casting, current, chapterNum, mangaId, cinema, panelIdx, cinemaPlaying, cinemaZoom, zoomPct, panels, readFilter, brightness, castZoom, castPan, castAutoscroll, speedMult]) // eslint-disable-line
+  }, [casting, current, chapterNum, mangaId, cinema, panelIdx, cinemaPlaying, cinemaZoom, zoomPct, panels, readFilter, brightness, castZoom, castPan, castAutoscroll, speedMult, pauseSec]) // eslint-disable-line
+  // Commandes venues de la TV (auto-scroll arrivé en bas de planche → page suivante, etc.).
+  useEffect(() => {
+    cast.onCmdRef.current = (cmd) => { if (cmd === 'next') goNext(); else if (cmd === 'prev') goPrev() }
+    return () => { cast.onCmdRef.current = null }
+  }, [cast, goNext, goPrev])
   // Échelle cinéma (zoom caméra) au cycle, pour le bouton du dock cinéma.
   const cycleCinemaScale = () => {
     const levels = settings.scaleLevels.length ? settings.scaleLevels : [100]
@@ -454,7 +463,7 @@ export default function EpubReader() {
     if (!im || !im.naturalWidth) return
     const key = `${mangaId}:${chapterNum}:${current}`
     const cached = panelCacheRef.current[key]
-    if (cached) { setPanels(cached); setPanelIdx(0); return }
+    if (cached) { setPanels(cached); setPanelIdx(firstIdxFor(cached.length)); return }
     if (detectKeyRef.current === key) return          // déjà en cours (évite onLoad + effet en double)
     detectKeyRef.current = key
     // Pendant la détection : on montre la planche ENTIÈRE (jamais un mauvais découpage) + indicateur.
@@ -477,7 +486,7 @@ export default function EpubReader() {
     if (!fellBack) panelCacheRef.current[key] = ps
     if (detectKeyRef.current === key) detectKeyRef.current = null
     setDetecting(false)
-    setPanels(ps); setPanelIdx(0)
+    setPanels(ps); setPanelIdx(firstIdxFor(ps.length))
     prefetchDetect(current + 1)   // prépare la suivante en fond → navigation instantanée
   }
   // Détecte une planche EN FOND (sans toucher l'affichage) → mise en cache pour l'avance instantanée.
@@ -1556,8 +1565,9 @@ export default function EpubReader() {
               <CastIcon size={18} /> Diffuser sur une TV
             </div>
             <div style={{ fontSize: '.85rem', color: 'rgba(255,255,255,.55)', lineHeight: 1.5, marginBottom: '1rem' }}>
-              Sur ta TV, ouvre <b style={{ color: '#fff' }}>{location.host}/tv</b> dans le navigateur.
-              Un code s’affiche → entre-le ici.
+              Sur ta TV, ouvre <b style={{ color: '#fff' }}>{location.host}/tv</b>. Le plus rapide :
+              <b style={{ color: '#fff' }}> scanne le QR</b> affiché avec l’appareil photo du téléphone.
+              Sinon, entre le code ici.
             </div>
             <input value={castCode} onChange={(e) => setCastCode(e.target.value.toUpperCase().slice(0, 4))}
               onKeyDown={(e) => { if (e.key === 'Enter') startCast(castCode) }}
@@ -1688,7 +1698,7 @@ export default function EpubReader() {
                     <span style={cap}>Souris</span>{castMouse ? 'ON' : 'OFF'}
                   </button>
                   <button style={tile(castAutoscroll)}
-                    onClick={() => setCastAutoscroll((v) => { const n = !v; if (n) { setCastMouse(false); setCastZoom(1); setCastPan({ x: 0, y: 0 }) } return n })}>
+                    onClick={() => setCastAutoscroll((v) => { const n = !v; if (n) { setCastMouse(false); setCastPan({ x: 0, y: 0 }) } return n })}>
                     <span style={cap}>Auto-scroll</span>{castAutoscroll ? 'ON' : 'OFF'}
                   </button>
                 </div>
