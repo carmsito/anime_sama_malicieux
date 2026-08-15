@@ -14,6 +14,7 @@ export function useCastSession() {
   const pingRef = useRef(null)
   const reconnectRef = useRef(null)
   const codeRef = useRef('')          // dernier code (pour la reconnexion)
+  const createRef = useRef(false)     // flux Presentation : le tel crée la salle (la TV rejoindra)
   const stoppedRef = useRef(true)     // true = arrêt volontaire → PAS de reconnexion
   const lastStateRef = useRef(null)
   const onCmdRef = useRef(null)       // le lecteur y branche son gestionnaire de commandes TV
@@ -24,7 +25,7 @@ export function useCastSession() {
     clearTimeout(reconnectRef.current)
     const token = localStorage.getItem('token') || ''
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${proto}://${location.host}/api/cast/ws?role=phone&code=${encodeURIComponent(c)}&token=${encodeURIComponent(token)}`)
+    const ws = new WebSocket(`${proto}://${location.host}/api/cast/ws?role=phone&code=${encodeURIComponent(c)}&token=${encodeURIComponent(token)}${createRef.current ? '&create=1' : ''}`)
     wsRef.current = ws
     ws.onmessage = (e) => {
       let m; try { m = JSON.parse(e.data) } catch { return }
@@ -48,10 +49,10 @@ export function useCastSession() {
     pingRef.current = setInterval(() => { try { ws.readyState === 1 && ws.send(JSON.stringify({ type: 'ping' })) } catch { /* noop */ } }, 25000)
   }, [])
 
-  const start = useCallback((code) => {
+  const start = useCallback((code, opts) => {
     const c = (code || '').trim().toUpperCase()
     if (c.length < 4) { setErr('Code à 4 caractères'); return }
-    setErr(''); codeRef.current = c; stoppedRef.current = false
+    setErr(''); codeRef.current = c; createRef.current = !!(opts && opts.create); stoppedRef.current = false
     connect()
   }, [connect])
 

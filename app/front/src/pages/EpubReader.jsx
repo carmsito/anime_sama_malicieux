@@ -374,6 +374,21 @@ export default function EpubReader() {
   const resetCastView = () => { setCastMouse(false); setCastZoom(1); setCastPan({ x: 0, y: 0 }); setCastAutoscroll(false) }
   const startCast = (code) => { resetCastView(); cast.start(code); setCastOpen(false) }
   const stopCast = () => cast.stop()
+  // « Caster sur un appareil » : Chrome découvre les Chromecast/Cast intégré et affiche son
+  // sélecteur natif (API Presentation). On ouvre /tv sur la TV choisie avec un code partagé →
+  // pairing automatique (le tel crée la salle, la TV présentée la rejoint). Aucun code à taper.
+  const castToDevice = () => {
+    setScanErr('')
+    if (!('PresentationRequest' in window)) { setScanErr('Sélecteur d’appareils non supporté ici (utilise Chrome, ou scanne le QR).'); return }
+    const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
+    const code = Array.from({ length: 4 }, () => A[Math.floor(Math.random() * A.length)]).join('')
+    try {
+      const req = new window.PresentationRequest([`${location.origin}/tv?castcode=${code}`])
+      req.start()
+        .then(() => { resetCastView(); cast.start(code, { create: true }); setCastOpen(false) })
+        .catch((e) => { if (e && e.name !== 'AbortError' && e.name !== 'NotAllowedError') setScanErr('Aucun appareil Cast trouvé sur le réseau.') })
+    } catch { setScanErr('Sélecteur d’appareils indisponible.') }
+  }
   // ── Scanner QR (caméra) : lit le QR de la TV → extrait le code → lance la diffusion ──
   const stopScan = () => {
     try { scanStreamRef.current?.getTracks().forEach((t) => t.stop()) } catch { /* noop */ }
@@ -1633,12 +1648,19 @@ export default function EpubReader() {
               <CastIcon size={18} /> Diffuser sur une TV
             </div>
             <div style={{ fontSize: '.85rem', color: 'rgba(255,255,255,.55)', lineHeight: 1.5, marginBottom: '1rem' }}>
-              Sur ta TV, ouvre <b style={{ color: '#fff' }}>{location.host}/tv</b>, puis <b style={{ color: '#fff' }}>scanne le QR</b> ci-dessous (ou tape le code).
+              Choisis un appareil Cast, ou ouvre <b style={{ color: '#fff' }}>{location.host}/tv</b> sur la TV et scanne le QR (ou tape le code).
             </div>
+            {/* Sélecteur d'appareils Cast (Chromecast / Cast intégré, via Chrome) */}
+            <button onClick={castToDevice}
+              style={{ width: '100%', padding: '.75rem', borderRadius: 10, border: 'none', cursor: 'pointer',
+                background: '#e50914', color: '#fff', fontWeight: 800, display: 'flex', alignItems: 'center',
+                justifyContent: 'center', gap: '.45rem', marginBottom: '.6rem' }}>
+              <CastIcon size={17} /> Caster sur un appareil
+            </button>
             {/* Scanner intégré */}
             <button onClick={scanning ? stopScan : startScan}
-              style={{ width: '100%', padding: '.7rem', borderRadius: 10, border: 'none', cursor: 'pointer',
-                background: scanning ? 'rgba(255,255,255,.12)' : '#e50914', color: '#fff', fontWeight: 800,
+              style={{ width: '100%', padding: '.7rem', borderRadius: 10, border: '1px solid rgba(255,255,255,.15)', cursor: 'pointer',
+                background: scanning ? 'rgba(229,9,20,.25)' : 'rgba(255,255,255,.08)', color: '#fff', fontWeight: 700,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '.4rem', marginBottom: '.6rem' }}>
               📷 {scanning ? 'Arrêter le scan' : 'Scanner le QR'}
             </button>

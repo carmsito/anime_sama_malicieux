@@ -38,11 +38,11 @@ _ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 class Room:
     __slots__ = ("code", "tv", "controllers", "state")
 
-    def __init__(self, code: str, tv: WebSocket):
+    def __init__(self, code: str, tv=None):
         self.code = code
         self.tv = tv
-        self.controllers: set[WebSocket] = set()
-        self.state: dict | None = None
+        self.controllers = set()
+        self.state = None
 
 
 _rooms: dict[str, Room] = {}
@@ -68,10 +68,19 @@ async def cast_ws(websocket: WebSocket):
     await websocket.accept()
 
     if role == "tv":
-        code = _new_code()
-        room = Room(code, websocket)
-        _rooms[code] = room
+        # Code imposé (flux Presentation/Cast : tel et TV partagent le même code) ou généré.
+        code = (websocket.query_params.get("code") or "").upper().strip() or _new_code()
+        room = _rooms.get(code)
+        if room is None:
+            room = Room(code, websocket); _rooms[code] = room
+        else:
+            room.tv = websocket
         await _safe_send(websocket, {"type": "code", "code": code})
+        # Un téléphone attendait déjà cette salle (il l'a créée) → on le prévient + resynchro.
+        for c in list(room.controllers):
+            await _safe_send(c, {"type": "paired"})
+        if room.state is not None:
+            await _safe_send(websocket, {"type": "state", "state": room.state})
         try:
             while True:
                 # La TV peut renvoyer des COMMANDES au téléphone (ex. auto-scroll arrivé en bas
@@ -83,7 +92,7 @@ async def cast_ws(websocket: WebSocket):
         except WebSocketDisconnect:
             pass
         finally:
-            if _rooms.get(code) is room:
+            if _rooms.get(code) is room and room.tv is websocket:
                 for c in list(room.controllers):
                     await _safe_send(c, {"type": "tv_gone"})
                 _rooms.pop(code, None)
@@ -101,16 +110,20 @@ async def cast_ws(websocket: WebSocket):
             await _safe_send(websocket, {"type": "error", "error": "auth"})
             await websocket.close()
             return
+        create = websocket.query_params.get("create") == "1"   # flux Presentation : le tel crée la salle
         room = _rooms.get(code)
         if not room:
-            await _safe_send(websocket, {"type": "error", "error": "code"})
-            await websocket.close()
-            return
+            if not create:
+                await _safe_send(websocket, {"type": "error", "error": "code"})
+                await websocket.close()
+                return
+            room = Room(code); _rooms[code] = room          # la TV (présentée) rejoindra ce même code
         room.controllers.add(websocket)
         await _safe_send(websocket, {"type": "paired"})
-        await _safe_send(room.tv, {"type": "paired"})
-        if room.state is not None:                       # nouvel arrivant → resynchro immédiate
-            await _safe_send(room.tv, {"type": "state", "state": room.state})
+        if room.tv is not None:
+            await _safe_send(room.tv, {"type": "paired"})
+            if room.state is not None:                     # TV déjà là → resynchro immédiate
+                await _safe_send(room.tv, {"type": "state", "state": room.state})
         try:
             while True:
                 data = await websocket.receive_json()
@@ -125,7 +138,10 @@ async def cast_ws(websocket: WebSocket):
         finally:
             room.controllers.discard(websocket)
             if not room.controllers:
-                await _safe_send(room.tv, {"type": "unpaired"})
+                if room.tv is not None:
+                    await _safe_send(room.tv, {"type": "unpaired"})
+                elif _rooms.get(code) is room:
+                    _rooms.pop(code, None)   # salle créée par le tel mais TV jamais venue → nettoyage
         return
 
     await websocket.close()

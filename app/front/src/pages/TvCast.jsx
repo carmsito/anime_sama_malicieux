@@ -35,8 +35,11 @@ export default function TvCast() {
 
   useEffect(() => {
     let closed = false
+    // Ouverte via Cast/Presentation : un code est imposé dans l'URL (?castcode=) → on rejoint
+    // la même salle que le téléphone (pairing automatique, sans code à taper).
+    const forced = new URLSearchParams(window.location.search).get('castcode')
     const connect = () => {
-      const ws = new WebSocket(wsUrl({ role: 'tv' }))
+      const ws = new WebSocket(wsUrl(forced ? { role: 'tv', code: forced.toUpperCase() } : { role: 'tv' }))
       wsRef.current = ws
       ws.onmessage = (e) => {
         let m; try { m = JSON.parse(e.data) } catch { return }

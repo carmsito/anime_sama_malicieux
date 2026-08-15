@@ -99,6 +99,7 @@ export default function App() {
   const castSession = useCastSession()         // diffusion TV → survit à la navigation (stop explicite only)
   // QR scanné (appareil photo natif) → app ouverte avec ?castcode=XXXX → on lance la diffusion.
   useEffect(() => {
+    if (window.location.pathname === '/tv') return   // sur /tv, c'est la TV qui utilise le code (pas le tel)
     const p = new URLSearchParams(window.location.search)
     const code = p.get('castcode')
     if (!code) return
