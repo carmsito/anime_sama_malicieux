@@ -13,6 +13,14 @@ const wsUrl = (params) =>
 
 const isWholePage = (ps) => !ps || !ps.length || (ps.length === 1 && ps[0].w >= 0.98 && ps[0].h >= 0.98)
 
+// Confort de lecture : mêmes filtres CSS que le lecteur (sépia / nuit + luminosité).
+const filterCss = (f, b100) => {
+  const b = (b100 || 100) / 100
+  if (f === 'sepia') return `sepia(.55) saturate(.9) brightness(${b})`
+  if (f === 'night') return `sepia(.35) hue-rotate(-8deg) contrast(.95) brightness(${b * 0.9})`
+  return b !== 1 ? `brightness(${b})` : 'none'
+}
+
 export default function TvCast() {
   const [code, setCode] = useState('')
   const [paired, setPaired] = useState(false)
@@ -71,9 +79,12 @@ export default function TvCast() {
       const k = baseK * ((state.scale || 100) / 100)
       return { dispW, dispH, transform: `translate(${CW / 2 - k * cx}px, ${CH / 2 - k * cy}px) scale(${k})` }
     }
-    // Planche entière : contain centré.
-    const kAll = Math.min(1, CW / dispW, CH / dispH)
-    return { dispW, dispH, transform: `translate(${(CW - kAll * dispW) / 2}px, ${(CH - kAll * dispH) / 2}px) scale(${kAll})` }
+    // Lecture normale : contain, + zoom/pan « souris » piloté depuis la télécommande.
+    const z = state?.normZoom || 1
+    const k = Math.min(1, CW / dispW, CH / dispH) * z
+    const focusX = (0.5 + (state?.panX || 0)) * dispW
+    const focusY = (0.5 + (state?.panY || 0)) * dispH
+    return { dispW, dispH, transform: `translate(${CW / 2 - k * focusX}px, ${CH / 2 - k * focusY}px) scale(${k})` }
   }, [dims, vp, state])
 
   const wrap = { position: 'fixed', inset: 0, background: '#000', color: '#fff', overflow: 'hidden',
@@ -86,7 +97,8 @@ export default function TvCast() {
           onLoad={(e) => setDims({ natW: e.target.naturalWidth, natH: e.target.naturalHeight })}
           style={cam
             ? { position: 'absolute', left: 0, top: 0, width: cam.dispW, height: cam.dispH,
-                transformOrigin: '0 0', transform: cam.transform, transition: 'transform .5s cubic-bezier(.4,0,.2,1)', willChange: 'transform' }
+                transformOrigin: '0 0', transform: cam.transform, transition: 'transform .4s cubic-bezier(.4,0,.2,1)',
+                willChange: 'transform', filter: filterCss(state?.filter, state?.brightness) }
             : { maxWidth: '100vw', maxHeight: '100vh', objectFit: 'contain', opacity: 0 }} />
       </div>
     )
