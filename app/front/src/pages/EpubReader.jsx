@@ -381,10 +381,20 @@ export default function EpubReader() {
   }
   const startScan = async () => {
     setScanErr('')
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      setScanErr('Ouvre l’app en HTTPS (https://62-238-63-117.nip.io) pour activer la caméra.'); return
+    }
     try {
-      scanStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      // Caméra arrière si possible, sinon n'importe laquelle (repli → évite OverconstrainedError).
+      try { scanStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } }) }
+      catch { scanStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: true }) }
       setScanning(true)
-    } catch { setScanErr('Caméra indisponible (autorisation refusée, ou HTTPS requis).') }
+    } catch (e) {
+      const n = e && e.name
+      setScanErr(n === 'NotAllowedError' ? 'Autorise la caméra dans le navigateur, puis réessaie.'
+        : n === 'NotFoundError' ? 'Aucune caméra détectée sur cet appareil.'
+        : 'Caméra indisponible sur ce navigateur.')
+    }
   }
   useEffect(() => {
     if (!scanning) return
@@ -440,7 +450,8 @@ export default function EpubReader() {
     d.x = e.clientX; d.y = e.clientY
     const z = castZoomRef.current || 1
     setCastPan((p) => ({                             // déplacer la vue = pan inverse du doigt (gain ↑, atténué par le zoom)
-      x: Math.max(-0.5, Math.min(0.5, p.x - dx * PAD_GAIN / z)),
+      // Garde-fou : en auto-scroll, la souris ne bouge QUE verticalement (pas de dérive latérale).
+      x: castAutoscroll ? 0 : Math.max(-0.5, Math.min(0.5, p.x - dx * PAD_GAIN / z)),
       y: Math.max(-0.5, Math.min(0.5, p.y - dy * PAD_GAIN / z)),
     }))
   }
