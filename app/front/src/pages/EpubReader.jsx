@@ -379,7 +379,16 @@ export default function EpubReader() {
   // pairing automatique (le tel crée la salle, la TV présentée la rejoint). Aucun code à taper.
   const castToDevice = () => {
     setScanErr('')
-    if (!('PresentationRequest' in window)) { setScanErr('Sélecteur d’appareils non supporté ici (utilise Chrome, ou scanne le QR).'); return }
+    if (!('PresentationRequest' in window)) {
+      const standalone = window.matchMedia?.('(display-mode: standalone)')?.matches
+      const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+      setScanErr(iOS
+        ? 'Le sélecteur Cast n’existe pas sur iOS/iPhone. Utilise le scan du QR ci-dessous.'
+        : standalone
+          ? 'Indispo dans l’app installée : ouvre-la dans un onglet Chrome pour le sélecteur, ou scanne le QR.'
+          : 'Sélecteur non supporté (Chrome requis). Scanne le QR à la place.')
+      return
+    }
     const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
     const code = Array.from({ length: 4 }, () => A[Math.floor(Math.random() * A.length)]).join('')
     try {
