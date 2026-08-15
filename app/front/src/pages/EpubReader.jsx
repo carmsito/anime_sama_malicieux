@@ -490,14 +490,21 @@ export default function EpubReader() {
   const onPadUp = () => { padDragRef.current = null }
   // Pas de case (télécommande cinéma) : case suivante/précédente, déborde sur la page voisine.
   const stepPanel = (dir) => {
+    if (dir > 0) goToLastPanelRef.current = false   // on avance → la planche suivante démarre à la 1re case
     const n = (panelIdx || 0) + dir
     if (n < 0) { goToLastPanelRef.current = true; return goPrev() }   // ← revenir à la DERNIÈRE case de la planche précédente
     if (n > panels.length - 1) return goNext()
     setPanelIdx(n)
   }
-  // Après un « case précédente » qui a changé de planche : se placer sur la dernière case
-  // (au lieu de la première) dès que le découpage de la nouvelle planche est connu.
-  const firstIdxFor = (len) => { if (goToLastPanelRef.current) { goToLastPanelRef.current = false; return Math.max(0, len - 1) } return 0 }
+  // Après un « case précédente » qui a changé de planche : dès que le découpage de la nouvelle
+  // planche est STABILISÉ (détection finie, plus le placeholder pleine page), on se place sur la
+  // DERNIÈRE case (une seule fois). Effet dédié (robuste aux appels multiples de runDetect).
+  useEffect(() => {
+    if (!goToLastPanelRef.current || detecting) return
+    if (!panels.length) return
+    if (panels.length === 1 && panels[0].w >= 0.98 && panels[0].h >= 0.98) return   // encore le placeholder
+    setPanelIdx(panels.length - 1)   // on ne libère PAS le flag ici : il tient tant qu'on n'avance pas
+  }, [panels, detecting])
   // Diffusion active → tout changement d'état (page, cinéma, case, zoom, confort…) poussé sur la TV.
   useEffect(() => { castZoomRef.current = castZoom }, [castZoom])
   useEffect(() => {
@@ -555,7 +562,7 @@ export default function EpubReader() {
     if (!im || !im.naturalWidth) return
     const key = `${mangaId}:${chapterNum}:${current}`
     const cached = panelCacheRef.current[key]
-    if (cached) { setPanels(cached); setPanelIdx(firstIdxFor(cached.length)); return }
+    if (cached) { setPanels(cached); if (!goToLastPanelRef.current) setPanelIdx(0); return }
     if (detectKeyRef.current === key) return          // déjà en cours (évite onLoad + effet en double)
     detectKeyRef.current = key
     // Pendant la détection : on montre la planche ENTIÈRE (jamais un mauvais découpage) + indicateur.
@@ -578,7 +585,7 @@ export default function EpubReader() {
     if (!fellBack) panelCacheRef.current[key] = ps
     if (detectKeyRef.current === key) detectKeyRef.current = null
     setDetecting(false)
-    setPanels(ps); setPanelIdx(firstIdxFor(ps.length))
+    setPanels(ps); if (!goToLastPanelRef.current) setPanelIdx(0)
     prefetchDetect(current + 1)   // prépare la suivante en fond → navigation instantanée
   }
   // Détecte une planche EN FOND (sans toucher l'affichage) → mise en cache pour l'avance instantanée.
@@ -605,7 +612,7 @@ export default function EpubReader() {
   // avant le découpage (le trou : `detecting` gardait encore la valeur de la planche précédente
   // jusqu'au onLoad, laissant l'auto-lecture partir sur des cases périmées, surtout à grosse échelle).
   useEffect(() => {
-    setPanelIdx(0)
+    if (!goToLastPanelRef.current) setPanelIdx(0)    // sauf si on vise la DERNIÈRE case (retour planche précédente)
     if (!cinema) return
     const key = `${mangaId}:${chapterNum}:${current}`
     if (panelCacheRef.current[key]) return          // déjà détecté (prefetch) → pas d'attente
@@ -971,6 +978,7 @@ export default function EpubReader() {
   const prevChapNum = [...sortedNums].reverse().find((n) => n < num)
 
   const goNext = useCallback(() => {
+    goToLastPanelRef.current = false   // on avance → la planche suivante démarre à la 1re case
     if (current < images.length - 1) { setCurrent((p) => p + 1); setImgReady(false); slide(1); return }
     // fin du chapitre → chapitre suivant, 1ʳᵉ planche
     if (nextChapNum != null) navigate(`/manga/${mangaId}/read/${nextChapNum}?p=0`)
