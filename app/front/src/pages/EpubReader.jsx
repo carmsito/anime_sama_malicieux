@@ -373,7 +373,15 @@ export default function EpubReader() {
   const PAD_GAIN = 2.4                                   // sensibilité du trackpad souris
   const resetCastView = () => { setCastMouse(false); setCastZoom(1); setCastPan({ x: 0, y: 0 }); setCastAutoscroll(false) }
   const startCast = (code) => { resetCastView(); cast.start(code); setCastOpen(false) }
-  const stopCast = () => cast.stop()
+  // À l'arrêt de la diffusion : on coupe la connexion ET on réinitialise les modes activés pour
+  // la TV (cinéma, auto-lecture, souris, auto-scroll, zoom/pan) → le lecteur mobile repart propre.
+  const stopCast = () => {
+    cast.stop()
+    resetCastView()
+    setRemoteMode('normal')
+    setCinemaPlaying(false)
+    if (cinema) toggleCinema()
+  }
   // « Caster sur un appareil » : Chrome découvre les Chromecast/Cast intégré et affiche son
   // sélecteur natif (API Presentation). On ouvre /tv sur la TV choisie avec un code partagé →
   // pairing automatique (le tel crée la salle, la TV présentée la rejoint). Aucun code à taper.
@@ -793,6 +801,10 @@ export default function EpubReader() {
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [origin, setOrigin] = useState({ x: 0, y: 0 })
   const zoomed = zoom > 1
+  // « Zoomé au-delà de l'échelle de base » = pincement en cours (zoomPct dépasse la base) OU loupe.
+  // On ne bloque la navigation de page QUE dans ce cas — une base > 100 % (chips) laisse tourner
+  // les pages normalement (fix : avant, toute échelle > 100 % bloquait le changement de page).
+  const isPinchedIn = () => zoom > 1 || zoomPctRef.current > baseScaleRef.current + 0.5
   const imgRef = useRef()
   const flipRef = useRef()    // conteneur qui pivote (page)
   const shadeRef = useRef()   // ombre en dégradé qui balaie la page
@@ -1008,7 +1020,7 @@ export default function EpubReader() {
       // Défilement natif dans la planche ; on ne change de page qu'en début/fin de planche,
       // et seulement si le mode molette est actif (cohabitation des deux mécaniques).
       if (!scrollNav) return
-      if (zoomPctRef.current > 100) return   // planche agrandie (>100 %) → molette = scroll libre, pas de nav
+      if (isPinchedIn()) return   // pincé (au-delà de la base) → molette = scroll libre, pas de nav
       if (!imgReadyRef.current) return   // planche pas encore chargée → pas de saut de page
       const el = scrollRef.current
       if (!el) return
@@ -1098,7 +1110,7 @@ export default function EpubReader() {
       lastTapRef.current = { t: now, x: t.clientX, y: t.clientY }
     }
     if (zoomed) return   // zoomé : le tap simple ne navigue pas
-    if (zoomPctRef.current > 100) return   // planche agrandie (>100 %) → pas de changement de page
+    if (isPinchedIn()) return   // pincé au-delà de la base → pas de changement de page (mais base >100 % OK)
 
     // Swipe vertical → changer de planche (aux extrémités / si la planche tient), molette active.
     if (!scrollNav) return
@@ -1116,7 +1128,7 @@ export default function EpubReader() {
   // Clic latéral = changement de page
   const onAreaClick = useCallback((e) => {
     if (zoomed || showMenuRef.current) return
-    if (zoomPctRef.current > 100) return   // planche agrandie (>100 %) → pas de changement de page
+    if (isPinchedIn()) return   // pincé au-delà de la base → pas de changement de page (mais base >100 % OK)
     const r = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - r.left
     if (fitWidth) {   // mode défilement
@@ -1808,7 +1820,7 @@ export default function EpubReader() {
                 <input type="range" min={0} max={Math.max(0, images.length - 1)} value={current}
                   onChange={(e) => { setCurrent(+e.target.value); setImgReady(false) }}
                   style={{ width: '88%', accentColor: '#e50914' }} />
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '.6rem', width: '88%' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '.6rem', width: '88%' }}>
                   <button style={tile(castMouse)}
                     onClick={() => setCastMouse((v) => { const n = !v; if (!n) setCastPan({ x: 0, y: 0 }); return n })}>
                     <span style={cap}>Souris</span>{castMouse ? 'ON' : 'OFF'}
@@ -1816,6 +1828,11 @@ export default function EpubReader() {
                   <button style={tile(castAutoscroll)}
                     onClick={() => setCastAutoscroll((v) => { const n = !v; if (n) setCastPan({ x: 0, y: 0 }); return n })}>
                     <span style={cap}>Auto-scroll</span>{castAutoscroll ? 'ON' : 'OFF'}
+                  </button>
+                  <button title="Vitesse de lecture : tap ou maintenir + glisser" style={scrubTile}
+                    onPointerDown={(e) => onScrubDown(e, settings.speedMults, speedMult, setSpeedMultValue)}
+                    onPointerMove={onScrubMove} onPointerUp={(e) => onScrubUp(e, cycleSpeedMult)}>
+                    <span style={cap}>Vitesse</span>×{speedMult}
                   </button>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '.6rem', width: '88%' }}>
