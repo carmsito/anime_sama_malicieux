@@ -27,7 +27,7 @@ def cast_qr(data: str):
     l'affiche ; le téléphone le scanne avec son APPAREIL PHOTO NATIF (l'app s'ouvre avec le
     code pré-rempli et lance la diffusion) → pas besoin de caméra in-app (impossible en HTTP)."""
     import segno, io
-    buf = io.StringIO()
+    buf = io.BytesIO()   # le writer SVG de segno écrit des bytes
     segno.make((data or "")[:512], error="m").save(buf, kind="svg", scale=7, border=2, dark="#000", light="#fff")
     return Response(content=buf.getvalue(), media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
 
