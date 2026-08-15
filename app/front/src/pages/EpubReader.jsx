@@ -413,11 +413,6 @@ export default function EpubReader() {
       autoscroll: castAutoscroll, speed: speedMult, pause: pauseSec,
     })
   }, [casting, current, chapterNum, mangaId, cinema, panelIdx, cinemaPlaying, cinemaZoom, zoomPct, panels, readFilter, brightness, castZoom, castPan, castAutoscroll, speedMult, pauseSec]) // eslint-disable-line
-  // Commandes venues de la TV (auto-scroll arrivé en bas de planche → page suivante, etc.).
-  useEffect(() => {
-    cast.onCmdRef.current = (cmd) => { if (cmd === 'next') goNext(); else if (cmd === 'prev') goPrev() }
-    return () => { cast.onCmdRef.current = null }
-  }, [cast, goNext, goPrev])
   // Échelle cinéma (zoom caméra) au cycle, pour le bouton du dock cinéma.
   const cycleCinemaScale = () => {
     const levels = settings.scaleLevels.length ? settings.scaleLevels : [100]
@@ -884,6 +879,13 @@ export default function EpubReader() {
     // début du chapitre → chapitre précédent, dernière planche
     if (prevChapNum != null) navigate(`/manga/${mangaId}/read/${prevChapNum}?p=last`)
   }, [current, slide, prevChapNum, mangaId, navigate])
+
+  // Commandes venues de la TV (auto-scroll arrivé en bas de planche → page suivante, etc.).
+  // Placé APRÈS goNext/goPrev (sinon TDZ dans le tableau de deps → crash au montage).
+  useEffect(() => {
+    cast.onCmdRef.current = (cmd) => { if (cmd === 'next') goNext(); else if (cmd === 'prev') goPrev() }
+    return () => { cast.onCmdRef.current = null }
+  }, [cast, goNext, goPrev])
 
   useEffect(() => {
     // Liseuses (Boox, etc.) : les boutons latéraux envoient des touches clavier
