@@ -76,9 +76,11 @@ async def cast_ws(websocket: WebSocket):
         else:
             room.tv = websocket
         await _safe_send(websocket, {"type": "code", "code": code})
-        # Un téléphone attendait déjà cette salle (il l'a créée) → on le prévient + resynchro.
-        for c in list(room.controllers):
-            await _safe_send(c, {"type": "paired"})
+        # Un téléphone attendait déjà cette salle (il l'a créée) → on prévient les deux + resynchro.
+        if room.controllers:
+            await _safe_send(websocket, {"type": "paired"})
+            for c in list(room.controllers):
+                await _safe_send(c, {"type": "paired"})
         if room.state is not None:
             await _safe_send(websocket, {"type": "state", "state": room.state})
         try:
