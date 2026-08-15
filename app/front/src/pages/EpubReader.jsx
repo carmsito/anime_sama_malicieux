@@ -32,6 +32,15 @@ function ClapIcon({ size = 16, style }) {
   )
 }
 
+function CastIcon({ size = 16, style }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style} aria-hidden="true">
+      <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/>
+      <line x1="2" y1="20" x2="2.01" y2="20"/>
+    </svg>
+  )
+}
+
 export default function EpubReader() {
   const { mangaId, chapterNum } = useParams()
   const [searchParams] = useSearchParams()
@@ -95,6 +104,13 @@ export default function EpubReader() {
   const [dockKind, setDockKind] = useState(() => localStorage.getItem('reader_dock_kind') || 'classic')  // 'classic' (auto-scroll) | 'cinema'
   const dockRef = useRef(null)
   const dockDragRef = useRef(null)
+  // ── Cast « second écran » (TV) : ce téléphone pilote, la TV (page /tv) affiche ──
+  const [castOpen, setCastOpen] = useState(false)     // modale de saisie du code
+  const [castCode, setCastCode] = useState('')        // code tapé
+  const [casting, setCasting] = useState(false)       // diffusion active
+  const [castErr, setCastErr] = useState('')
+  const castWsRef = useRef(null)
+  const castPingRef = useRef(null)
   // Mode Cinéma (bêta) : détection des cases + caméra qui glisse de case en case (sens manga).
   const [cinema, setCinema] = useState(() => localStorage.getItem('reader_cinema') === '1')
   const [panels, setPanels] = useState([])
@@ -337,6 +353,37 @@ export default function EpubReader() {
   const setDockHiddenP = (v) => { setDockHidden(v); localStorage.setItem('reader_dock_hidden', v ? '1' : '0') }
   const setDockShowP = (v) => { setDockShow(v); localStorage.setItem('reader_dock_show', v ? '1' : '0') }
   const setDockKindP = (v) => { setDockKind(v); localStorage.setItem('reader_dock_kind', v) }
+  // ── Cast : connexion au relais + envoi de l'état de lecture vers la TV ──
+  const castSend = () => {
+    const ws = castWsRef.current
+    if (!ws || ws.readyState !== 1) return
+    ws.send(JSON.stringify({ type: 'state', state: { mangaId, chapterNum, page: current, cinema } }))
+  }
+  const stopCast = () => {
+    clearInterval(castPingRef.current)
+    try { castWsRef.current?.close() } catch { /* noop */ }
+    castWsRef.current = null; setCasting(false)
+  }
+  const startCast = (code) => {
+    const c = (code || '').trim().toUpperCase()
+    if (c.length < 4) { setCastErr('Code à 4 caractères'); return }
+    setCastErr('')
+    const token = localStorage.getItem('token') || ''
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+    const ws = new WebSocket(`${proto}://${location.host}/api/cast/ws?role=phone&code=${encodeURIComponent(c)}&token=${encodeURIComponent(token)}`)
+    castWsRef.current = ws
+    ws.onmessage = (e) => {
+      let m; try { m = JSON.parse(e.data) } catch { return }
+      if (m.type === 'paired') { setCasting(true); setCastOpen(false); castSend() }
+      else if (m.type === 'error') { setCastErr(m.error === 'code' ? 'Code introuvable (la TV est-elle bien sur /tv ?)' : 'Connexion refusée'); try { ws.close() } catch { /* noop */ } }
+      else if (m.type === 'tv_gone') { setCastErr('La TV s’est déconnectée'); stopCast() }
+    }
+    ws.onclose = () => { clearInterval(castPingRef.current); if (castWsRef.current === ws) { castWsRef.current = null; setCasting(false) } }
+    castPingRef.current = setInterval(() => { try { ws.readyState === 1 && ws.send(JSON.stringify({ type: 'ping' })) } catch { /* noop */ } }, 25000)
+  }
+  // Diffusion active → toute nouvelle page/chapitre est poussée sur la TV.
+  useEffect(() => { if (casting) castSend() }, [casting, current, chapterNum, mangaId, cinema]) // eslint-disable-line
+  useEffect(() => () => stopCast(), [])   // fermeture propre en quittant le lecteur
   // Échelle cinéma (zoom caméra) au cycle, pour le bouton du dock cinéma.
   const cycleCinemaScale = () => {
     const levels = settings.scaleLevels.length ? settings.scaleLevels : [100]
@@ -1473,6 +1520,39 @@ export default function EpubReader() {
         )
       )}
 
+      {/* Modale Cast : saisie du code affiché sur la TV (/tv) */}
+      {castOpen && (
+        <div onClick={(e) => { if (e.target === e.currentTarget) setCastOpen(false) }}
+          style={{ position: 'fixed', inset: 0, zIndex: 600, background: 'rgba(0,0,0,.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+          <div style={{ width: '100%', maxWidth: 420, background: '#17171b', borderRadius: 16,
+            padding: '1.4rem', boxShadow: '0 10px 50px rgba(0,0,0,.6)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem', fontWeight: 800, fontSize: '1.05rem', marginBottom: '.4rem' }}>
+              <CastIcon size={18} /> Diffuser sur une TV
+            </div>
+            <div style={{ fontSize: '.85rem', color: 'rgba(255,255,255,.55)', lineHeight: 1.5, marginBottom: '1rem' }}>
+              Sur ta TV, ouvre <b style={{ color: '#fff' }}>{location.host}/tv</b> dans le navigateur.
+              Un code s’affiche → entre-le ici.
+            </div>
+            <input value={castCode} onChange={(e) => setCastCode(e.target.value.toUpperCase().slice(0, 4))}
+              onKeyDown={(e) => { if (e.key === 'Enter') startCast(castCode) }}
+              autoFocus placeholder="CODE" inputMode="text" autoCapitalize="characters"
+              style={{ width: '100%', textAlign: 'center', fontSize: '2rem', fontWeight: 900, letterSpacing: '.35em',
+                padding: '.6rem', borderRadius: 12, border: '1px solid rgba(255,255,255,.18)',
+                background: '#0e0e12', color: '#fff', boxSizing: 'border-box' }} />
+            {castErr && <div style={{ color: '#e50914', fontSize: '.82rem', marginTop: '.6rem', textAlign: 'center' }}>{castErr}</div>}
+            <div style={{ display: 'flex', gap: '.6rem', marginTop: '1.1rem' }}>
+              <button onClick={() => setCastOpen(false)}
+                style={{ flex: 1, padding: '.7rem', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 700 }}>Annuler</button>
+              <button onClick={() => startCast(castCode)}
+                style={{ flex: 1, padding: '.7rem', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: '#e50914', color: '#fff', fontWeight: 800 }}>Diffuser</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showReaderMenu && profStore && (() => {
         const vis = profile?.visible || {}
         // Styles partagés du panneau (DRY)
@@ -1560,6 +1640,19 @@ export default function EpubReader() {
                     </div>
                   </div>
                 </>
+              )}
+
+              {/* Cast : diffuser la lecture sur une TV (ouvrir /tv sur la TV, entrer le code) */}
+              {casting ? (
+                <button onClick={stopCast} style={toggleRow(true)}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '.45rem' }}><CastIcon size={16} /> Diffusion sur la TV en cours</span>
+                  <span style={pill(true)}>ARRÊTER</span>
+                </button>
+              ) : (
+                <button onClick={() => { setCastErr(''); setCastCode(''); setCastOpen(true) }} style={toggleRow(false)}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '.45rem' }}><CastIcon size={16} /> Diffuser sur une TV</span>
+                  <span style={{ ...pill(false), fontSize: '1rem' }}>›</span>
+                </button>
               )}
 
               {/* Dock flottant : l'afficher ou non, et lequel (classique auto-scroll / cinéma) */}

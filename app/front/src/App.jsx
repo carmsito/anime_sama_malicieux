@@ -8,6 +8,7 @@ import Users from './pages/Users'
 import Stats from './pages/Stats'
 import Settings from './pages/Settings'
 import Console from './pages/Console'
+import TvCast from './pages/TvCast'
 import Navbar from './components/Navbar'
 import JobStatus from './components/JobStatus'
 import ConsoleStatus from './components/ConsoleStatus'
@@ -103,6 +104,7 @@ export default function App() {
         <SearchCtx.Provider value={{ query: searchQuery, set: setSearchQuery }}>
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/tv" element={<TvCast />} />
             <Route path="/manga/:mangaId/read/:chapterNum" element={<Guard><EpubReader /></Guard>} />
             <Route path="/*" element={
               <Guard>
