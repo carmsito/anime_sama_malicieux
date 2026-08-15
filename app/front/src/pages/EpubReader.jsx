@@ -360,6 +360,8 @@ export default function EpubReader() {
     ws.send(JSON.stringify({ type: 'state', state: {
       mangaId, chapterNum, page: current, cinema,
       panelIdx, playing: cinemaPlaying, scale: cinema ? Math.round(cinemaZoom * 100) : zoomPct,
+      // Les cases détectées (le tel les a déjà) → la TV rejoue la caméra sans re-détecter.
+      panels: cinema ? panels.map((p) => ({ x: p.x, y: p.y, w: p.w, h: p.h })) : null,
     } }))
   }
   const stopCast = () => {
@@ -385,7 +387,7 @@ export default function EpubReader() {
     castPingRef.current = setInterval(() => { try { ws.readyState === 1 && ws.send(JSON.stringify({ type: 'ping' })) } catch { /* noop */ } }, 25000)
   }
   // Diffusion active → tout changement d'état (page, cinéma, case, zoom, lecture) est poussé sur la TV.
-  useEffect(() => { if (casting) castSend() }, [casting, current, chapterNum, mangaId, cinema, panelIdx, cinemaPlaying, cinemaZoom, zoomPct]) // eslint-disable-line
+  useEffect(() => { if (casting) castSend() }, [casting, current, chapterNum, mangaId, cinema, panelIdx, cinemaPlaying, cinemaZoom, zoomPct, panels]) // eslint-disable-line
   useEffect(() => () => stopCast(), [])   // fermeture propre en quittant le lecteur
   // Échelle cinéma (zoom caméra) au cycle, pour le bouton du dock cinéma.
   const cycleCinemaScale = () => {

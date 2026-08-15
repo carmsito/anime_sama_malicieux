@@ -1,16 +1,24 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 
 // Écran RÉCEPTEUR (à ouvrir sur la TV). Se connecte au relais Cast en rôle « tv », affiche
-// un code, puis rend la page envoyée par le téléphone. Aucune auth requise : les images de
-// chapitre sont servies publiquement, la TV les charge directement depuis l'état reçu.
+// un code, puis rend ce que le téléphone pilote : soit la page entière (lecture normale),
+// soit le Mode Cinéma (caméra qui cadre la case courante). Aucune auth : les images de
+// chapitre sont servies publiquement.
+//
+// Le téléphone reste le maître du tempo : il envoie {page, cinema, panels, panelIdx, scale}.
+// La TV rejoue exactement la même caméra que le lecteur (même formule de cadrage).
 
 const wsUrl = (params) =>
   `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/cast/ws?${new URLSearchParams(params)}`
 
+const isWholePage = (ps) => !ps || !ps.length || (ps.length === 1 && ps[0].w >= 0.98 && ps[0].h >= 0.98)
+
 export default function TvCast() {
   const [code, setCode] = useState('')
   const [paired, setPaired] = useState(false)
-  const [state, setState] = useState(null)   // { mangaId, chapterNum, page, ... }
+  const [state, setState] = useState(null)   // { mangaId, chapterNum, page, cinema, panels, panelIdx, scale }
+  const [dims, setDims] = useState(null)      // { natW, natH } de l'image courante
+  const [vp, setVp] = useState({ w: window.innerWidth, h: window.innerHeight })
   const wsRef = useRef(null)
   const retryRef = useRef(null)
 
@@ -29,31 +37,61 @@ export default function TvCast() {
       ws.onclose = () => {
         if (closed) return
         setCode(''); setPaired(false)
-        retryRef.current = setTimeout(connect, 1500)   // le relais est peut-être en redéploiement
+        retryRef.current = setTimeout(connect, 1500)   // relais peut-être en redéploiement
       }
     }
     connect()
     return () => { closed = true; clearTimeout(retryRef.current); try { wsRef.current?.close() } catch { /* noop */ } }
   }, [])
 
-  const imgUrl = state
-    ? `/api/mangas/${state.mangaId}/chapters/${state.chapterNum}/images/${state.page}`
-    : null
+  useEffect(() => {
+    const onR = () => setVp({ w: window.innerWidth, h: window.innerHeight })
+    window.addEventListener('resize', onR)
+    window.addEventListener('orientationchange', onR)
+    return () => { window.removeEventListener('resize', onR); window.removeEventListener('orientationchange', onR) }
+  }, [])
 
-  const wrap = { position: 'fixed', inset: 0, background: '#000', color: '#fff',
-    display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'inherit', overflow: 'hidden' }
+  const imgUrl = state ? `/api/mangas/${state.mangaId}/chapters/${state.chapterNum}/images/${state.page}` : null
+  // Nouvelle image → on oublie les dimensions le temps qu'elle charge (évite un cadrage périmé).
+  useEffect(() => { setDims(null) }, [imgUrl])
 
-  // Lecture en cours → page plein écran.
+  // Transform caméra : miroir EXACT du lecteur (EpubReader). L'image est dimensionnée à la
+  // largeur du viewport (dispW = CW) puis on cadre soit la case, soit la planche entière.
+  const cam = useMemo(() => {
+    if (!dims) return null
+    const CW = vp.w, CH = vp.h
+    const dispW = CW, dispH = CW * (dims.natH / dims.natW)
+    const panels = state?.panels
+    const cinema = state?.cinema && !isWholePage(panels)
+    if (cinema) {
+      const p = panels[Math.min(state.panelIdx || 0, panels.length - 1)] || { x: 0, y: 0, w: 1, h: 1 }
+      const pw = p.w * dispW, ph = p.h * dispH
+      const cx = (p.x + p.w / 2) * dispW, cy = (p.y + p.h / 2) * dispH
+      const baseK = Math.min((CW / pw) * 0.96, (CH / ph) * 0.96)
+      const k = baseK * ((state.scale || 100) / 100)
+      return { dispW, dispH, transform: `translate(${CW / 2 - k * cx}px, ${CH / 2 - k * cy}px) scale(${k})` }
+    }
+    // Planche entière : contain centré.
+    const kAll = Math.min(1, CW / dispW, CH / dispH)
+    return { dispW, dispH, transform: `translate(${(CW - kAll * dispW) / 2}px, ${(CH - kAll * dispH) / 2}px) scale(${kAll})` }
+  }, [dims, vp, state])
+
+  const wrap = { position: 'fixed', inset: 0, background: '#000', color: '#fff', overflow: 'hidden',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'inherit' }
+
   if (imgUrl) {
     return (
       <div style={wrap}>
         <img key={imgUrl} src={imgUrl} alt=""
-          style={{ maxWidth: '100vw', maxHeight: '100vh', objectFit: 'contain' }} />
+          onLoad={(e) => setDims({ natW: e.target.naturalWidth, natH: e.target.naturalHeight })}
+          style={cam
+            ? { position: 'absolute', left: 0, top: 0, width: cam.dispW, height: cam.dispH,
+                transformOrigin: '0 0', transform: cam.transform, transition: 'transform .5s cubic-bezier(.4,0,.2,1)', willChange: 'transform' }
+            : { maxWidth: '100vw', maxHeight: '100vh', objectFit: 'contain', opacity: 0 }} />
       </div>
     )
   }
 
-  // Écran d'accueil : code de diffusion.
   return (
     <div style={wrap}>
       <div style={{ textAlign: 'center', padding: '2rem' }}>
@@ -62,8 +100,7 @@ export default function TvCast() {
         </div>
         {!paired && (
           <>
-            <div style={{ fontSize: 'clamp(3rem, 14vw, 10rem)', fontWeight: 900, letterSpacing: '.15em',
-              color: '#e50914', lineHeight: 1 }}>
+            <div style={{ fontSize: 'clamp(3rem, 14vw, 10rem)', fontWeight: 900, letterSpacing: '.15em', color: '#e50914', lineHeight: 1 }}>
               {code || '····'}
             </div>
             <div style={{ marginTop: '2rem', fontSize: '1.1rem', opacity: .55, maxWidth: 640, marginInline: 'auto' }}>
@@ -71,9 +108,7 @@ export default function TvCast() {
             </div>
           </>
         )}
-        {paired && (
-          <div style={{ fontSize: '1rem', opacity: .45 }}>Tourne les pages depuis ton téléphone.</div>
-        )}
+        {paired && <div style={{ fontSize: '1rem', opacity: .45 }}>Pilote depuis ton téléphone.</div>}
       </div>
     </div>
   )
