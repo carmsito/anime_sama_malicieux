@@ -62,6 +62,19 @@ export default function TvCast() {
     return () => { window.removeEventListener('resize', onR); window.removeEventListener('orientationchange', onR) }
   }, [])
 
+  // Empêche l'écran de la TV de se mettre en veille (Wake Lock — contexte HTTPS requis).
+  // Le verrou est relâché quand l'onglet passe en fond → on le re-demande au retour.
+  useEffect(() => {
+    let lock = null, done = false
+    const acquire = async () => {
+      try { if ('wakeLock' in navigator) lock = await navigator.wakeLock.request('screen') } catch { /* non supporté / refusé */ }
+    }
+    acquire()
+    const onVis = () => { if (document.visibilityState === 'visible' && !done) acquire() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { done = true; document.removeEventListener('visibilitychange', onVis); try { lock?.release() } catch { /* noop */ } }
+  }, [])
+
   const imgUrl = state ? `/api/mangas/${state.mangaId}/chapters/${state.chapterNum}/images/${state.page}` : null
   // Nouvelle image → on oublie les dimensions + on remet le défilement en haut.
   useEffect(() => { setDims(null); scrollRef.current = 0; setScrollY(0) }, [imgUrl])

@@ -673,12 +673,13 @@ export default function EpubReader() {
     catch { setPanelSaved('échec réseau') }
     setTimeout(() => setPanelSaved(''), 4000)
   }
-  // Navigation case par case : tiers gauche → précédente, sinon suivante (puis page suivante).
+  // Navigation case par case : tiers gauche → précédente, sinon suivante. Passe par stepPanel
+  // → au bord d'une planche, on enchaîne sur la planche voisine (et « précédente » revient à
+  // la DERNIÈRE case de la planche d'avant, comme via la télécommande).
   const cinemaStep = (clientX, el) => {
     if (panelDebug) return
     const r = el.getBoundingClientRect()
-    if (clientX - r.left < r.width * 0.26) { setPanelIdx((i) => Math.max(0, i - 1)); return }
-    setPanelIdx((i) => { if (i < panels.length - 1) return i + 1; goNext(); return i })
+    stepPanel(clientX - r.left < r.width * 0.26 ? -1 : 1)
   }
   const cinemaClick = (e) => { if (!IS_TOUCH) cinemaStep(e.clientX, e.currentTarget) }   // desktop
   // Tactile : pincement = mise à l'échelle utilisateur (par-dessus le cadrage), glisser = pan,
