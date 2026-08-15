@@ -1,7 +1,7 @@
 """Détection des CASES (panels) d'une planche de manga pour le Mode Cinéma.
 
 Combine :
-  • un MODÈLE pré-entraîné (deepghs/manga109_yolo, variante nano, classe `frame`) via imgutils
+  • un MODÈLE pré-entraîné (deepghs/manga109_yolo, variante small, classe `frame`) via imgutils
     + onnxruntime (CPU) — excellent sur le fond perdu / gouttières noires (Vagabond, Dr-Stone) ;
   • une HEURISTIQUE (flood-fill + carte de contours) — comble les GROSSES cases borderless que
     le modèle rate parfois (ex. corps pleine hauteur de Baki), SANS réintroduire le bruit des
@@ -16,7 +16,10 @@ import numpy as np
 from PIL import Image
 
 _REPO = "deepghs/manga109_yolo"
-_MODEL = "v2023.12.07_n"
+# Variante SMALL (au lieu de nano) : bien meilleur rappel sur les cases MOYENNES et BAVARDES
+# (dialogues) et les cases sans cadre — ex. Baki ch192 p0 (case centrale du sabre) enfin détectée.
+# ~220 ms/planche en CPU (vs ~80 ms nano) : acceptable car cache disque + prefetch de la suivante.
+_MODEL = "v2023.12.07_s"
 _CONF = 0.25
 _cache: dict[str, list] = {}
 
