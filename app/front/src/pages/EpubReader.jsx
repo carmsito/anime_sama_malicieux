@@ -357,7 +357,10 @@ export default function EpubReader() {
   const castSend = () => {
     const ws = castWsRef.current
     if (!ws || ws.readyState !== 1) return
-    ws.send(JSON.stringify({ type: 'state', state: { mangaId, chapterNum, page: current, cinema } }))
+    ws.send(JSON.stringify({ type: 'state', state: {
+      mangaId, chapterNum, page: current, cinema,
+      panelIdx, playing: cinemaPlaying, scale: cinema ? Math.round(cinemaZoom * 100) : zoomPct,
+    } }))
   }
   const stopCast = () => {
     clearInterval(castPingRef.current)
@@ -381,8 +384,8 @@ export default function EpubReader() {
     ws.onclose = () => { clearInterval(castPingRef.current); if (castWsRef.current === ws) { castWsRef.current = null; setCasting(false) } }
     castPingRef.current = setInterval(() => { try { ws.readyState === 1 && ws.send(JSON.stringify({ type: 'ping' })) } catch { /* noop */ } }, 25000)
   }
-  // Diffusion active → toute nouvelle page/chapitre est poussée sur la TV.
-  useEffect(() => { if (casting) castSend() }, [casting, current, chapterNum, mangaId, cinema]) // eslint-disable-line
+  // Diffusion active → tout changement d'état (page, cinéma, case, zoom, lecture) est poussé sur la TV.
+  useEffect(() => { if (casting) castSend() }, [casting, current, chapterNum, mangaId, cinema, panelIdx, cinemaPlaying, cinemaZoom, zoomPct]) // eslint-disable-line
   useEffect(() => () => stopCast(), [])   // fermeture propre en quittant le lecteur
   // Échelle cinéma (zoom caméra) au cycle, pour le bouton du dock cinéma.
   const cycleCinemaScale = () => {
@@ -1552,6 +1555,89 @@ export default function EpubReader() {
           </div>
         </div>
       )}
+
+      {/* TÉLÉCOMMANDE : diffusion active → le tel pilote la TV (on regarde la TV, pas le tel) */}
+      {casting && (() => {
+        const navBtn = (bg) => ({ height: 64, minWidth: 96, borderRadius: 16, border: 'none', cursor: 'pointer',
+          background: bg, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' })
+        const chapBtn = (disabled) => ({ flex: 1, padding: '.85rem', borderRadius: 12, border: 'none',
+          cursor: disabled ? 'default' : 'pointer', background: 'rgba(255,255,255,.08)',
+          color: disabled ? 'rgba(255,255,255,.3)' : '#fff', fontWeight: 700, fontSize: '.9rem' })
+        return (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 450, background: '#0c0c10', color: '#fff',
+          display: 'flex', flexDirection: 'column', userSelect: 'none', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem 1.1rem' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '.5rem', fontWeight: 800, fontSize: '1.05rem' }}>
+              <CastIcon size={18} /> Télécommande TV
+            </span>
+            <button onClick={stopCast}
+              style={{ padding: '.55rem .9rem', borderRadius: 10, border: 'none', cursor: 'pointer',
+                background: '#e50914', color: '#fff', fontWeight: 800, fontSize: '.85rem' }}>Arrêter</button>
+          </div>
+          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,.5)', fontSize: '.85rem' }}>
+            👀 Regarde la TV · Chapitre {chapterNum}
+          </div>
+
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1.6rem', padding: '1rem 1.3rem' }}>
+            <div style={{ fontSize: '3.4rem', fontWeight: 900, lineHeight: 1 }}>
+              {loaded ? current + 1 : '…'}<span style={{ opacity: .35, fontSize: '1.5rem', fontWeight: 700 }}> / {images.length || '…'}</span>
+            </div>
+            <div style={{ display: 'flex', gap: '1.1rem' }}>
+              <button onClick={goPrev} title="Page précédente" style={navBtn('rgba(255,255,255,.1)')}>
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><polygon points="18 4 6 12 18 20 18 4"/></svg>
+              </button>
+              <button onClick={goNext} title="Page suivante" style={navBtn('#e50914')}>
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 18 12 6 20 6 4"/></svg>
+              </button>
+            </div>
+            <input type="range" min={0} max={Math.max(0, images.length - 1)} value={current}
+              onChange={(e) => { setCurrent(+e.target.value); setImgReady(false) }}
+              style={{ width: '86%', accentColor: '#e50914' }} />
+            <div style={{ display: 'flex', gap: '.8rem', width: '86%' }}>
+              <button disabled={prevChapNum == null} style={chapBtn(prevChapNum == null)}
+                onClick={() => prevChapNum != null && navigate(`/manga/${mangaId}/read/${prevChapNum}?p=0`)}>‹ Chapitre</button>
+              <button disabled={nextChapNum == null} style={chapBtn(nextChapNum == null)}
+                onClick={() => nextChapNum != null && navigate(`/manga/${mangaId}/read/${nextChapNum}?p=0`)}>Chapitre ›</button>
+            </div>
+
+            {/* Rangée « dock » : mêmes commandes que le dock (cinéma, lecture, échelle, vitesse).
+                Les gestes scrub marchent aussi ici (maintenir + glisser). Le rendu Cinéma sur la
+                TV arrive en passe 2 ; l'état est déjà transmis. */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '.6rem', width: '86%' }}>
+              <button onClick={toggleCinema} title="Mode Cinéma"
+                style={{ height: 52, borderRadius: 12, border: 'none', cursor: 'pointer', background: cinema ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <ClapIcon size={19} />
+              </button>
+              <button onClick={() => { if (!cinema) { toggleCinema(); setCinemaPlaying(true) } else setCinemaPlaying((v) => !v) }}
+                title={cinemaPlaying ? 'Pause' : 'Lecture'}
+                style={{ height: 52, borderRadius: 12, border: 'none', cursor: 'pointer', background: cinemaPlaying ? '#e50914' : 'rgba(255,255,255,.1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {cinemaPlaying
+                  ? <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+                  : <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>}
+              </button>
+              <button title="Échelle : tap ou maintenir + glisser"
+                onPointerDown={(e) => onScrubDown(e, settings.scaleLevels, cinema ? Math.round(cinemaZoom * 100) : baseScaleRef.current, cinema ? (v) => setCinemaZoom(v / 100) : setScaleValue)}
+                onPointerMove={onScrubMove} onPointerUp={(e) => onScrubUp(e, cinema ? cycleCinemaScale : cycleScale)}
+                style={{ height: 52, borderRadius: 12, border: scrubbing ? '1px solid #e50914' : 'none', cursor: 'ns-resize', touchAction: 'none', background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.82rem' }}>
+                {cinema ? Math.round(cinemaZoom * 100) : baseScaleRef.current}%
+              </button>
+              <button title="Vitesse : tap ou maintenir + glisser"
+                onPointerDown={(e) => onScrubDown(e, settings.speedMults, speedMult, setSpeedMultValue)}
+                onPointerMove={onScrubMove} onPointerUp={(e) => onScrubUp(e, cycleSpeedMult)}
+                style={{ height: 52, borderRadius: 12, border: scrubbing ? '1px solid #e50914' : 'none', cursor: 'ns-resize', touchAction: 'none', background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 800, fontSize: '.82rem' }}>
+                ×{speedMult}
+              </button>
+            </div>
+
+            <button onClick={() => setShowReaderMenu(true)}
+              style={{ width: '86%', padding: '.85rem', borderRadius: 12, border: '1px solid rgba(255,255,255,.15)',
+                cursor: 'pointer', background: 'rgba(255,255,255,.06)', color: '#fff', fontWeight: 700, fontSize: '.9rem' }}>
+              ⚙︎ Réglages / profil
+            </button>
+          </div>
+        </div>
+        )
+      })()}
 
       {showReaderMenu && profStore && (() => {
         const vis = profile?.visible || {}
