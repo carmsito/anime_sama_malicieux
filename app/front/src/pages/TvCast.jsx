@@ -114,11 +114,13 @@ export default function TvCast() {
       const k = baseK * ((state.scale || 100) / 100)
       return { dispW, dispH, transform: `translate(${CW / 2 - k * cx}px, ${CH / 2 - k * cy}px) scale(${k})` }
     }
-    // Auto-scroll : pleine largeur × zoom, centré horizontalement, translaté verticalement.
+    // Auto-scroll : pleine largeur × zoom, centré, translaté verticalement (auto) + « souris » :
+    // panX = déplacement horizontal (voir les côtés en zoom), panY = nudge vertical manuel.
     if (autoscroll) {
       const k = (CW / dispW) * (state?.normZoom || 1)
-      const x = (CW - dispW * k) / 2
-      return { dispW, dispH, transform: `translate(${x}px, ${-scrollY}px) scale(${k})`, smooth: false }
+      const x = (CW - dispW * k) / 2 - (state?.panX || 0) * dispW * k
+      const yNudge = (state?.panY || 0) * CH * 2
+      return { dispW, dispH, transform: `translate(${x}px, ${-(scrollY + yNudge)}px) scale(${k})`, smooth: false }
     }
     // Lecture normale : contain, + zoom/pan « souris » piloté depuis la télécommande.
     const z = state?.normZoom || 1

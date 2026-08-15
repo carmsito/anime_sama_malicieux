@@ -119,6 +119,11 @@ export default function EpubReader() {
   const padDragRef = useRef(null)
   const lastPadTapRef = useRef(0)
   const goToLastPanelRef = useRef(false)   // cinéma : « case précédente » a franchi une planche → viser la dernière case
+  // Scanner QR intégré (PWA en HTTPS) : ouvre la caméra pour lire le QR de la TV.
+  const [scanning, setScanning] = useState(false)
+  const [scanErr, setScanErr] = useState('')
+  const scanVideoRef = useRef(null)
+  const scanStreamRef = useRef(null)
   // Mode Cinéma (bêta) : détection des cases + caméra qui glisse de case en case (sens manga).
   const [cinema, setCinema] = useState(() => localStorage.getItem('reader_cinema') === '1')
   const [panels, setPanels] = useState([])
@@ -368,6 +373,42 @@ export default function EpubReader() {
   const resetCastView = () => { setCastMouse(false); setCastZoom(1); setCastPan({ x: 0, y: 0 }); setCastAutoscroll(false) }
   const startCast = (code) => { resetCastView(); cast.start(code); setCastOpen(false) }
   const stopCast = () => cast.stop()
+  // ── Scanner QR (caméra) : lit le QR de la TV → extrait le code → lance la diffusion ──
+  const stopScan = () => {
+    try { scanStreamRef.current?.getTracks().forEach((t) => t.stop()) } catch { /* noop */ }
+    scanStreamRef.current = null; setScanning(false)
+  }
+  const startScan = async () => {
+    setScanErr('')
+    if (!('BarcodeDetector' in window)) { setScanErr('Scanner non géré par ce navigateur — scanne le QR avec l’appareil photo, ou tape le code.'); return }
+    try {
+      scanStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      setScanning(true)
+    } catch { setScanErr('Caméra indisponible (autorisation refusée, ou HTTPS requis).') }
+  }
+  useEffect(() => {
+    if (!scanning) return
+    const v = scanVideoRef.current; if (!v) return
+    v.srcObject = scanStreamRef.current; v.play().catch(() => {})
+    let det; try { det = new window.BarcodeDetector({ formats: ['qr_code'] }) } catch { setScanErr('Scanner indisponible'); return }
+    let alive = true, timer
+    const scan = async () => {
+      if (!alive) return
+      try {
+        const codes = await det.detect(v)
+        const raw = codes && codes[0] && codes[0].rawValue
+        if (raw) {
+          const m = String(raw).match(/castcode=([A-Za-z0-9]{4})/i)
+          const c = m ? m[1].toUpperCase() : (/^[A-Za-z0-9]{4}$/.test(String(raw).trim()) ? String(raw).trim().toUpperCase() : '')
+          if (c) { alive = false; stopScan(); startCast(c); return }
+        }
+      } catch { /* frame illisible → on retente */ }
+      timer = setTimeout(scan, 350)
+    }
+    scan()
+    return () => { alive = false; clearTimeout(timer) }
+  }, [scanning]) // eslint-disable-line
+  useEffect(() => () => { try { scanStreamRef.current?.getTracks().forEach((t) => t.stop()) } catch { /* noop */ } }, [])   // coupe la caméra en quittant
   // Bascule de mode télécommande : on (ré)initialise proprement la vue à chaque changement.
   const setRemoteCinema = (on) => { if (cinema !== on) toggleCinema(); resetCastView() }
   // Mode souris : le trackpad déplace/zoome la vue sur la TV (lecture normale).
@@ -1556,9 +1597,9 @@ export default function EpubReader() {
         )
       )}
 
-      {/* Modale Cast : saisie du code affiché sur la TV (/tv) */}
+      {/* Modale Cast : scanner le QR de la TV, ou saisir le code */}
       {castOpen && (
-        <div onClick={(e) => { if (e.target === e.currentTarget) setCastOpen(false) }}
+        <div onClick={(e) => { if (e.target === e.currentTarget) { stopScan(); setCastOpen(false) } }}
           style={{ position: 'fixed', inset: 0, zIndex: 600, background: 'rgba(0,0,0,.6)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
           <div style={{ width: '100%', maxWidth: 420, background: '#17171b', borderRadius: 16,
@@ -1567,10 +1608,20 @@ export default function EpubReader() {
               <CastIcon size={18} /> Diffuser sur une TV
             </div>
             <div style={{ fontSize: '.85rem', color: 'rgba(255,255,255,.55)', lineHeight: 1.5, marginBottom: '1rem' }}>
-              Sur ta TV, ouvre <b style={{ color: '#fff' }}>{location.host}/tv</b>. Le plus rapide :
-              <b style={{ color: '#fff' }}> scanne le QR</b> affiché avec l’appareil photo du téléphone.
-              Sinon, entre le code ici.
+              Sur ta TV, ouvre <b style={{ color: '#fff' }}>{location.host}/tv</b>, puis <b style={{ color: '#fff' }}>scanne le QR</b> ci-dessous (ou tape le code).
             </div>
+            {/* Scanner intégré */}
+            <button onClick={scanning ? stopScan : startScan}
+              style={{ width: '100%', padding: '.7rem', borderRadius: 10, border: 'none', cursor: 'pointer',
+                background: scanning ? 'rgba(255,255,255,.12)' : '#e50914', color: '#fff', fontWeight: 800,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '.4rem', marginBottom: '.6rem' }}>
+              📷 {scanning ? 'Arrêter le scan' : 'Scanner le QR'}
+            </button>
+            {scanning && (
+              <video ref={scanVideoRef} muted playsInline
+                style={{ width: '100%', maxHeight: '46vh', borderRadius: 12, background: '#000', marginBottom: '.6rem', objectFit: 'cover' }} />
+            )}
+            {scanErr && <div style={{ color: '#e50914', fontSize: '.8rem', marginBottom: '.6rem', textAlign: 'center' }}>{scanErr}</div>}
             <input value={castCode} onChange={(e) => setCastCode(e.target.value.toUpperCase().slice(0, 4))}
               onKeyDown={(e) => { if (e.key === 'Enter') startCast(castCode) }}
               autoFocus placeholder="CODE" inputMode="text" autoCapitalize="characters"
@@ -1579,7 +1630,7 @@ export default function EpubReader() {
                 background: '#0e0e12', color: '#fff', boxSizing: 'border-box' }} />
             {cast.err && <div style={{ color: '#e50914', fontSize: '.82rem', marginTop: '.6rem', textAlign: 'center' }}>{cast.err}</div>}
             <div style={{ display: 'flex', gap: '.6rem', marginTop: '1.1rem' }}>
-              <button onClick={() => setCastOpen(false)}
+              <button onClick={() => { stopScan(); setCastOpen(false) }}
                 style={{ flex: 1, padding: '.7rem', borderRadius: 10, border: 'none', cursor: 'pointer',
                   background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 700 }}>Annuler</button>
               <button onClick={() => startCast(castCode)}
@@ -1593,7 +1644,7 @@ export default function EpubReader() {
       {/* TÉLÉCOMMANDE : diffusion active → le tel pilote la TV (on regarde la TV, pas le tel).
           Deux modes : CINÉMA (caméra case-par-case) et NORMALE (lecture + zoom + souris/trackpad). */}
       {casting && (() => {
-        const CAST_ZOOM = [100, 125, 150, 200, 250, 300]     // zoom page (mode normal) piloté sur la TV
+        const CAST_ZOOM = [50, 60, 70, 80, 90, 100, 125, 150, 200, 250, 300]   // zoom page/TV (sous 100 % possible)
         const BRIGHT = [50, 60, 70, 80, 90, 100]
         const FILTERS = [['none', 'Aucun'], ['sepia', 'Sépia'], ['night', 'Nuit']]
         const cycleCastZoom = () => { const c = Math.round(castZoom * 100); const i = CAST_ZOOM.indexOf(c); setCastZoom(CAST_ZOOM[(i + 1) % CAST_ZOOM.length] / 100) }
@@ -1696,11 +1747,11 @@ export default function EpubReader() {
                   style={{ width: '88%', accentColor: '#e50914' }} />
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '.6rem', width: '88%' }}>
                   <button style={tile(castMouse)}
-                    onClick={() => setCastMouse((v) => { const n = !v; if (n) setCastAutoscroll(false); else { setCastZoom(1); setCastPan({ x: 0, y: 0 }) } return n })}>
+                    onClick={() => setCastMouse((v) => { const n = !v; if (!n) setCastPan({ x: 0, y: 0 }); return n })}>
                     <span style={cap}>Souris</span>{castMouse ? 'ON' : 'OFF'}
                   </button>
                   <button style={tile(castAutoscroll)}
-                    onClick={() => setCastAutoscroll((v) => { const n = !v; if (n) { setCastMouse(false); setCastPan({ x: 0, y: 0 }) } return n })}>
+                    onClick={() => setCastAutoscroll((v) => { const n = !v; if (n) setCastPan({ x: 0, y: 0 }); return n })}>
                     <span style={cap}>Auto-scroll</span>{castAutoscroll ? 'ON' : 'OFF'}
                   </button>
                 </div>
