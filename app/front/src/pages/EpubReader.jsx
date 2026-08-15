@@ -1659,13 +1659,20 @@ export default function EpubReader() {
             <div style={{ fontSize: '.85rem', color: 'rgba(255,255,255,.55)', lineHeight: 1.5, marginBottom: '1rem' }}>
               Choisis un appareil Cast, ou ouvre <b style={{ color: '#fff' }}>{location.host}/tv</b> sur la TV et scanne le QR (ou tape le code).
             </div>
-            {/* Sélecteur d'appareils Cast (Chromecast / Cast intégré, via Chrome) */}
-            <button onClick={castToDevice}
-              style={{ width: '100%', padding: '.75rem', borderRadius: 10, border: 'none', cursor: 'pointer',
-                background: '#e50914', color: '#fff', fontWeight: 800, display: 'flex', alignItems: 'center',
-                justifyContent: 'center', gap: '.45rem', marginBottom: '.6rem' }}>
-              <CastIcon size={17} /> Caster sur un appareil
-            </button>
+            {/* Sélecteur d'appareils Cast (Chromecast/Cast intégré, via Chrome) — absent sur iOS */}
+            {('PresentationRequest' in window) ? (
+              <button onClick={castToDevice}
+                style={{ width: '100%', padding: '.75rem', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: '#e50914', color: '#fff', fontWeight: 800, display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', gap: '.45rem', marginBottom: '.6rem' }}>
+                <CastIcon size={17} /> Caster sur un appareil
+              </button>
+            ) : (
+              <div style={{ fontSize: '.82rem', color: '#fff', background: 'rgba(229,9,20,.18)',
+                border: '1px solid rgba(229,9,20,.5)', borderRadius: 10, padding: '.6rem .7rem', marginBottom: '.6rem', lineHeight: 1.45 }}>
+                📷 <b>Le plus simple ici :</b> scanne le QR de la TV avec ton <b>app Appareil photo</b> → l’app s’ouvre et lance la diffusion toute seule.
+              </div>
+            )}
             {/* Scanner intégré */}
             <button onClick={scanning ? stopScan : startScan}
               style={{ width: '100%', padding: '.7rem', borderRadius: 10, border: '1px solid rgba(255,255,255,.15)', cursor: 'pointer',
