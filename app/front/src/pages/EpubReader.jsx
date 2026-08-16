@@ -139,6 +139,16 @@ export default function EpubReader() {
   const [cinemaPan, setCinemaPan] = useState({ x: 0, y: 0 })
   const [cinInteract, setCinInteract] = useState(false) // pincement/glissement en cours → transition off
   const [camTransition, setCamTransition] = useState('transform .5s cubic-bezier(.4,0,.2,1)')  // transition caméra (auto-pan long = durée du dwell)
+  const [resizeTick, setResizeTick] = useState(0)       // bump → force le recalcul caméra (rotation/resize)
+  const camRafRef = useRef(0)
+  // Déplacement caméra FIABLE : on pose la transition, puis on change le transform à la frame
+  // SUIVANTE. Sinon, changer transition+transform d'un coup depuis 'none' (après un auto-pan ou
+  // un geste) fait SAUTER l'animation par intermittence (le smooth du cinéma « disparaît »).
+  const applyCam = (transition, xform) => {
+    cancelAnimationFrame(camRafRef.current)
+    setCamTransition(transition)
+    camRafRef.current = requestAnimationFrame(() => setCamXform(xform))
+  }
   // Auto-LECTURE cinéma : avance case par case, dwell adapté au TEXTE, auto-pan des longues cases.
   const [cinemaPlaying, setCinemaPlaying] = useState(false)
   const [cineMin, setCineMin] = useState(1.5)      // dwell case sans texte / action (s)
@@ -644,21 +654,26 @@ export default function EpubReader() {
     }
     if (cinemaPlaying) return                                                 // l'auto-lecture pilote la caméra
     const k = baseK * cinemaZoom                                              // + mise à l'échelle UTILISATEUR
-    setCamTransition(cinInteract ? 'none' : 'transform .5s cubic-bezier(.4,0,.2,1)')
-    setCamXform(`translate(${CW / 2 - k * cx + cinemaPan.x}px, ${CH / 2 - k * cy + cinemaPan.y}px) scale(${k})`)
-  }, [cinema, panels, panelIdx, current, fullscreen, cinemaZoom, cinemaPan, isLandscape, cinemaPlaying, cinInteract, detecting])
+    const xf = `translate(${CW / 2 - k * cx + cinemaPan.x}px, ${CH / 2 - k * cy + cinemaPan.y}px) scale(${k})`
+    if (cinInteract) { setCamTransition('none'); setCamXform(xf) }            // geste direct → suivi immédiat
+    else applyCam('transform .5s cubic-bezier(.4,0,.2,1)', xf)               // sinon transition fiable (jamais sautée)
+  }, [cinema, panels, panelIdx, current, fullscreen, cinemaZoom, cinemaPan, isLandscape, cinemaPlaying, cinInteract, detecting, resizeTick]) // eslint-disable-line
   useEffect(() => { setCinemaPan({ x: 0, y: 0 }) }, [panelIdx, current, chapterNum])  // reset PAN seulement (le zoom persiste)
   useEffect(() => {
     if (!cinema) return
-    const onR = () => setPanelIdx((i) => i)   // force un recalcul de caméra au resize/rotation
-    window.addEventListener('resize', onR)
-    window.addEventListener('orientationchange', onR)
-    return () => { window.removeEventListener('resize', onR); window.removeEventListener('orientationchange', onR) }
+    // Recalcul FIABLE de la caméra après resize/rotation : on bump un tick (à la frame suivante
+    // ET ~300 ms après, le temps que les dimensions se stabilisent post-rotation). L'ancien
+    // setPanelIdx(i=>i) était un no-op (React bail-out) → la caméra restait figée après bascule.
+    const bump = () => { requestAnimationFrame(() => setResizeTick((t) => t + 1)); setTimeout(() => setResizeTick((t) => t + 1), 300) }
+    window.addEventListener('resize', bump)
+    window.addEventListener('orientationchange', bump)
+    return () => { window.removeEventListener('resize', bump); window.removeEventListener('orientationchange', bump) }
   }, [cinema])
 
   // ── AUTO-LECTURE cinéma : avance case par case, dwell = f(texte), auto-pan des longues cases ──
   useEffect(() => {
     clearTimeout(cinemaTimerRef.current)
+    cancelAnimationFrame(camRafRef.current)   // évite qu'un applyCam en attente écrase l'auto-pan
     if (!cinema || !cinemaPlaying || detecting || !panels.length) return
     const wrap = cinemaWrapRef.current, im = cinemaImgRef.current
     if (!wrap || !im || !im.naturalWidth) return
@@ -687,11 +702,11 @@ export default function EpubReader() {
       cinemaTimerRef.current = setTimeout(advance, dwell + 250)
       return () => { cancelAnimationFrame(raf); clearTimeout(cinemaTimerRef.current) }
     }
-    setCamTransition('transform .5s cubic-bezier(.4,0,.2,1)')             // case qui tient dans le cadre → statique
-    setCamXform(`translate(${CW / 2 - k * cx}px, ${CH / 2 - k * cy}px) scale(${k})`)
+    // Case qui tient dans le cadre → cadrage statique, transition FIABLE (posée avant le transform).
+    applyCam('transform .5s cubic-bezier(.4,0,.2,1)', `translate(${CW / 2 - k * cx}px, ${CH / 2 - k * cy}px) scale(${k})`)
     cinemaTimerRef.current = setTimeout(advance, dwell)
     return () => clearTimeout(cinemaTimerRef.current)
-  }, [cinema, cinemaPlaying, panels, panelIdx, detecting, cinemaZoom, cineMin, cineNormal, cineMax, fullscreen, isLandscape]) // eslint-disable-line
+  }, [cinema, cinemaPlaying, panels, panelIdx, detecting, cinemaZoom, cineMin, cineNormal, cineMax, fullscreen, isLandscape, resizeTick]) // eslint-disable-line
   const setCineMinValue = (v) => { setCineMin(v); patchActiveState({ cineMin: v }) }
   const setCineNormalValue = (v) => { setCineNormal(v); patchActiveState({ cineNormal: v }) }
   const setCineMaxValue = (v) => { setCineMax(v); patchActiveState({ cineMax: v }) }
