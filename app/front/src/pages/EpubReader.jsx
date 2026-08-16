@@ -673,8 +673,8 @@ export default function EpubReader() {
   // ── AUTO-LECTURE cinéma : avance case par case, dwell = f(texte), auto-pan des longues cases ──
   useEffect(() => {
     clearTimeout(cinemaTimerRef.current)
-    cancelAnimationFrame(camRafRef.current)   // évite qu'un applyCam en attente écrase l'auto-pan
     if (!cinema || !cinemaPlaying || detecting || !panels.length) return
+    cancelAnimationFrame(camRafRef.current)   // (lecture auto uniquement) évite qu'un applyCam en attente écrase l'auto-pan
     const wrap = cinemaWrapRef.current, im = cinemaImgRef.current
     if (!wrap || !im || !im.naturalWidth) return
     const p = panels[Math.min(panelIdx, panels.length - 1)]
