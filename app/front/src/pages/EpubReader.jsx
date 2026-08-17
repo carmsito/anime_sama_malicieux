@@ -140,14 +140,18 @@ export default function EpubReader() {
   const [cinInteract, setCinInteract] = useState(false) // pincement/glissement en cours → transition off
   const [camTransition, setCamTransition] = useState('transform .5s cubic-bezier(.4,0,.2,1)')  // transition caméra (auto-pan long = durée du dwell)
   const [resizeTick, setResizeTick] = useState(0)       // bump → force le recalcul caméra (rotation/resize)
-  const camRafRef = useRef(0)
-  // Déplacement caméra FIABLE : on pose la transition, puis on change le transform à la frame
-  // SUIVANTE. Sinon, changer transition+transform d'un coup depuis 'none' (après un auto-pan ou
-  // un geste) fait SAUTER l'animation par intermittence (le smooth du cinéma « disparaît »).
+  const camElRef = useRef(null)                         // l'élément transformé (pour le reflow impératif)
+  // Déplacement caméra FIABLE (le smooth du cinéma ne « saute » plus) : on pose la transition,
+  // on force un REFLOW, puis on change le transform. Changer transition+transform d'un coup depuis
+  // 'none'/'linear' (après un auto-pan ou un geste) sautait l'animation par intermittence.
   const applyCam = (transition, xform) => {
-    cancelAnimationFrame(camRafRef.current)
-    setCamTransition(transition)
-    camRafRef.current = requestAnimationFrame(() => setCamXform(xform))
+    setCamTransition(transition); setCamXform(xform)    // état React cohérent (rendu final identique)
+    const el = camElRef.current
+    if (el && !panelDebug) {
+      el.style.transition = transition
+      void el.offsetHeight                              // reflow → la transition est ACTIVE avant le transform
+      el.style.transform = xform                        // → s'anime toujours, jamais sauté
+    }
   }
   // Auto-LECTURE cinéma : avance case par case, dwell adapté au TEXTE, auto-pan des longues cases.
   const [cinemaPlaying, setCinemaPlaying] = useState(false)
@@ -674,7 +678,6 @@ export default function EpubReader() {
   useEffect(() => {
     clearTimeout(cinemaTimerRef.current)
     if (!cinema || !cinemaPlaying || detecting || !panels.length) return
-    cancelAnimationFrame(camRafRef.current)   // (lecture auto uniquement) évite qu'un applyCam en attente écrase l'auto-pan
     const wrap = cinemaWrapRef.current, im = cinemaImgRef.current
     if (!wrap || !im || !im.naturalWidth) return
     const p = panels[Math.min(panelIdx, panels.length - 1)]
@@ -1461,7 +1464,7 @@ export default function EpubReader() {
             onTouchStart={onCinTouchStart} onTouchMove={onCinTouchMove} onTouchEnd={onCinTouchEnd}
             style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: '#0a0a0a',
               zIndex: 20, cursor: 'pointer', touchAction: 'none' }}>
-            <div style={{ position: 'absolute', top: 0, left: 0, width: '100%',
+            <div ref={camElRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%',
               transform: panelDebug ? fitXform : camXform, transformOrigin: '0 0',
               transition: (panelDebug || cinInteract) ? 'none' : camTransition, willChange: 'transform' }}>
               <img ref={cinemaImgRef} src={images[current]} alt="" draggable={false}
