@@ -150,6 +150,9 @@ export const api = {
   setReaderProfiles: (store) => req('/me/reader-profiles', { method: 'PUT', body: JSON.stringify(store) }),
   savePanelDebug: (name, image) => req('/reader/panel-debug', { method: 'POST', body: JSON.stringify({ name, image }) }),
   detectPanels: (image) => req('/reader/panels', { method: 'POST', body: JSON.stringify({ image }) }),
+  // Découpage SANS upload : le serveur lit l'image lui-même (rapide même en connexion lente).
+  detectPanelsByPage: (mangaId, chapterNum, page) =>
+    req('/reader/panels-page', { method: 'POST', body: JSON.stringify({ mangaId, chapterNum, page }) }),
 
   // Jobs
   listJobs: () => req('/jobs'),

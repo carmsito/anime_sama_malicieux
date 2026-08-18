@@ -236,23 +236,27 @@ def list_chapter_images(manga_id: str, chapter_number: float):
     }
 
 
-@router.get("/{manga_id}/chapters/{chapter_number}/images/{idx}", summary="Image d'un chapitre")
-def get_chapter_image(manga_id: str, chapter_number: float, idx: int):
-    # LIVE : on lit UNIQUEMENT les octets de cette page depuis Telegram (rien stocké).
+def chapter_image_bytes(manga_id: str, chapter_number: float, idx: int):
+    """Octets d'UNE page (Telegram live, repli EPUB local). Réutilisé par la route image ET
+    le découpage serveur (le serveur lit l'image lui-même → pas de réupload par le client)."""
     rec = _tg_record(manga_id, chapter_number)
     if rec:
         try:
             from ..services import epub_remote
             data, media_type = epub_remote.image_data(rec[0], rec[1], idx)
             if data is not None:
-                return Response(content=data, media_type=media_type,
-                                headers={"Cache-Control": "public, max-age=86400"})
+                return data, media_type
         except Exception as e:
             print(f"[epub_remote] image fallback {manga_id} ch{chapter_number} #{idx}: {e}", flush=True)
     path = _resolve_epub(manga_id, chapter_number)
     if not path:
-        raise HTTPException(404)
-    data, media_type = epub_reader.get_image_data(path, idx)
+        return None, None
+    return epub_reader.get_image_data(path, idx)
+
+
+@router.get("/{manga_id}/chapters/{chapter_number}/images/{idx}", summary="Image d'un chapitre")
+def get_chapter_image(manga_id: str, chapter_number: float, idx: int):
+    data, media_type = chapter_image_bytes(manga_id, chapter_number, idx)
     if data is None:
         raise HTTPException(404, "Image introuvable")
     return Response(content=data, media_type=media_type,

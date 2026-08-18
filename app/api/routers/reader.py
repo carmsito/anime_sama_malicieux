@@ -70,3 +70,27 @@ def detect_panels_ep(body: dict, user: dict = Depends(get_current_user)):
         return {"panels": panels_svc.detect(raw)}
     except Exception as e:
         return {"panels": [], "error": str(e)[:200]}
+
+
+@router.post("/reader/panels-page", summary="Détecter les cases d'une page (le serveur lit l'image)")
+def detect_panels_by_page(body: dict, user: dict = Depends(get_current_user)):
+    """Le client n'envoie que {mangaId, chapterNum, page} → le SERVEUR récupère l'image lui-même
+    et découpe. Évite le réupload de la planche (le vrai goulot sur connexion lente) ; réponse
+    minuscule + cache disque par empreinte d'image côté serveur."""
+    mid = body.get("mangaId")
+    try:
+        ch = float(body.get("chapterNum"))
+        idx = int(body.get("page"))
+    except (TypeError, ValueError):
+        return {"panels": []}
+    if not mid:
+        return {"panels": []}
+    try:
+        from . import mangas
+        from ..services import panels as panels_svc
+        data, _ = mangas.chapter_image_bytes(mid, ch, idx)
+        if not data:
+            return {"panels": []}
+        return {"panels": panels_svc.detect(data)}
+    except Exception as e:
+        return {"panels": [], "error": str(e)[:200]}

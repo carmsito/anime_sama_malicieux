@@ -583,14 +583,11 @@ export default function EpubReader() {
     setPanels([{ x: 0, y: 0, w: 1, h: 1 }]); setPanelIdx(0); setDetecting(true)
     let ps = null
     try {
-      const W = Math.min(860, im.naturalWidth), sc = W / im.naturalWidth, H = Math.round(im.naturalHeight * sc)
-      const cv = document.createElement('canvas'); cv.width = W; cv.height = H
-      cv.getContext('2d').drawImage(im, 0, 0, W, H)
-      const url = cv.toDataURL('image/jpeg', 0.85)
-      const ask = async () => { try { const r = await api.detectPanels(url); return (r && Array.isArray(r.panels) && r.panels.length) ? r.panels : null } catch { return null } }
+      // Pas d'upload : le serveur lit l'image lui-même → rapide même en connexion lente.
+      const ask = async () => { try { const r = await api.detectPanelsByPage(mangaId, chapterNum, current); return (r && Array.isArray(r.panels) && r.panels.length) ? r.panels : null } catch { return null } }
       ps = await ask() || await ask()   // 1 retry : le worker unique peut être occupé (prefetch) → évite le repli JS trop faible
     } catch { /* serveur KO → repli */ }
-    if (!ps) ps = detectPanels(im)                       // repli heuristique client
+    if (!ps) ps = detectPanels(im)                       // repli heuristique client (utilise l'<img> déjà chargée)
     // « Planche entière » = pas de vrai découpage (serveur occupé/injoignable + repli JS vide,
     // ou modèle qui a tout fusionné). On l'AFFICHE mais on NE la met PAS en cache → la prochaine
     // visite retente le serveur, au lieu de resservir un placeholder collé (le « n1 » remonté).
@@ -603,23 +600,16 @@ export default function EpubReader() {
     prefetchDetect(current + 1)   // prépare la suivante en fond → navigation instantanée
   }
   // Détecte une planche EN FOND (sans toucher l'affichage) → mise en cache pour l'avance instantanée.
+  // Le serveur lit l'image lui-même : plus besoin de la télécharger côté client pour la réuploader.
   const prefetchDetect = (idx) => {
     if (idx < 0 || idx >= images.length) return
     const key = `${mangaId}:${chapterNum}:${idx}`
     if (panelCacheRef.current[key]) return
-    const im = new Image()
-    im.onload = async () => {
-      try {
-        const W = Math.min(860, im.naturalWidth), sc = W / im.naturalWidth, H = Math.round(im.naturalHeight * sc)
-        const cv = document.createElement('canvas'); cv.width = W; cv.height = H
-        cv.getContext('2d').drawImage(im, 0, 0, W, H)
-        const r = await api.detectPanels(cv.toDataURL('image/jpeg', 0.85))
-        const ps = r && Array.isArray(r.panels) ? r.panels : []
-        const wholePage = ps.length === 1 && ps[0].w >= 0.98 && ps[0].h >= 0.98
-        if (ps.length && !wholePage && !panelCacheRef.current[key]) panelCacheRef.current[key] = ps
-      } catch { /* silencieux */ }
-    }
-    im.src = images[idx]
+    api.detectPanelsByPage(mangaId, chapterNum, idx).then((r) => {
+      const ps = r && Array.isArray(r.panels) ? r.panels : []
+      const wholePage = ps.length === 1 && ps[0].w >= 0.98 && ps[0].h >= 0.98
+      if (ps.length && !wholePage && !panelCacheRef.current[key]) panelCacheRef.current[key] = ps
+    }).catch(() => { /* silencieux */ })
   }
   // Nouvelle planche → 1re case. En cinéma, on repasse AUSSITÔT en « découpage » (planche entière)
   // tant que la détection de CETTE planche n'est pas revenue → l'auto-lecture ne démarre JAMAIS
